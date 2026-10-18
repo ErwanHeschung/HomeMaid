@@ -1,7 +1,8 @@
 """Launcher icons from the logo (1024 px, transparent background), for both flavors.
 
 Run from app/: uv run --with pillow python tools/icon.py tools/logo.png
-Writes the adaptive icon foreground (Android 8+) and the legacy square icons (Android 7);
+Writes the adaptive icon foreground (Android 8+), the legacy square icons (Android 7) and the
+Windows icon of homemaid.exe (core/crates/homemaid/assets/homemaid.ico);
 the background is the app's ground color (res/values/colors.xml). The demo flavor's icon has a
 DÉMO tag so the two apps can be told apart.
 """
@@ -73,5 +74,17 @@ def main(path):
             legacy.convert("RGB").save(f"{res}/ic_launcher.png", optimize=True)
 
 
+def windows_icon(path, out):
+    """The exe and notification-area icon: the logo alone, square, on transparency."""
+    logo = Image.open(path).convert("RGBA")
+    logo = logo.crop(logo.getchannel("A").getbbox())
+    side = max(logo.size)
+    square = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+    square.alpha_composite(logo, ((side - logo.width) // 2, (side - logo.height) // 2))
+    sizes = [(s, s) for s in (16, 20, 24, 32, 40, 48, 64, 128, 256)]
+    square.resize((256, 256), Image.LANCZOS).save(out, sizes=sizes)
+
+
 if __name__ == "__main__":
     main(sys.argv[1])
+    windows_icon(sys.argv[1], "../core/crates/homemaid/assets/homemaid.ico")

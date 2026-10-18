@@ -1,0 +1,215 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>HomeMaid</title>
+<style>
+  @font-face { font-family: Barlow; src: url(barlow.ttf); font-weight: 400; }
+  @font-face { font-family: Barlow; src: url(barlow-semibold.ttf); font-weight: 600; }
+  @font-face { font-family: "Barlow Semi Condensed"; src: url(barlow-condensed.ttf); font-weight: 500; }
+  :root {
+    --ground: #15171B; --panel: #1C1F24; --raised: #252930; --line: #343A42; --line-strong: #4B525C;
+    --text: #EEF0F2; --dim: #A2A9B3; --lavender: #A699DC; --lavender-ink: #1E1638;
+    --pending: #FD77B1; --danger: #FF5545;
+  }
+  * { box-sizing: border-box; }
+  html { color-scheme: dark; }
+  body { margin: 0; background: var(--ground); color: var(--text); font: 400 15px/1.35 Barlow, system-ui, sans-serif;
+         -webkit-user-select: none; user-select: none; cursor: default; }
+  ::selection { background: var(--lavender); color: var(--lavender-ink); }
+  ::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+  main { padding: 18px 20px 12px; display: flex; flex-direction: column; min-height: 100vh; }
+  button { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--lavender); outline-offset: 2px; }
+
+  header { display: flex; align-items: center; gap: 14px; }
+  header img { height: 44px; }
+  h1 { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -0.3px; line-height: 1.1; }
+  .host { color: var(--dim); font: 500 13px "Barlow Semi Condensed", Barlow, sans-serif; letter-spacing: .2px; }
+  .run { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--dim);
+         font: 500 13px "Barlow Semi Condensed", Barlow, sans-serif; }
+  .run i { width: 9px; height: 9px; background: var(--lavender); border-radius: 50%; }
+  .run.starting i { background: transparent; border: 1.5px solid var(--dim); }
+
+  h2 { margin: 20px 0 6px; font-size: 14px; font-weight: 600; letter-spacing: .1px; color: var(--dim); }
+  .rows { border-top: 1px solid var(--line); }
+  .row { display: flex; align-items: center; gap: 16px; min-height: 60px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .row > div { flex: 1; min-width: 0; }
+  .name { font-size: 16px; font-weight: 600; }
+  .sub { color: var(--dim); font-size: 14px; font-variant-numeric: tabular-nums; }
+  .value { font-variant-numeric: tabular-nums; color: var(--lavender); font-size: 14px; text-align: right; }
+
+  .switch { flex: none; width: 52px; height: 32px; border-radius: 16px; border: 1.5px solid var(--line-strong);
+            background: var(--raised); position: relative; cursor: pointer; padding: 0; transition: background .2s, border-color .2s; }
+  .switch::after { content: ""; position: absolute; top: 50%; left: 6px; width: 16px; height: 16px; margin-top: -8px;
+                   border-radius: 50%; background: var(--dim); transition: transform .2s cubic-bezier(.2,.8,.2,1), width .2s, height .2s, margin .2s; }
+  .switch[aria-checked="true"] { background: var(--lavender); border-color: var(--lavender); }
+  .switch[aria-checked="true"]::after { transform: translateX(18px); width: 22px; height: 22px; margin-top: -11px; background: var(--lavender-ink); }
+  /* Sent, not confirmed yet: the pending pink, as in the app. */
+  .switch.pending { background: repeating-linear-gradient(135deg, var(--raised) 0 3px, var(--pending) 3px 5px); border-color: var(--pending); }
+  .switch:disabled { opacity: .38; cursor: default; }
+
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-top: 4px; }
+  .tabs button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 10px 8px; color: var(--dim);
+                 font-weight: 600; font-size: 14px; cursor: pointer; margin-bottom: -1px; }
+  .tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--lavender); }
+  .pair { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 14px 0 0; }
+  .qr { background: #fff; padding: 10px; border-radius: 10px; width: 204px; height: 204px; display: grid; place-items: center; }
+  .qr svg { width: 184px; height: 184px; display: block; }
+  .qr.off { background: var(--panel); border: 1px dashed var(--line-strong); color: var(--dim); text-align: center; padding: 24px; font-size: 14px; }
+  .hint { color: var(--dim); font-size: 14px; text-align: center; max-width: 34ch; margin: 0; }
+
+  .error { margin-top: 16px; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--danger) 60%, transparent);
+           background: color-mix(in srgb, var(--danger) 8%, transparent); border-radius: 6px; font-size: 14px; }
+  .error[hidden] { display: none; }
+
+  footer { margin-top: auto; padding-top: 16px; display: flex; align-items: center; gap: 4px; }
+  footer button { background: none; border: 0; padding: 10px 10px; border-radius: 6px; color: var(--lavender); font-weight: 600; font-size: 14px; cursor: pointer; }
+  footer button:hover { background: color-mix(in srgb, var(--lavender) 10%, transparent); }
+  footer button.quit { color: var(--dim); }
+  footer .version { margin-left: auto; color: var(--dim); font: 500 12px "Barlow Semi Condensed", Barlow, sans-serif; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="logo.png" alt="">
+    <div>
+      <h1>HomeMaid</h1>
+      <div class="host" id="host">&nbsp;</div>
+    </div>
+    <div class="run starting" id="run"><i></i><span id="run-text"></span></div>
+  </header>
+
+  <h2 data-t="home"></h2>
+  <div class="rows">
+    <div class="row">
+      <div><div class="name" data-t="hub"></div><div class="sub" id="hub-sub"></div></div>
+      <div class="value" id="hub-devices"></div>
+    </div>
+  </div>
+
+  <h2 data-t="pc"></h2>
+  <div class="rows">
+    <div class="row">
+      <div><div class="name" data-t="control"></div><div class="sub" id="agent-sub"></div></div>
+      <button class="switch" id="agent" role="switch" aria-checked="false" disabled></button>
+    </div>
+    <div class="row">
+      <div><div class="name" data-t="startup"></div><div class="sub" data-t="startup-sub"></div></div>
+      <button class="switch" id="startup" role="switch" aria-checked="false" disabled></button>
+    </div>
+  </div>
+  <div class="error" id="error" role="alert" hidden></div>
+
+  <h2 data-t="pair" id="pair"></h2>
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-kind="core" data-t="tab-home"></button>
+    <button role="tab" aria-selected="false" data-kind="agent" data-t="tab-pc"></button>
+  </div>
+  <div class="pair">
+    <div class="qr" id="qr"></div>
+    <p class="hint" data-t="pair-hint"></p>
+  </div>
+
+  <footer>
+    <button id="folder" data-t="folder"></button>
+    <button id="restart" data-t="restart"></button>
+    <button id="quit" class="quit" data-t="quit"></button>
+    <span class="version" id="version"></span>
+  </footer>
+</main>
+<script>
+  const fr = navigator.language.toLowerCase().startsWith('fr');
+  const T = fr ? {
+    running: 'En marche', starting: 'Démarrage…', home: 'Maison', hub: 'Hub', pc: 'Ce PC',
+    control: 'Contrôle du PC', startup: 'Démarrer avec Windows',
+    'startup-sub': 'À l’ouverture de session, dans la zone de notification',
+    pair: 'Appairer un téléphone', 'tab-home': 'Maison', 'tab-pc': 'Ce PC',
+    'pair-hint': 'Dans l’app HomeMaid : Réglages → Appairer, puis scanne ce code. Il contient le code d’accès : ne le partage pas.',
+    folder: 'Ouvrir le dossier', restart: 'Redémarrer', quit: 'Quitter',
+    devices: (n, on) => `${n} appareil${n > 1 ? 's' : ''}` + (on < n ? ` · ${on} en ligne` : ''),
+    agentOn: p => `Souris, clavier et médias depuis le téléphone · port ${p}`,
+    agentOff: 'Coupé : le téléphone ne pilote plus ce PC',
+    noAgent: 'Coupé : l’activer redémarre HomeMaid',
+    pcOff: 'Active le contrôle du PC pour l’appairer.',
+  } : {
+    running: 'Running', starting: 'Starting…', home: 'Home', hub: 'Hub', pc: 'This PC',
+    control: 'PC control', startup: 'Start with Windows',
+    'startup-sub': 'At sign-in, in the notification area',
+    pair: 'Pair a phone', 'tab-home': 'Home', 'tab-pc': 'This PC',
+    'pair-hint': 'In the HomeMaid app: Settings → Pair, then scan this code. It holds the access code: do not share it.',
+    folder: 'Open folder', restart: 'Restart', quit: 'Quit',
+    devices: (n, on) => `${n} device${n === 1 ? '' : 's'}` + (on < n ? ` · ${on} online` : ''),
+    agentOn: p => `Mouse, keyboard and media from the phone · port ${p}`,
+    agentOff: 'Off: the phone no longer controls this PC',
+    noAgent: 'Off: turning it on restarts HomeMaid',
+    pcOff: 'Turn PC control on to pair it.',
+  };
+  document.documentElement.lang = fr ? 'fr' : 'en';
+  document.querySelectorAll('[data-t]').forEach(e => e.textContent = T[e.dataset.t]);
+  const $ = id => document.getElementById(id);
+  $('agent').setAttribute('aria-label', T.control);
+  $('startup').setAttribute('aria-label', T.startup);
+
+  const send = (cmd, extra = {}) => window.ipc.postMessage(JSON.stringify({ cmd, ...extra }));
+  let qr = {}, kind = 'core', last = null;
+
+  function renderQr() {
+    const box = $('qr');
+    const off = kind === 'agent' && !(last && last.agent && last.agent.on);
+    box.classList.toggle('off', off);
+    box.innerHTML = off ? T.pcOff : (qr[kind] || '');
+  }
+
+  window.hm = s => {
+    if (s.error) {
+      $('error').textContent = s.error;
+      $('error').hidden = false;
+      document.querySelectorAll('.switch.pending').forEach(e => e.classList.remove('pending'));
+      return;
+    }
+    last = s;
+    if (s.qr) qr = s.qr;
+    $('host').textContent = s.host;
+    $('run').classList.toggle('starting', !s.hub.ready);
+    $('run-text').textContent = s.hub.ready ? T.running : T.starting;
+    $('hub-sub').textContent = `${s.ip}:${s.hub.port}`;
+    $('hub-devices').textContent = s.hub.ready ? T.devices(s.hub.devices, s.hub.online) : '';
+    const agent = $('agent');
+    agent.disabled = false;
+    agent.setAttribute('aria-checked', String(!!(s.agent && s.agent.on)));
+    $('agent-sub').textContent = !s.agent ? T.noAgent : s.agent.on ? T.agentOn(s.agent.port) : T.agentOff;
+    const startup = $('startup');
+    startup.disabled = false;
+    startup.setAttribute('aria-checked', String(s.startup));
+    document.querySelectorAll('.switch.pending').forEach(e => e.classList.remove('pending'));
+    $('version').textContent = 'v' + s.version;
+    renderQr();
+  };
+
+  for (const id of ['agent', 'startup']) {
+    $(id).addEventListener('click', e => {
+      const el = e.currentTarget;
+      const on = el.getAttribute('aria-checked') !== 'true';
+      $('error').hidden = true;
+      el.classList.add('pending');
+      el.setAttribute('aria-checked', String(on));
+      send(id, { on });
+    });
+  }
+  document.querySelectorAll('[role=tab]').forEach(tab => tab.addEventListener('click', () => {
+    kind = tab.dataset.kind;
+    document.querySelectorAll('[role=tab]').forEach(t => t.setAttribute('aria-selected', String(t === tab)));
+    renderQr();
+  }));
+  $('folder').onclick = () => send('folder');
+  $('restart').onclick = () => send('restart');
+  $('quit').onclick = () => send('quit');
+  document.addEventListener('contextmenu', e => e.preventDefault());
+
+  send('init');
+  setInterval(() => send('status'), 2000);
+</script>
+</body>
+</html>

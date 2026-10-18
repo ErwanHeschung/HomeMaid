@@ -37,8 +37,11 @@ pub struct CoreConfig {
     pub token: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct AgentConfig {
+    /// Read in desktop mode only (the PC window's "PC control" switch); `--agent` always runs it.
+    #[serde(default = "yes")]
+    pub enabled: bool,
     pub bind: SocketAddr,
     /// Shared with the clients: the phone and the `pc` plugin.
     pub token: String,
@@ -126,6 +129,100 @@ pub fn load(path: &Path) -> Result<Config, String> {
         plugin.path = dir.join(&plugin.path);
     }
     Ok(config)
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// A new access token: 122 random bits from the OS, as 32 hex digits.
+pub fn new_token() -> String {
+    Uuid::new_v4().simple().to_string()
+}
+
+/// The config written at the first start in desktop mode: hub and PC control on the default
+/// ports with fresh tokens, and the `pc` plugin when its .wasm sits in `plugins/`. Nobody types
+/// the tokens: the phone reads them from the pairing QR codes.
+pub fn write_first(path: &Path) -> Result<(), String> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let agent_token = new_token();
+    let pc = if dir.join("plugins/pc_plugin.wasm").is_file() { FIRST_PC } else { "" };
+    let text = FIRST.replace("{core}", &new_token()).replace("{agent}", &agent_token).replace("{pc}", pc);
+    crate::store::write_atomic(path, text.as_bytes()).map_err(|e| format!("{}: {e}", path.display()))?;
+    set_secret(&dir.join("data/secrets.toml"), "pc", "token", &agent_token)
+}
+
+const FIRST: &str = r#"# HomeMaid, written at the first start. Every option: homemaid.example.toml in the project.
+# The tokens are access codes: the phone gets them from the QR codes of the HomeMaid window.
+
+[core]
+bind = "0.0.0.0:8123"
+data_dir = "data"
+token = "{core}"
+
+[agent]
+# The "PC control" switch of the HomeMaid window.
+enabled = true
+bind = "0.0.0.0:8124"
+token = "{agent}"
+{pc}"#;
+
+const FIRST_PC: &str = r#"
+# This PC as a device of the home (volume, mute, media). Its token is in data/secrets.toml.
+[[plugin]]
+id = "pc"
+path = "plugins/pc_plugin.wasm"
+permissions = ["local-network"]
+[plugin.settings]
+agent = "127.0.0.1:8124"
+"#;
+
+/// Sets `enabled` in `[agent]`, keeping the rest of the file. Switched on without an `[agent]`
+/// section, it adds one with a fresh token, also given to the `pc` plugin's secrets; it then
+/// returns `true`: the section is read at start, so the process must restart.
+pub fn set_agent_enabled(path: &Path, enabled: bool) -> Result<bool, String> {
+    use toml_edit::{Item, Table, value};
+
+    let fail = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
+    let mut doc: toml_edit::DocumentMut = read_text(path)?.parse().map_err(|e| fail(&e))?;
+    let created = match doc.get_mut("agent").and_then(Item::as_table_mut) {
+        Some(agent) => {
+            agent["enabled"] = value(enabled);
+            false
+        }
+        None if !enabled => return Ok(false),
+        None => {
+            let token = new_token();
+            let data_dir = doc.get("core").and_then(|c| c.get("data_dir")).and_then(Item::as_str).unwrap_or("data");
+            let secrets = path.parent().unwrap_or(Path::new(".")).join(data_dir).join("secrets.toml");
+            set_secret(&secrets, "pc", "token", &token)?;
+            let mut agent = Table::new();
+            agent["enabled"] = value(true);
+            agent["bind"] = value("0.0.0.0:8124");
+            agent["token"] = value(token);
+            doc["agent"] = Item::Table(agent);
+            true
+        }
+    };
+    crate::store::write_atomic(path, doc.to_string().as_bytes()).map_err(|e| fail(&e))?;
+    Ok(created)
+}
+
+/// Sets `[section] key` in a secrets file (created with its folder if missing), keeping the rest.
+pub fn set_secret(path: &Path, section: &str, key: &str, secret: &str) -> Result<(), String> {
+    let fail = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(fail(&e)),
+    };
+    let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e| fail(&e))?;
+    let table = doc.entry(section).or_insert(toml_edit::table()).as_table_mut().ok_or_else(|| fail(&format!("`{section}` is not a table")))?;
+    table[key] = toml_edit::value(secret);
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| fail(&e))?;
+    }
+    crate::store::write_atomic(path, doc.to_string().as_bytes()).map_err(|e| fail(&e))
 }
 
 /// Without the UTF-8 BOM some Windows editors add, which TOML parsers reject.
@@ -226,6 +323,42 @@ mod tests {
         assert_eq!(config.entities[0].name.as_deref(), Some("Lampe"));
         assert_eq!(config.entities[0].room, None, "an empty room removes it");
         assert_eq!(config.entities[0].model.as_deref(), Some("kettle"));
+    }
+
+    #[test]
+    fn switching_the_agent_keeps_the_file_and_defaults_to_on() {
+        let path = std::env::temp_dir().join(format!("homemaid-agent-test-{}.toml", std::process::id()));
+        fs::write(&path, "# pc\n[agent] # here\nbind = \"0.0.0.0:8124\"\ntoken = \"t\"\n").unwrap();
+        assert!(load(&path).unwrap().agent.unwrap().enabled);
+        set_agent_enabled(&path, false).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# pc\n[agent] # here\n") && text.contains("enabled = false"), "{text}");
+        assert!(!load(&path).unwrap().agent.unwrap().enabled);
+        fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn the_first_config_runs_hub_and_pc_with_fresh_tokens() {
+        let dir = std::env::temp_dir().join(format!("homemaid-first-{}", std::process::id()));
+        fs::create_dir_all(dir.join("plugins")).unwrap();
+        fs::write(dir.join("plugins/pc_plugin.wasm"), "").unwrap();
+        let path = dir.join("homemaid.toml");
+        write_first(&path).unwrap();
+        let config = load(&path).unwrap();
+        let (core, agent) = (config.core.unwrap(), config.agent.unwrap());
+        assert!(agent.enabled && core.token.len() == 32 && agent.token.len() == 32 && core.token != agent.token);
+        assert_eq!(config.plugins[0].id, "pc");
+        let secrets = load_secrets(&dir.join("data/secrets.toml")).unwrap();
+        assert_eq!(secrets["pc"]["token"], agent.token, "the pc plugin can talk to the agent");
+
+        // A config without [agent]: switching PC control on adds it, with its secret.
+        fs::write(&path, "# mine\n[core]\nbind = \"0.0.0.0:8123\"\ndata_dir = \"data\"\ntoken = \"t\"\n").unwrap();
+        assert_eq!(set_agent_enabled(&path, false), Ok(false));
+        assert_eq!(set_agent_enabled(&path, true), Ok(true));
+        let agent = load(&path).unwrap().agent.unwrap();
+        assert!(agent.enabled && fs::read_to_string(&path).unwrap().starts_with("# mine\n"));
+        assert_eq!(load_secrets(&dir.join("data/secrets.toml")).unwrap()["pc"]["token"], agent.token);
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

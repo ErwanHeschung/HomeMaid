@@ -9,6 +9,7 @@ token = "change-me"
 # PC agent (run with --agent, in the user's session): remote control of this PC.
 # On the phone: http://<this PC's IP>:8124/remote#token=<agent.token>
 [agent]
+# enabled = true      # desktop mode only: the window's "PC control" switch writes it
 bind = "0.0.0.0:8124"
 token = "change-me-too"
 

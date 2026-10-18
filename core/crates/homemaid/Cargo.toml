@@ -18,7 +18,7 @@ toml = "1.1.8"
 toml_edit = "0.25.17"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
-uuid = { version = "1.28.0", features = ["serde", "v5"] }
+uuid = { version = "1.28.0", features = ["serde", "v4", "v5"] }
 # Only what the host uses: no cache (zstd) or profiling (ittapi), which also pull in C code.
 wasmtime = { version = "49.0.3", default-features = false, features = [
     "addr2line",
@@ -35,18 +35,29 @@ wasmtime-wasi = "49.0.3"
 
 [target.'cfg(windows)'.dependencies]
 enigo = "0.6.1"
+# Desktop mode: the window (a WebView2 page) and the notification-area icon.
+tao = { version = "0.37.1", default-features = false, features = ["rwh_06"] }
+tray-icon = { version = "0.26.1", default-features = false }
+wry = { version = "0.57.0", default-features = false }
 windows = { version = "0.62.2", features = [
     "Win32_Media_Audio",
     "Win32_Media_Audio_Endpoints",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
+    "Win32_Globalization",
     "Win32_System_Console",
     "Win32_System_Power",
+    "Win32_System_Registry",
     "Win32_System_Shutdown",
+    "Win32_System_Threading",
     "Win32_System_Variant",
     "Win32_UI_WindowsAndMessaging",
 ] }
 windows-service = "0.8.1"
+
+[build-dependencies]
+# The exe's icon (assets/homemaid.ico, made by app/tools/icon.py), also used by the tray.
+embed-resource = "3.0.12"
 
 [dev-dependencies]
 # The fake P300 of tests/plugin_tplink.rs reuses the plugin's KLAP implementation.

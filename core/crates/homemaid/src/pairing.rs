@@ -42,10 +42,7 @@ pub fn is_local_peer(peer: SocketAddr) -> bool {
 
 /// The `/pair` page. It holds the token: serve it only to [`is_local_peer`].
 pub fn page(kind: &str, bind: SocketAddr, token: &str) -> String {
-    let uri = uri(kind, &hostname(), lan_ip(bind), bind.port(), token);
-    let qr = qrcode::QrCode::new(uri.as_bytes())
-        .map(|qr| qr.render::<qrcode::render::svg::Color>().min_dimensions(280, 280).build())
-        .unwrap_or_else(|e| format!("<p>QR code impossible : {e}</p>"));
+    let qr = qr_svg(kind, bind, token);
     let what = if kind == "core" { "la maison" } else { "ce PC" };
     PAGE.replace("{what}", what).replace("{qr}", &qr)
 }
@@ -69,6 +66,14 @@ const PAGE: &str = r#"<!doctype html>
 </main>
 </html>
 "#;
+
+/// The pairing QR code as SVG. It holds the token: show it on the PC itself only.
+pub fn qr_svg(kind: &str, bind: SocketAddr, token: &str) -> String {
+    let uri = uri(kind, &hostname(), lan_ip(bind), bind.port(), token);
+    qrcode::QrCode::new(uri.as_bytes())
+        .map(|qr| qr.render::<qrcode::render::svg::Color>().min_dimensions(280, 280).build())
+        .unwrap_or_else(|e| format!("<p>QR code impossible : {e}</p>"))
+}
 
 /// Keeps the service announced until dropped.
 pub struct Announcement(Option<(ServiceDaemon, String)>);

@@ -7,7 +7,7 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     process::ExitCode,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -15,7 +15,16 @@ use clap::Parser;
 use homemaid::{Core, agent, api, config, pairing, plugins::Plugins, reconciler::Reconciler, store};
 use tokio::sync::{mpsc, watch};
 
-/// HomeMaid home automation hub. Roles are enabled by flags and can be combined.
+#[cfg(windows)]
+mod desktop;
+
+/// The running core, for the desktop window's status.
+#[cfg_attr(not(windows), allow(dead_code))]
+static CORE: OnceLock<Arc<Core>> = OnceLock::new();
+
+/// HomeMaid home automation hub. Roles are enabled by flags and can be combined. On Windows,
+/// without --core or --agent, it runs as a desktop app: hub and PC control, an icon in the
+/// notification area and a window, with homemaid.toml next to the exe.
 #[derive(Parser)]
 struct Args {
     /// Run the core: entity registry, reconciler, plugins and API.
@@ -24,9 +33,9 @@ struct Args {
     /// Run the PC agent: remote control of this PC. Must run in the user's session, not as a service.
     #[arg(long)]
     agent: bool,
-    /// Configuration file.
-    #[arg(long, default_value = "homemaid.toml")]
-    config: PathBuf,
+    /// Configuration file [default: homemaid.toml, next to the exe in desktop mode].
+    #[arg(long)]
+    config: Option<PathBuf>,
     /// Write logs to this file instead of the console.
     #[arg(long)]
     log_file: Option<PathBuf>,
@@ -34,12 +43,31 @@ struct Args {
     #[cfg(windows)]
     #[arg(long)]
     service: bool,
+    /// Desktop mode: start in the notification area without opening the window (at logon).
+    #[cfg(windows)]
+    #[arg(long)]
+    background: bool,
+}
+
+impl Args {
+    fn config(&self) -> PathBuf {
+        self.config.clone().unwrap_or_else(|| "homemaid.toml".into())
+    }
+
+    /// The agent always on with --agent, absent otherwise.
+    fn agent_switch(&self) -> Option<watch::Receiver<bool>> {
+        self.agent.then(|| watch::channel(true).1)
+    }
 }
 
 fn main() -> ExitCode {
     #[cfg(windows)]
     attach_console();
     let args = Args::parse();
+    #[cfg(windows)]
+    if !args.core && !args.agent && !args.service {
+        return desktop::main(args);
+    }
     if let Err(e) = init_logging(args.log_file.as_deref()) {
         eprintln!("{e}");
         return ExitCode::FAILURE;
@@ -48,7 +76,7 @@ fn main() -> ExitCode {
     if args.service {
         return report(service::start());
     }
-    report(block_on(run(args, async {
+    report(block_on(run(args.config(), args.core, args.agent_switch(), async {
         let _ = tokio::signal::ctrl_c().await;
     })))
 }
@@ -83,12 +111,18 @@ fn block_on(future: impl Future<Output = Result<(), String>>) -> Result<(), Stri
     tokio::runtime::Runtime::new().map_err(|e| e.to_string())?.block_on(future)
 }
 
-/// Runs the requested roles until `shutdown` completes, then stops them cleanly.
-async fn run(args: Args, shutdown: impl Future<Output = ()> + Send + 'static) -> Result<(), String> {
-    if !args.core && !args.agent {
+/// Runs the requested roles until `shutdown` completes, then stops them cleanly. The agent runs
+/// while its switch is on (with --agent it stays on).
+async fn run(
+    config_path: PathBuf,
+    run_core: bool,
+    agent_switch: Option<watch::Receiver<bool>>,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> Result<(), String> {
+    if !run_core && agent_switch.is_none() {
         return Err("nothing to run: pass --core and/or --agent".into());
     }
-    let mut config = config::load(&args.config)?;
+    let mut config = config::load(&config_path)?;
     let (stop, stopped) = watch::channel(());
     tokio::spawn(async move {
         shutdown.await;
@@ -102,25 +136,52 @@ async fn run(args: Args, shutdown: impl Future<Output = ()> + Send + 'static) ->
     };
 
     let core = async {
-        if !args.core {
+        if !run_core {
             return Ok(());
         }
         let core_config = config.core.take().ok_or("--core needs a [core] section in the config")?;
         // Checked before anything starts: a broken automation is a config error.
-        let automations = homemaid::automations::Automations::new(&config.automations).map_err(|e| format!("{}: {e}", args.config.display()))?;
-        run_core(core_config, &args.config, config.entities, config.rooms, config.plugins, automations, until_stopped()).await
+        let automations = homemaid::automations::Automations::new(&config.automations).map_err(|e| format!("{}: {e}", config_path.display()))?;
+        start_core(core_config, &config_path, config.entities, config.rooms, config.plugins, automations, until_stopped()).await
     };
     let agent = async {
-        if !args.agent {
-            return Ok(());
-        }
+        let Some(mut switch) = agent_switch else { return Ok(()) };
         let agent_config = config.agent.take().ok_or("--agent needs an [agent] section in the config")?;
-        agent::run(agent_config, until_stopped()).await
+        loop {
+            if *switch.borrow_and_update() {
+                // Until switched off (a dropped switch never is) or stopped.
+                let mut off = switch.clone();
+                let switched_off = async move {
+                    loop {
+                        if off.changed().await.is_err() {
+                            std::future::pending::<()>().await;
+                        }
+                        if !*off.borrow() {
+                            break;
+                        }
+                    }
+                };
+                let stop = until_stopped();
+                agent::run(agent_config.clone(), async move {
+                    tokio::select! { () = stop => {}, () = switched_off => {} }
+                })
+                .await?;
+                tracing::info!("agent stopped");
+            } else {
+                tokio::select! {
+                    changed = switch.changed() => if changed.is_err() { return Ok(()) },
+                    () = until_stopped() => {}
+                }
+            }
+            if stopped.has_changed().unwrap_or(true) {
+                return Ok(());
+            }
+        }
     };
     tokio::try_join!(core, agent).map(|_| ())
 }
 
-async fn run_core(
+async fn start_core(
     config: config::CoreConfig,
     config_path: &Path,
     overrides: Vec<config::EntityOverride>,
@@ -139,6 +200,7 @@ async fn run_core(
     let (commands, mut command_rx) = mpsc::unbounded_channel();
     let entities = store::restore(snapshot, &overrides);
     let core = Arc::new(Core::new(Reconciler::new(entities), commands));
+    let _ = CORE.set(core.clone());
     *core.overrides.lock().unwrap() = overrides.into_iter().map(|o| (o.id, o)).collect();
     *core.rooms.lock().unwrap() = rooms.into_iter().filter_map(|r| Some((r.name, r.kind.filter(|k| !k.is_empty())?))).collect();
 
@@ -257,7 +319,8 @@ mod service {
         };
         set(ServiceState::Running, ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN).map_err(|e| e.to_string())?;
         // The service's own command line (binPath), not the start parameters.
-        let result = super::block_on(super::run(super::Args::parse(), async {
+        let args = super::Args::parse();
+        let result = super::block_on(super::run(args.config(), args.core, args.agent_switch(), async {
             let _ = stopped.await;
         }));
         set(ServiceState::Stopped, ServiceControlAccept::empty()).map_err(|e| e.to_string())?;

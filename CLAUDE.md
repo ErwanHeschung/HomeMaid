@@ -63,10 +63,18 @@ Un **seul binaire** `homemaid` dont les rôles sont activés par flags :
 Le passage d'un mode à l'autre ne doit demander **aucune modification de code**, seulement de configuration. Le core doit donc rester portable (Windows, Linux x86_64, Linux ARM64).
 
 Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête quand plus rien ne l'utilise et complique le réseau.
-- **Core** : en **service Windows** (crate `windows-service`, option `--service`), démarré au boot.
-- **Agent** : lancé à l'**ouverture de session** (clé Run HKCU). Un service tourne en session 0 et ne peut pas injecter souris ou clavier dans le bureau de l'utilisateur.
-- Le binaire est en sous-système GUI (pas de fenêtre console) ; il se rattache au terminal parent s'il y en a un. Sinon, `--log-file`.
-- Installation :
+- **Mode bureau** (le cas normal, `core/crates/homemaid/src/desktop.rs`) : `homemaid.exe` **sans flag de rôle**, lancé par un double-clic.
+  - Il fait tourner le hub et l'agent dans un seul process, avec `homemaid.toml` et `homemaid.log` à côté de l'exe.
+  - **Premier lancement** (pas de `homemaid.toml`) : il l'écrit lui-même (`config::write_first`) avec le hub, l'agent, des tokens aléatoires (`uuid` v4, aléa de l'OS) et le plugin `pc` si `plugins/pc_plugin.wasm` est là. Le token de l'agent va aussi dans `data/secrets.toml` (`[pc] token`). Personne ne tape de token : l'app les lit dans les QR. Activer « Contrôle du PC » sans section `[agent]` la crée de la même façon, puis redémarre.
+  - WebView2 range son cache dans `data/webview`.
+  - Le **logo est dans la zone de notification** tant qu'il tourne (clic : la fenêtre ; menu : Ouvrir, Quitter).
+  - La **fenêtre HomeMaid** est une page (`desktop.html`) dans une WebView2 (`wry` + `tao`, façon Tauri), servie depuis l'exe par le protocole `homemaid://`. Pas de serveur HTTP pour elle : elle parle au process par IPC.
+  - Contenu : état du hub, QR d'appairage (maison et PC), « Contrôle du PC » (`[agent] enabled`, l'agent s'arrête et repart à chaud), « Démarrer avec Windows » (valeur `HomeMaid` de `HKCU\…\Run`, `--background`), Ouvrir le dossier, Redémarrer, Quitter.
+  - Une seconde instance montre la fenêtre de la première (événement nommé `Local\HomeMaid.Show`). Les erreurs de démarrage s'affichent dans une boîte de dialogue.
+  - **Déploiement** : `homemaid.exe` + `WebView2Loader.dll` (mingw ne peut pas l'intégrer à l'exe ; copiée depuis `target/x86_64-pc-windows-gnu/release/build/webview2-com-sys-*/out/x64/`) + `plugins/`. Le runtime WebView2 est fourni par Windows 10/11.
+  - L'icône de l'exe et de la zone de notification vient de `assets/homemaid.ico` (généré par `app/tools/icon.py`, compilé par `build.rs` avec `embed-resource`).
+- **Flags** (serveur, tests) : `--core`, `--agent`, `--config`, `--log-file` comme avant. Le binaire est en sous-système GUI ; il se rattache au terminal parent s'il y en a un.
+- **Option avancée, hub au boot** : le core en **service Windows** (`--service`). L'agent doit alors tourner à part à l'ouverture de session, car un service tourne en session 0 et ne peut pas injecter souris ou clavier :
   ```
   sc.exe create HomeMaid binPath= "C:\HomeMaid\homemaid.exe --core --service --config C:\HomeMaid\homemaid.toml --log-file C:\HomeMaid\core.log" start= auto
   reg add HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v HomeMaidAgent /d "\"C:\HomeMaid\homemaid.exe\" --agent --config C:\HomeMaid\homemaid.toml --log-file C:\HomeMaid\agent.log"

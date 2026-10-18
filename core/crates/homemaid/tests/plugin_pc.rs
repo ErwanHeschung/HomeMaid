@@ -14,7 +14,7 @@ use homemaid::{
 };
 
 async fn start_agent() -> (String, tokio::task::JoinHandle<()>) {
-    let config = AgentConfig { bind: "127.0.0.1:0".parse().unwrap(), token: "secret".into(), apps: BTreeMap::new(), shortcuts: vec![] };
+    let config = AgentConfig { enabled: true, bind: "127.0.0.1:0".parse().unwrap(), token: "secret".into(), apps: BTreeMap::new(), shortcuts: vec![] };
     let app = agent::router(&config).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap().to_string();

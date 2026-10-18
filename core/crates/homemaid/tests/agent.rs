@@ -14,6 +14,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 async fn start_agent() -> SocketAddr {
     let config = AgentConfig {
+        enabled: true,
         bind: "127.0.0.1:0".parse().unwrap(),
         token: "secret".into(),
         apps: BTreeMap::from([("true".to_string(), PathBuf::from("true"))]),
