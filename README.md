@@ -89,6 +89,24 @@ never a wish), **pink** is a command still waiting for the device, **red** is a 
 - **App** (`app/`): Flutter, Android first. The home as pre-rendered Blender rooms and devices,
   composited live. A demo flavour with a synthetic home to try everything without a hub.
 
+## Footprint
+
+<img src="docs/footprint/footprint.png" alt="Memory at idle: 26 MB for HomeMaid, 472 MB for Home Assistant. Install size: 35 MB vs 3.46 GB. Startup: 15 ms vs 3.6 s." width="100%">
+
+> [!IMPORTANT]
+> **Not representative yet.** HomeMaid is at an early stage and does far less than Home Assistant:
+> one plugin here, no history, no web dashboard, no voice. These numbers show where it starts, not
+> a fair fight. They will be measured again as it grows.
+
+Both ran side by side in Docker on the same machine, at idle, sampled every 10 s for 5 minutes:
+Home Assistant 2026.10.2 freshly installed with no integration, and HomeMaid running its hub, its
+PC agent and one WASM plugin. CPU at idle is negligible for both (about 0.01-0.03 % of a core;
+HomeMaid's test plugin polls every second). On Windows, `homemaid.exe` itself uses about 23 MB;
+its window, a WebView2 page, adds about 150 MB while it is open.
+
+To measure it yourself: [`docs/footprint/run.sh`](docs/footprint/run.sh), then
+[`chart.py`](docs/footprint/chart.py) for the chart.
+
 ## Architecture
 
 ```mermaid
