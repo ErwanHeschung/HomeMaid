@@ -1,0 +1,211 @@
+{
+  "@@locale": "en",
+  "navHome": "Home",
+  "navPc": "PC",
+  "navSettings": "Settings",
+  "pairHomeTitle": "Pair your home",
+  "pairHomeHint": "On the PC running HomeMaid, open http://localhost:8123/pair and scan the code.",
+  "pairPcTitle": "Pair a PC",
+  "pairPcHint": "On the PC, open http://localhost:8124/pair and scan the code.",
+  "scanCode": "Scan the code",
+  "pairTitle": "Pair",
+  "pairInstructions": "On the PC, open http://localhost:8123/pair (home) or http://localhost:8124/pair (PC), then aim at the code.",
+  "notHomemaidCode": "This is not a HomeMaid code.",
+  "pairedHome": "Home ({id}) paired.",
+  "@pairedHome": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
+  "pairedPc": "PC {id} paired.",
+  "@pairedPc": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
+  "alsoScanPc": "For the remote, also scan http://localhost:8124/pair.",
+  "alsoScanHome": "For the home, also scan http://localhost:8123/pair.",
+  "homeUnreachable": "Home unreachable",
+  "noDevices": "No devices yet. They appear here as soon as a plugin discovers them.",
+  "noRoom": "No room",
+  "offline": "Offline",
+  "stateOn": "On",
+  "stateOff": "Off",
+  "muted": "Muted",
+  "soundOn": "Sound on",
+  "pending": "Waiting for the device",
+  "failed": "Failed: {reason}",
+  "@failed": {
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "failedNoReason": "Command failed",
+  "deviceCount": "{count, plural, =0{No devices} =1{1 device} other{{count} devices}}",
+  "@deviceCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "onCount": "{count} on",
+  "@onCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "editDevice": "Rename or move",
+  "name": "Name",
+  "room": "Room",
+  "roomHint": "Empty = no room",
+  "cancel": "Cancel",
+  "save": "Save",
+  "capOnOff": "Power",
+  "capBrightness": "Brightness",
+  "capVolume": "Volume",
+  "capMute": "Mute",
+  "capPower": "Power draw",
+  "capCpu": "CPU",
+  "capMemory": "Memory",
+  "capActiveWindow": "Active window",
+  "trackpadHint": "Tap to click · two fingers to right-click or scroll",
+  "connecting": "Connecting…",
+  "pcUnreachable": "PC unreachable",
+  "pairedSection": "Paired",
+  "nonePaired": "Nothing paired yet.",
+  "homeLabel": "Home · {id}",
+  "@homeLabel": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
+  "pcLabel": "PC · {id}",
+  "@pcLabel": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
+  "forget": "Forget",
+  "pair": "Pair",
+  "remoteSection": "Remote",
+  "pointerSpeed": "Pointer speed",
+  "invertScroll": "Invert scrolling",
+  "errorUnreachable": "Unreachable, or the token was refused",
+  "errorLost": "Connection lost",
+  "errorNotConnected": "Not connected",
+  "errorTimeout": "No answer",
+  "demoData": "Demo data",
+  "modelPlug": "Smart plug",
+  "modelLamp": "Desk lamp",
+  "modelScreen": "Monitor",
+  "modelModule": "Module",
+  "modelBulb": "Bulb",
+  "modelCeilingLight": "Ceiling light",
+  "modelLightStrip": "Light strip",
+  "modelFloorLamp": "Floor lamp",
+  "modelThermostat": "Thermostat",
+  "modelRadiator": "Radiator",
+  "modelFan": "Fan",
+  "modelAirPurifier": "Air purifier",
+  "modelAirConditioner": "Air conditioner",
+  "modelTv": "TV",
+  "modelSpeaker": "Speaker",
+  "modelCamera": "Camera",
+  "modelDoorLock": "Door lock",
+  "modelContactSensor": "Contact sensor",
+  "modelMotionSensor": "Motion sensor",
+  "modelSmokeDetector": "Smoke detector",
+  "modelDoorbell": "Doorbell",
+  "modelClimateSensor": "Climate sensor",
+  "modelKettle": "Kettle",
+  "modelCoffeeMaker": "Coffee maker",
+  "modelWashingMachine": "Washing machine",
+  "modelFridge": "Fridge",
+  "modelRobotVacuum": "Robot vacuum",
+  "modelShutter": "Shutter",
+  "modelStrip": "Power strip",
+  "modelSection": "3D model",
+  "modelAuto": "Automatic",
+  "moreInList": "+{count} in the list",
+  "@moreInList": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomType": "Room type",
+  "roomKindLiving": "Living room",
+  "roomKindKitchen": "Kitchen",
+  "roomKindBedroom": "Bedroom",
+  "roomKindOffice": "Office",
+  "roomKindBathroom": "Bathroom",
+  "roomKindEntrance": "Entrance",
+  "roomKindGeneric": "Plain room",
+  "connected": "Connected",
+  "power": "Power",
+  "powerLock": "Lock",
+  "powerSleep": "Sleep",
+  "powerShutdown": "Shut down",
+  "shutdownConfirm": "Shut down {name}?",
+  "shutdownBody": "The PC powers off right away. The remote loses the connection until it starts again.",
+  "keyboard": "Keyboard",
+  "volumeDown": "Volume down",
+  "volumeUp": "Volume up",
+  "mute": "Mute",
+  "unmute": "Unmute",
+  "playPause": "Play or pause",
+  "back5": "Back 5 seconds",
+  "forward5": "Forward 5 seconds",
+  "previous": "Previous",
+  "next": "Next",
+  "launchApp": "Open {app}",
+  "@shutdownConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "@launchApp": {
+    "placeholders": {
+      "app": {
+        "type": "String"
+      }
+    }
+  },
+  "restart": "Restart",
+  "nextEpisode": "Next episode",
+  "skipIntro": "Skip intro",
+  "stateLocked": "Locked",
+  "stateUnlocked": "Unlocked",
+  "stateOpen": "Open",
+  "stateClosed": "Closed",
+  "stateMotion": "Motion",
+  "stateNoMotion": "No motion",
+  "stateSmoke": "Smoke detected",
+  "stateNoSmoke": "No smoke",
+  "yes": "Yes",
+  "no": "No",
+  "autoAs": "Auto · {kind}",
+  "@autoAs": {
+    "placeholders": {
+      "kind": {
+        "type": "String"
+      }
+    }
+  }
+}

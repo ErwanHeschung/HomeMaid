@@ -1,0 +1,146 @@
+[
+ {
+  "available": true,
+  "caps": {
+   "custom:active_window": {
+    "desired": null,
+    "meta": {
+     "read_only": true,
+     "schema": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    },
+    "observed": {
+     "custom": null
+    },
+    "status": {
+     "state": "idle"
+    }
+   },
+   "custom:cpu": {
+    "desired": null,
+    "meta": {
+     "read_only": true,
+     "schema": {
+      "type": "number"
+     },
+     "unit": "%"
+    },
+    "observed": {
+     "custom": 5.0
+    },
+    "status": {
+     "state": "idle"
+    }
+   },
+   "custom:memory": {
+    "desired": null,
+    "meta": {
+     "read_only": true,
+     "schema": {
+      "type": "number"
+     },
+     "unit": "%"
+    },
+    "observed": {
+     "custom": 15.0
+    },
+    "status": {
+     "state": "idle"
+    }
+   },
+   "mute": {
+    "desired": {
+     "mute": false
+    },
+    "meta": {
+     "read_only": false
+    },
+    "observed": {
+     "mute": false
+    },
+    "status": {
+     "state": "confirmed"
+    }
+   },
+   "volume": {
+    "desired": {
+     "volume": 50
+    },
+    "meta": {
+     "max": 100.0,
+     "min": 0.0,
+     "read_only": false,
+     "unit": "%"
+    },
+    "observed": {
+     "volume": 50
+    },
+    "status": {
+     "state": "confirmed"
+    }
+   }
+  },
+  "device": null,
+  "id": "046d9a53-53a8-5862-85e4-33f4ecc95aad",
+  "local_id": "pc",
+  "name": "DESKTOP-DG1P9LR",
+  "plugin": "pc",
+  "room": null,
+  "tags": []
+ },
+ {
+  "available": true,
+  "caps": {
+   "brightness": {
+    "desired": null,
+    "meta": {
+     "max": 100.0,
+     "read_only": false,
+     "unit": "%"
+    },
+    "observed": null,
+    "status": {
+     "state": "idle"
+    }
+   },
+   "on_off": {
+    "desired": null,
+    "meta": {
+     "read_only": false
+    },
+    "observed": null,
+    "status": {
+     "state": "idle"
+    }
+   },
+   "power": {
+    "desired": null,
+    "meta": {
+     "read_only": true,
+     "unit": "W"
+    },
+    "observed": {
+     "power": {
+      "watts": 4.199999809265137
+     }
+    },
+    "status": {
+     "state": "idle"
+    }
+   }
+  },
+  "device": "mock-device",
+  "id": "b2ab420e-3e8d-569b-80ee-016956537f82",
+  "local_id": "lamp",
+  "name": "Lampe salon",
+  "plugin": "mock",
+  "room": "salon",
+  "tags": [
+   "lumiere"
+  ]
+ }
+]

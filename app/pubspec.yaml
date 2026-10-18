@@ -1,0 +1,107 @@
+name: homemaid
+description: "A new Flutter project."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.13.5
+
+dependencies:
+  bonsoir: ^7.1.5
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  flutter_secure_storage: ^11.2.0
+  flutter_svg: ^2.3.0
+  intl: any
+  mobile_scanner: ^7.4.2
+  web_socket_channel: ^3.0.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  generate: true
+
+  # Studio renders of the device models (tools/render/render.py, then pack.sh).
+  assets:
+    - assets/models/strip_2/
+    - assets/models/strip_3/
+    - assets/models/strip_4/
+    - assets/models/strip_5/
+    - assets/models/strip_6/
+    - assets/models/plug/
+    - assets/models/lamp/
+    - assets/models/screen/
+    - assets/models/module/
+    - assets/models/bulb/
+    - assets/models/ceiling_light/
+    - assets/models/light_strip/
+    - assets/models/floor_lamp/
+    - assets/models/thermostat/
+    - assets/models/radiator/
+    - assets/models/fan/
+    - assets/models/air_purifier/
+    - assets/models/air_conditioner/
+    - assets/models/tv/
+    - assets/models/speaker/
+    - assets/models/camera/
+    - assets/models/door_lock/
+    - assets/models/contact_sensor/
+    - assets/models/motion_sensor/
+    - assets/models/smoke_detector/
+    - assets/models/doorbell/
+    - assets/models/climate_sensor/
+    - assets/models/kettle/
+    - assets/models/coffee_maker/
+    - assets/models/washing_machine/
+    - assets/models/fridge/
+    - assets/models/robot_vacuum/
+    - assets/models/shutter/
+    - assets/models/ceiling_light_hung/
+    - assets/models/bulb_hung/
+    # Service logos (Simple Icons 16.33.0, CC0; see tools/logos.md).
+    - assets/logos/
+    # Furnished rooms (tools/render/room.py): views over the arc, and rooms.json.
+    - assets/rooms/
+    - assets/rooms/living_s/
+    - assets/rooms/living_m/
+    - assets/rooms/living_l/
+    - assets/rooms/kitchen_s/
+    - assets/rooms/kitchen_m/
+    - assets/rooms/kitchen_l/
+    - assets/rooms/bedroom_s/
+    - assets/rooms/bedroom_m/
+    - assets/rooms/bedroom_l/
+    - assets/rooms/office_s/
+    - assets/rooms/office_m/
+    - assets/rooms/office_l/
+    - assets/rooms/bathroom_s/
+    - assets/rooms/bathroom_m/
+    - assets/rooms/bathroom_l/
+    - assets/rooms/entrance_s/
+    - assets/rooms/entrance_m/
+    - assets/rooms/entrance_l/
+    - assets/rooms/generic_s/
+    - assets/rooms/generic_m/
+    - assets/rooms/generic_l/
+
+  # Barlow (SIL Open Font License, assets/fonts/OFL.txt), from github.com/google/fonts.
+  fonts:
+    - family: Barlow
+      fonts:
+        - asset: assets/fonts/Barlow-Regular.ttf
+        - asset: assets/fonts/Barlow-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Barlow-SemiBold.ttf
+          weight: 600
+    - family: Barlow Semi Condensed
+      fonts:
+        - asset: assets/fonts/BarlowSemiCondensed-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/BarlowSemiCondensed-SemiBold.ttf
+          weight: 600
