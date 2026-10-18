@@ -1,0 +1,55 @@
+[package]
+name = "homemaid"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+caps = { path = "../caps" }
+axum = { version = "0.8.9", features = ["ws"] }
+clap = { version = "4.6.7", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+mdns-sd = "0.21.5"
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
+tokio = { version = "1.53.3", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time"] }
+toml = "1.1.8"
+toml_edit = "0.25.17"
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
+uuid = { version = "1.28.0", features = ["serde", "v5"] }
+# Only what the host uses: no cache (zstd) or profiling (ittapi), which also pull in C code.
+wasmtime = { version = "49.0.3", default-features = false, features = [
+    "addr2line",
+    "anyhow",
+    "backtrace",
+    "component-model",
+    "cranelift",
+    "demangle",
+    "parallel-compilation",
+    "runtime",
+    "std",
+] }
+wasmtime-wasi = "49.0.3"
+
+[target.'cfg(windows)'.dependencies]
+enigo = "0.6.1"
+windows = { version = "0.62.2", features = [
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Console",
+    "Win32_System_Power",
+    "Win32_System_Shutdown",
+    "Win32_System_Variant",
+    "Win32_UI_WindowsAndMessaging",
+] }
+windows-service = "0.8.1"
+
+[dev-dependencies]
+# The fake P300 of tests/plugin_tplink.rs reuses the plugin's KLAP implementation.
+tplink-plugin = { path = "../../plugins/tplink" }
+# WebSocket client for tests/agent.rs; same versions axum already pulls in.
+futures-util = "0.3.34"
+tokio-tungstenite = "0.29.0"

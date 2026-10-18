@@ -1,0 +1,138 @@
+<!doctype html>
+<!-- Test remote for the HomeMaid agent. Same WebSocket protocol as the future Flutter app. -->
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>HomeMaid · Télécommande</title>
+<style>
+  :root { --bg: #0e0f12; --panel: #1a1c21; --line: #2a2d34; --text: #e8e9ec; --dim: #8b8f98; --accent: #4f8cff; --bad: #ff5d5d; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 15px/1.3 system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; gap: 10px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); }
+  header { display: flex; justify-content: space-between; align-items: center; }
+  #status { color: var(--dim); font-size: 13px; }
+  #status.on::before { content: "● "; color: #3ecf8e; }
+  #status.off::before { content: "● "; color: var(--bad); }
+  #pad { flex: 1; min-height: 220px; border-radius: 16px; background: var(--panel); border: 1px solid var(--line);
+         touch-action: none; display: grid; place-items: center; color: var(--dim); user-select: none; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  button { min-height: 44px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+           color: var(--text); font: inherit; font-size: 17px; touch-action: manipulation; }
+  button:active { background: var(--line); }
+  input { flex: 3; min-height: 44px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel);
+          color: var(--text); font: inherit; padding: 0 12px; }
+  #apps:empty { display: none; }
+  #apps { flex-wrap: wrap; }
+  #apps button { flex: 1 1 30%; font-size: 15px; }
+</style>
+</head>
+<body>
+<header><strong id="host">HomeMaid</strong><span id="status" class="off">connexion…</span></header>
+<div id="pad">Trackpad · tap = clic · 2 doigts = clic droit / défilement</div>
+<div class="row"><button data-click="left">Clic</button><button data-click="right">Clic droit</button></div>
+<form class="row" id="typing"><input id="text" placeholder="Texte à taper" autocomplete="off"><button>Envoyer</button></form>
+<div class="row">
+  <button data-key="backspace" aria-label="Effacer">⌫</button><button data-key="enter" aria-label="Entrée">↵</button>
+  <button data-key="escape">Esc</button><button data-key="tab">Tab</button>
+</div>
+<div class="row">
+  <button data-key="left" aria-label="Gauche">←</button><button data-key="up" aria-label="Haut">↑</button>
+  <button data-key="down" aria-label="Bas">↓</button><button data-key="right" aria-label="Droite">→</button>
+</div>
+<div class="row">
+  <button data-media="previous" aria-label="Précédent">⏮</button><button data-media="play_pause" aria-label="Lecture/pause">⏯</button>
+  <button data-media="next" aria-label="Suivant">⏭</button><button data-media="volume_down" aria-label="Volume moins">🔉</button>
+  <button data-media="mute" aria-label="Muet">🔇</button><button data-media="volume_up" aria-label="Volume plus">🔊</button>
+</div>
+<div class="row" id="apps"></div>
+<script>
+const token = new URLSearchParams(location.hash.slice(1)).get("token") || "";
+const status = document.getElementById("status");
+const SPEED = 1.8;            // pointer px per finger px
+const SCROLL_PX = 40;         // finger px per wheel notch
+const SCROLL_SIGN = 1;        // natural scrolling; set to -1 if it feels inverted
+let ws;
+
+function setStatus(text, ok) { status.textContent = text; status.className = ok ? "on" : "off"; }
+function send(msg) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); }
+
+function connect() {
+  if (!token) return setStatus("token manquant : ouvrir …/remote#token=<agent.token>", false);
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(token)}`);
+  ws.onopen = () => setStatus("connecté", true);
+  ws.onclose = () => { setStatus("déconnecté, nouvel essai…", false); setTimeout(connect, 1500); };
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type === "hello") {
+      document.getElementById("host").textContent = msg.hostname;
+      const apps = document.getElementById("apps");
+      apps.replaceChildren(...msg.apps.map((app) => {
+        const b = document.createElement("button");
+        b.textContent = app;
+        b.onclick = () => send({ type: "launch", app });
+        return b;
+      }));
+    } else if (msg.type === "error") {
+      setStatus(msg.message, false);
+    }
+  };
+}
+
+// Trackpad: one finger moves, two fingers scroll; a short still touch clicks (right click with two).
+const pad = document.getElementById("pad");
+const pointers = new Map();
+let pending = { dx: 0, dy: 0, sx: 0, sy: 0 }, scheduled = false, gesture = null;
+
+function flush() {
+  scheduled = false;
+  if (pending.dx || pending.dy) send({ type: "move", dx: pending.dx, dy: pending.dy });
+  if (pending.sx || pending.sy) send({ type: "scroll", dx: pending.sx, dy: pending.sy });
+  pending = { dx: 0, dy: 0, sx: 0, sy: 0 };
+}
+function schedule() { if (!scheduled) { scheduled = true; requestAnimationFrame(flush); } }
+
+pad.addEventListener("pointerdown", (e) => {
+  pad.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size === 1) gesture = { start: performance.now(), moved: 0, fingers: 1 };
+  else if (gesture) gesture.fingers = Math.max(gesture.fingers, pointers.size);
+});
+pad.addEventListener("pointermove", (e) => {
+  const last = pointers.get(e.pointerId);
+  if (!last) return;
+  const dx = e.clientX - last.x, dy = e.clientY - last.y;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (gesture) gesture.moved += Math.abs(dx) + Math.abs(dy);
+  if (pointers.size === 1) { pending.dx += dx * SPEED; pending.dy += dy * SPEED; }
+  else { pending.sx += -dx / SCROLL_PX / pointers.size * SCROLL_SIGN; pending.sy += -dy / SCROLL_PX / pointers.size * SCROLL_SIGN; }
+  schedule();
+});
+function release(e) {
+  pointers.delete(e.pointerId);
+  if (pointers.size === 0 && gesture) {
+    if (performance.now() - gesture.start < 250 && gesture.moved < 10) {
+      send({ type: "click", button: gesture.fingers > 1 ? "right" : "left" });
+    }
+    gesture = null;
+  }
+}
+pad.addEventListener("pointerup", release);
+pad.addEventListener("pointercancel", release);
+
+document.querySelectorAll("[data-click]").forEach((b) => b.onclick = () => send({ type: "click", button: b.dataset.click }));
+document.querySelectorAll("[data-key]").forEach((b) => b.onclick = () => send({ type: "key", key: b.dataset.key }));
+document.querySelectorAll("[data-media]").forEach((b) => b.onclick = () => send({ type: "media", action: b.dataset.media }));
+document.getElementById("typing").onsubmit = (e) => {
+  e.preventDefault();
+  const input = document.getElementById("text");
+  if (input.value) send({ type: "text", text: input.value });
+  input.value = "";
+};
+
+connect();
+</script>
+</body>
+</html>

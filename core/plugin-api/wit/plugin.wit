@@ -1,0 +1,58 @@
+package homemaid:plugin@1.0.0;
+
+/// Capability kinds and values cross the boundary as strings (kind: "on_off", value and meta: JSON),
+/// so new capabilities do not break v1. The Rust SDK exposes them typed.
+interface types {
+    record capability {
+        kind: string,
+        /// CapMeta as JSON.
+        meta: string,
+    }
+
+    record entity {
+        /// Stable id inside the plugin (e.g. device MAC + outlet index). The core derives the UUID from it.
+        local-id: string,
+        name: string,
+        /// Physical device grouping several entities.
+        device: option<string>,
+        capabilities: list<capability>,
+    }
+
+    record manifest {
+        id: string,
+        version: string,
+        api-version: string,
+        permissions: list<string>,
+    }
+
+    enum log-level { trace, debug, info, warn, error }
+}
+
+/// What the core gives a plugin. Network access goes through wasi:sockets, local network only.
+interface host {
+    use types.{log-level};
+
+    log: func(level: log-level, message: string);
+    /// value is CapValue as JSON.
+    report-state: func(local-id: string, kind: string, value: string);
+    set-available: func(local-id: string, available: bool);
+    /// Private key-value store, persisted by the core.
+    kv-get: func(key: string) -> option<string>;
+    kv-set: func(key: string, value: string);
+    secret: func(name: string) -> option<string>;
+}
+
+world plugin {
+    use types.{entity, manifest};
+    import host;
+
+    export manifest: func() -> manifest;
+    export init: func(settings: list<tuple<string, string>>) -> result<_, string>;
+    export discover: func() -> result<list<entity>, string>;
+    /// Applies a desired value. Success is not confirmation: the plugin confirms with report-state,
+    /// typically in the refresh the host calls right after (once the queued commands are applied).
+    export apply: func(local-id: string, kind: string, value: string) -> result<_, string>;
+    /// Called right after commands and between them (adaptive polling; named refresh because `poll`
+    /// clashes with libc). Returns the delay in ms before the next call.
+    export refresh: func() -> u32;
+}

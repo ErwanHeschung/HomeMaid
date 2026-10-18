@@ -1,0 +1,90 @@
+# Copy to homemaid.toml and adjust. Relative paths are resolved against this file's directory.
+[core]
+bind = "0.0.0.0:8123"
+data_dir = "data"
+# Clients authenticate with `Authorization: Bearer <token>` or `/ws?token=<token>`.
+token = "change-me"
+# Plugin secrets go in <data_dir>/secrets.toml, one table per plugin id, never in this file.
+
+# PC agent (run with --agent, in the user's session): remote control of this PC.
+# On the phone: http://<this PC's IP>:8124/remote#token=<agent.token>
+[agent]
+bind = "0.0.0.0:8124"
+token = "change-me-too"
+
+[agent.apps]
+# Only these can be launched from the remote. Bare names are looked up in PATH.
+notepad = "notepad.exe"
+
+# Services on the remote: a logo (app/assets/logos/<icon>.svg), what opens them (a URL goes to
+# the default browser, or a program), and the keys their player answers to. Play/pause, back and
+# forward default to Space and the arrows; the playback buttons send keys to the focused window.
+[[agent.shortcut]]
+name = "Netflix"
+icon = "netflix"
+open = "https://www.netflix.com"
+keys = { skip_intro = "s" }
+
+[[agent.shortcut]]
+name = "YouTube"
+icon = "youtube"
+open = "https://www.youtube.com"
+keys = { restart = "0", next_episode = "shift+n" }
+
+[[agent.shortcut]]
+name = "Spotify"
+icon = "spotify"
+open = "https://open.spotify.com"
+
+[[agent.shortcut]]
+name = "Twitch"
+icon = "twitch"
+open = "https://www.twitch.tv"
+
+[[agent.shortcut]]
+name = "Crunchyroll"
+icon = "crunchyroll"
+open = "https://www.crunchyroll.com"
+keys = { restart = "0", next_episode = "shift+n", skip_intro = "s" }
+
+# The PC as an entity of the core (volume, mute, sensors), through its agent:
+#   cargo build -p pc-plugin --target wasm32-wasip2
+# and in <data_dir>/secrets.toml:  [pc]  token = "<agent.token>"
+# [[plugin]]
+# id = "pc"
+# path = "target/wasm32-wasip2/debug/pc_plugin.wasm"
+# permissions = ["local-network"]
+#
+# [plugin.settings]
+# agent = "127.0.0.1:8124"
+
+# Mock plugin, build it first: cargo build -p mock-plugin --target wasm32-wasip2
+[[plugin]]
+id = "mock"
+path = "target/wasm32-wasip2/debug/mock_plugin.wasm"
+# Granted permissions; a plugin asking for more is refused.
+permissions = ["local-network"]
+
+[plugin.settings]
+# crash_once = "true"
+
+# TP-Link Tapo P300: cargo build -p tplink-plugin --target wasm32-wasip2
+# Needs "Third-Party Compatibility" in the Tapo app (Me > Third-Party Services) and, in
+# <data_dir>/secrets.toml, the TP-Link account:
+#   [tplink]
+#   username = "you@example.com"
+#   password = "..."
+# [[plugin]]
+# id = "tplink"
+# path = "target/wasm32-wasip2/debug/tplink_plugin.wasm"
+# permissions = ["local-network"]
+#
+# [plugin.settings]
+# hosts = "192.168.1.50"   # comma-separated, ip or ip:port; reserve the IP on your router
+
+# Optional user metadata over discovered entities, by stable UUID (see entities.list).
+[[entity]]
+id = "b2ab420e-3e8d-569b-80ee-016956537f82"
+name = "Lampe salon"
+room = "salon"
+tags = ["lumiere"]

@@ -1,0 +1,10 @@
+[package]
+name = "homemaid-plugin"
+version = "1.0.0"
+edition = "2024"
+description = "SDK for HomeMaid plugins (plugin-api v1)"
+
+[dependencies]
+caps = { path = "../crates/caps" }
+serde_json = "1.0.154"
+wit-bindgen = "0.63.0"
