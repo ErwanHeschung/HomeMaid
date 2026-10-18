@@ -87,12 +87,36 @@ impl CapValue {
         )
     }
 
-    fn number(&self) -> Option<f64> {
+    /// The value as a number, for comparisons (`above`, `below`).
+    pub fn number(&self) -> Option<f64> {
         match self {
             CapValue::Brightness(v) | CapValue::Volume(v) => Some(f64::from(*v)),
             CapValue::Power { watts } => Some(f64::from(*watts)),
+            CapValue::Custom(v) => v.as_f64(),
             _ => None,
         }
+    }
+
+    /// The value without its kind, as written by people: `true`, `40`, `{"watts": 3}`.
+    pub fn plain(&self) -> serde_json::Value {
+        match serde_json::to_value(self) {
+            Ok(serde_json::Value::Object(mut map)) if map.len() == 1 => map.values_mut().next().map(std::mem::take).unwrap_or_default(),
+            _ => serde_json::Value::Null,
+        }
+    }
+
+    /// A value of `kind` from its plain form (`40` for a brightness).
+    pub fn from_plain(kind: &CapKind, value: serde_json::Value) -> Result<Self, String> {
+        let key = match kind {
+            CapKind::Custom(_) => "custom".to_string(),
+            other => other.to_string(),
+        };
+        serde_json::from_value(serde_json::json!({ key: value })).map_err(|e| format!("not a {kind} value: {e}"))
+    }
+
+    /// Kinds whose values compare as numbers.
+    pub fn is_numeric(kind: &CapKind) -> bool {
+        matches!(kind, CapKind::Brightness | CapKind::Volume | CapKind::Power | CapKind::Custom(_))
     }
 }
 
@@ -142,5 +166,15 @@ mod tests {
         assert_eq!("on_off".parse(), Ok(CapKind::OnOff));
         assert!("custom:".parse::<CapKind>().is_err());
         assert!("nope".parse::<CapKind>().is_err());
+    }
+
+    #[test]
+    fn values_convert_from_and_to_their_plain_form() {
+        assert_eq!(CapValue::from_plain(&CapKind::Brightness, serde_json::json!(40)), Ok(CapValue::Brightness(40)));
+        assert_eq!(CapValue::from_plain(&CapKind::OnOff, serde_json::json!(true)), Ok(CapValue::OnOff(true)));
+        assert!(CapValue::from_plain(&CapKind::Brightness, serde_json::json!("high")).is_err());
+        assert!(CapValue::from_plain(&CapKind::Brightness, serde_json::json!(300)).is_err(), "u8");
+        assert_eq!(CapValue::Volume(15).plain(), serde_json::json!(15));
+        assert_eq!(CapValue::Custom(serde_json::json!(21.5)).number(), Some(21.5));
     }
 }

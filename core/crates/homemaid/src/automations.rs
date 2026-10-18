@@ -1,0 +1,986 @@
+//! Typed automations: `[[automation]]` in homemaid.toml, checked when the config loads.
+//!
+//! A trigger (a time of day, or an observed state crossing a value) runs the automation; its
+//! conditions decide; its actions set desired states (the reconciler does the rest) or invoke
+//! one-shot actions. Entities are chosen by selectors, never by name. A dry run tells what would
+//! happen without doing it. Each automation keeps its last runs in memory.
+
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
+
+use jiff::{Zoned, civil::Time};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use uuid::Uuid;
+
+use crate::{
+    Core, Event,
+    model::{CapKind, CapValue, Entity},
+    reconciler::Change,
+    selector::Selector,
+};
+
+const KEEP_RUNS: usize = 20;
+/// More runs than this in a minute is a loop (two automations answering each other): stop it.
+const MAX_RUNS_PER_MINUTE: usize = 10;
+
+// ------------------------------------------------------------------------------------- config
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AutomationConfig {
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    #[serde(default, rename = "trigger")]
+    pub triggers: Vec<TriggerConfig>,
+    #[serde(default, rename = "condition")]
+    pub conditions: Vec<ConditionConfig>,
+    #[serde(default, rename = "action")]
+    pub actions: Vec<ActionConfig>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TriggerConfig {
+    pub at: Option<String>,
+    pub days: Option<Vec<String>>,
+    pub when: Option<TestConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConditionConfig {
+    pub between: Option<[String; 2]>,
+    pub days: Option<Vec<String>>,
+    pub state: Option<TestConfig>,
+}
+
+/// `{ select, cap, ... }` with one test: `becomes`/`is` (a value), `above`, `below`, `changes`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TestConfig {
+    pub select: String,
+    pub cap: String,
+    pub becomes: Option<Value>,
+    pub is: Option<Value>,
+    pub above: Option<f64>,
+    pub below: Option<f64>,
+    #[serde(default)]
+    pub changes: bool,
+    /// For conditions: every selected entity must pass (default: any).
+    #[serde(default)]
+    pub all: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActionConfig {
+    pub set: Option<SetConfig>,
+    pub invoke: Option<InvokeConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetConfig {
+    pub select: String,
+    pub cap: String,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InvokeConfig {
+    pub select: String,
+    pub action: String,
+    #[serde(default)]
+    pub params: Value,
+}
+
+// ------------------------------------------------------------------------------------- compiled
+
+/// Days of the week, Monday = bit 0.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Days(u8);
+
+const DAY_NAMES: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+
+impl Days {
+    const ALL: Days = Days(0x7f);
+
+    fn parse(names: &[String]) -> Result<Self, String> {
+        let mut mask = 0;
+        for name in names {
+            let day = DAY_NAMES
+                .iter()
+                .position(|d| d.eq_ignore_ascii_case(name))
+                .ok_or_else(|| format!("unknown day `{name}` (mon, tue, wed, thu, fri, sat, sun)"))?;
+            mask |= 1 << day;
+        }
+        if mask == 0 {
+            return Err("`days` is empty".into());
+        }
+        Ok(Days(mask))
+    }
+
+    fn contains(self, z: &Zoned) -> bool {
+        self.0 & (1 << z.weekday().to_monday_zero_offset()) != 0
+    }
+
+    fn names(self) -> Vec<&'static str> {
+        DAY_NAMES.iter().enumerate().filter(|(i, _)| self.0 & (1 << i) != 0).map(|(_, d)| *d).collect()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Target {
+    select: Selector,
+    /// As written, for people.
+    text: String,
+}
+
+impl Target {
+    fn parse(text: &str) -> Result<Self, String> {
+        Ok(Self { select: Selector::parse(text)?, text: text.into() })
+    }
+
+    fn entities<'a>(&self, entities: impl IntoIterator<Item = &'a Entity>) -> Vec<&'a Entity> {
+        entities.into_iter().filter(|e| self.select.matches(e)).collect()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Test {
+    Is(CapValue),
+    Above(f64),
+    Below(f64),
+    Changes,
+}
+
+#[derive(Debug, Clone)]
+struct StateTest {
+    target: Target,
+    cap: CapKind,
+    test: Test,
+    all: bool,
+}
+
+#[derive(Debug, Clone)]
+enum Trigger {
+    At { time: Time, days: Days },
+    When(StateTest),
+}
+
+#[derive(Debug, Clone)]
+enum Condition {
+    Between(Time, Time),
+    Days(Days),
+    State(StateTest),
+}
+
+#[derive(Debug, Clone)]
+enum Action {
+    Set { target: Target, cap: CapKind, value: CapValue },
+    Invoke { target: Target, action: String, params: Value },
+}
+
+#[derive(Debug, Clone)]
+pub struct Automation {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    triggers: Vec<Trigger>,
+    conditions: Vec<Condition>,
+    actions: Vec<Action>,
+}
+
+fn time(text: &str) -> Result<Time, String> {
+    text.parse().map_err(|_| format!("`{text}` is not a time (HH:MM)"))
+}
+
+fn state_test(c: &TestConfig, trigger: bool) -> Result<StateTest, String> {
+    let cap: CapKind = c.cap.parse()?;
+    let value = if trigger { &c.becomes } else { &c.is };
+    let wrong = if trigger { &c.is } else { &c.becomes };
+    if wrong.is_some() {
+        return Err(if trigger { "a trigger tests with `becomes`, not `is`" } else { "a condition tests with `is`, not `becomes`" }.into());
+    }
+    let mut tests = vec![];
+    if let Some(v) = value {
+        tests.push(Test::Is(CapValue::from_plain(&cap, v.clone())?));
+    }
+    if let Some(x) = c.above {
+        tests.push(Test::Above(x));
+    }
+    if let Some(x) = c.below {
+        tests.push(Test::Below(x));
+    }
+    if c.changes {
+        if !trigger {
+            return Err("`changes` only makes sense for a trigger".into());
+        }
+        tests.push(Test::Changes);
+    }
+    let [test] = <[Test; 1]>::try_from(tests).map_err(|_| {
+        format!("give exactly one test: {}, `above`, `below`{}", if trigger { "`becomes`" } else { "`is`" }, if trigger { ", `changes`" } else { "" })
+    })?;
+    if matches!(test, Test::Above(_) | Test::Below(_)) && !CapValue::is_numeric(&cap) {
+        return Err(format!("{cap} is not a number: use {}", if trigger { "`becomes`" } else { "`is`" }));
+    }
+    if trigger && c.all {
+        return Err("`all` only applies to conditions".into());
+    }
+    Ok(StateTest { target: Target::parse(&c.select)?, cap, test, all: c.all })
+}
+
+impl Automation {
+    /// Checks everything that can be checked without the devices; errors stop the core.
+    pub fn compile(c: &AutomationConfig) -> Result<Self, String> {
+        let at = |what: String, i: usize, e: String| format!("automation `{}`, {what} {}: {e}", c.id, i + 1);
+        if c.id.is_empty() {
+            return Err("an automation needs an `id`".into());
+        }
+        if c.triggers.is_empty() || c.actions.is_empty() {
+            return Err(format!("automation `{}`: needs at least one [[automation.trigger]] and one [[automation.action]]", c.id));
+        }
+        let mut triggers = vec![];
+        for (i, t) in c.triggers.iter().enumerate() {
+            let trigger = match (&t.at, &t.when) {
+                (Some(at_time), None) => {
+                    Trigger::At { time: time(at_time)?, days: t.days.as_deref().map(Days::parse).transpose()?.unwrap_or(Days::ALL) }
+                }
+                (None, Some(when)) if t.days.is_none() => Trigger::When(state_test(when, true)?),
+                (None, Some(_)) => return Err(at("trigger".into(), i, "`days` goes with `at`".into())),
+                _ => return Err(at("trigger".into(), i, "give either `at` or `when`".into())),
+            };
+            triggers.push(trigger);
+        }
+        let triggers = triggers;
+        let mut conditions = vec![];
+        for (i, k) in c.conditions.iter().enumerate() {
+            let condition = match (&k.between, &k.days, &k.state) {
+                (Some([from, to]), None, None) => Condition::Between(time(from)?, time(to)?),
+                (None, Some(days), None) => Condition::Days(Days::parse(days)?),
+                (None, None, Some(state)) => Condition::State(state_test(state, false).map_err(|e| at("condition".into(), i, e))?),
+                _ => return Err(at("condition".into(), i, "give one of `between`, `days`, `state`".into())),
+            };
+            conditions.push(condition);
+        }
+        let mut actions = vec![];
+        for (i, a) in c.actions.iter().enumerate() {
+            let action = match (&a.set, &a.invoke) {
+                (Some(set), None) => {
+                    let cap: CapKind = set.cap.parse().map_err(|e| at("action".into(), i, e))?;
+                    let value = CapValue::from_plain(&cap, set.value.clone()).map_err(|e| at("action".into(), i, e))?;
+                    Action::Set { target: Target::parse(&set.select)?, cap, value }
+                }
+                (None, Some(inv)) => {
+                    if !(inv.params.is_null() || inv.params.is_object()) {
+                        return Err(at("action".into(), i, "`params` must be a table".into()));
+                    }
+                    Action::Invoke { target: Target::parse(&inv.select)?, action: inv.action.clone(), params: inv.params.clone() }
+                }
+                _ => return Err(at("action".into(), i, "give either `set` or `invoke`".into())),
+            };
+            actions.push(action);
+        }
+        Ok(Self { id: c.id.clone(), name: c.name.clone().unwrap_or_else(|| c.id.clone()), enabled: c.enabled, triggers, conditions, actions })
+    }
+
+    /// The next time one of its `at` triggers fires, strictly after `after`.
+    fn next_time(&self, after: &Zoned) -> Option<Zoned> {
+        self.triggers
+            .iter()
+            .filter_map(|t| match t {
+                Trigger::At { time, days } => next_at(*time, *days, after),
+                Trigger::When(_) => None,
+            })
+            .min()
+    }
+}
+
+/// Next occurrence of `time` on one of `days`, strictly after `after`, in its time zone. A time
+/// that does not exist that day (spring forward) happens just after the gap.
+fn next_at(time: Time, days: Days, after: &Zoned) -> Option<Zoned> {
+    (0..8).find_map(|offset| {
+        let date = after.date().checked_add(jiff::Span::new().days(offset)).ok()?;
+        let at = date.to_datetime(time).to_zoned(after.time_zone().clone()).ok()?;
+        (at > *after && days.contains(&at)).then_some(at)
+    })
+}
+
+fn between(now: Time, from: Time, to: Time) -> bool {
+    if from <= to { now >= from && now < to } else { now >= from || now < to }
+}
+
+/// A state trigger fires on the edge: the observed value now passes, and did not before.
+fn crosses(test: &Test, before: Option<&CapValue>, now: &CapValue) -> bool {
+    let Some(before) = before else { return false };
+    match test {
+        Test::Is(v) => now == v && before != v,
+        Test::Above(x) => now.number().is_some_and(|n| n > *x) && before.number().is_some_and(|b| b <= *x),
+        Test::Below(x) => now.number().is_some_and(|n| n < *x) && before.number().is_some_and(|b| b >= *x),
+        Test::Changes => now != before,
+    }
+}
+
+fn passes(test: &Test, value: &CapValue) -> bool {
+    match test {
+        Test::Is(v) => value == v,
+        Test::Above(x) => value.number().is_some_and(|n| n > *x),
+        Test::Below(x) => value.number().is_some_and(|n| n < *x),
+        Test::Changes => false,
+    }
+}
+
+// ------------------------------------------------------------------------------------- output
+
+/// What an automation did, or why it did nothing.
+#[derive(Debug, Clone, Serialize)]
+pub struct Run {
+    /// RFC 3339, local time.
+    pub at: String,
+    /// What started it: `"19:30"`, `"Lampe du salon on_off"`, `"manual"`.
+    pub trigger: String,
+    pub skipped: Option<String>,
+    pub results: Vec<ActionResult>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ActionResult {
+    pub entity: Option<Uuid>,
+    /// The entity's name, or the selector when it matched nothing.
+    pub target: String,
+    /// `set brightness 40` or `invoke play_pause`.
+    pub action: String,
+    pub ok: bool,
+    /// Command status (`pending`, `confirmed`), `sent`, or the error.
+    pub outcome: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DryRun {
+    pub conditions: Vec<Check>,
+    pub actions: Vec<Planned>,
+    /// Would it run now (every condition passes)?
+    pub would_run: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Check {
+    pub condition: Value,
+    pub ok: bool,
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Planned {
+    pub action: Value,
+    pub targets: Vec<PlannedTarget>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PlannedTarget {
+    pub entity: Uuid,
+    pub name: String,
+    /// The desired state differs from the value (a `set`); always true for an action.
+    pub changes: bool,
+    pub error: Option<String>,
+}
+
+fn describe_test(t: &StateTest) -> Value {
+    let test = match &t.test {
+        Test::Is(v) => json!({ "is": v.plain() }),
+        Test::Above(x) => json!({ "above": x }),
+        Test::Below(x) => json!({ "below": x }),
+        Test::Changes => json!({ "changes": true }),
+    };
+    json!({ "select": t.target.text, "cap": t.cap.to_string(), "test": test, "all": t.all })
+}
+
+fn describe_trigger(t: &Trigger) -> Value {
+    match t {
+        Trigger::At { time, days } => json!({ "at": time.strftime("%H:%M").to_string(), "days": days.names() }),
+        Trigger::When(test) => json!({ "when": describe_test(test) }),
+    }
+}
+
+fn describe_condition(c: &Condition) -> Value {
+    match c {
+        Condition::Between(from, to) => json!({ "between": [from.strftime("%H:%M").to_string(), to.strftime("%H:%M").to_string()] }),
+        Condition::Days(days) => json!({ "days": days.names() }),
+        Condition::State(test) => json!({ "state": describe_test(test) }),
+    }
+}
+
+fn describe_action(a: &Action) -> Value {
+    match a {
+        Action::Set { target, cap, value } => json!({ "set": { "select": target.text, "cap": cap.to_string(), "value": value.plain() } }),
+        Action::Invoke { target, action, params } => json!({ "invoke": { "select": target.text, "action": action, "params": params } }),
+    }
+}
+
+// ------------------------------------------------------------------------------------- engine
+
+#[derive(Default)]
+struct History {
+    runs: VecDeque<Run>,
+    recent: VecDeque<Instant>,
+    /// Stopped by the loop guard, until the core restarts.
+    stopped: Option<String>,
+}
+
+pub struct Automations {
+    list: Vec<Automation>,
+    history: Mutex<HashMap<String, History>>,
+    /// Last observed value per entity and capability, to see edges.
+    observed: Mutex<HashMap<(Uuid, CapKind), CapValue>>,
+}
+
+impl Automations {
+    /// Compiles the configured automations: any error is a config error.
+    pub fn new(configs: &[AutomationConfig]) -> Result<Self, String> {
+        let mut list: Vec<Automation> = vec![];
+        for c in configs {
+            if list.iter().any(|a| a.id == c.id) {
+                return Err(format!("two automations have the id `{}`", c.id));
+            }
+            list.push(Automation::compile(c)?);
+        }
+        Ok(Self { list, history: Mutex::default(), observed: Mutex::default() })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.list.is_empty()
+    }
+
+    fn get(&self, id: &str) -> Result<&Automation, String> {
+        self.list.iter().find(|a| a.id == id).ok_or_else(|| format!("unknown automation `{id}`"))
+    }
+
+    /// For the API: every automation, what it is, when it runs next, what may be wrong, its runs.
+    pub fn list(&self, core: &Core, now: &Zoned) -> Value {
+        let history = self.history.lock().unwrap();
+        let items: Vec<Value> = self
+            .list
+            .iter()
+            .map(|a| {
+                let h = history.get(&a.id);
+                let mut problems = core.with(|r| problems(a, r.entities.values()));
+                if let Some(stopped) = h.and_then(|h| h.stopped.clone()) {
+                    problems.insert(0, stopped);
+                }
+                json!({
+                    "id": a.id,
+                    "name": a.name,
+                    "enabled": a.enabled && h.is_none_or(|h| h.stopped.is_none()),
+                    "triggers": a.triggers.iter().map(describe_trigger).collect::<Vec<_>>(),
+                    "conditions": a.conditions.iter().map(describe_condition).collect::<Vec<_>>(),
+                    "actions": a.actions.iter().map(describe_action).collect::<Vec<_>>(),
+                    "next_run": a.enabled.then(|| a.next_time(now)).flatten().map(|z| z.timestamp().to_string()),
+                    "problems": problems,
+                    "runs": h.map(|h| h.runs.iter().rev().cloned().collect::<Vec<_>>()).unwrap_or_default(),
+                })
+            })
+            .collect();
+        json!(items)
+    }
+
+    /// What it would do now, without doing anything.
+    pub fn dry_run(&self, core: &Core, id: &str, now: &Zoned) -> Result<DryRun, String> {
+        let a = self.get(id)?;
+        let conditions: Vec<Check> = a
+            .conditions
+            .iter()
+            .map(|c| {
+                let (ok, reason) = core.with(|r| check(c, now, r.entities.values()));
+                Check { condition: describe_condition(c), ok, reason }
+            })
+            .collect();
+        let actions = core.with(|r| {
+            a.actions
+                .iter()
+                .map(|action| {
+                    let targets = match action {
+                        Action::Set { target, cap, value } => target
+                            .entities(r.entities.values())
+                            .into_iter()
+                            .map(|e| {
+                                let slot = e.caps.get(cap);
+                                let error = match slot {
+                                    None => Some(format!("{} has no {cap}", e.name)),
+                                    Some(slot) => slot.meta.validate(cap, value).err(),
+                                };
+                                let changes = slot.is_some_and(|s| s.desired.as_ref() != Some(value));
+                                PlannedTarget { entity: e.id, name: e.name.clone(), changes, error }
+                            })
+                            .collect(),
+                        Action::Invoke { target, action, .. } => target
+                            .entities(r.entities.values())
+                            .into_iter()
+                            .map(|e| PlannedTarget {
+                                entity: e.id,
+                                name: e.name.clone(),
+                                changes: true,
+                                error: (!e.actions.iter().any(|d| d.name == *action)).then(|| format!("{} has no action `{action}`", e.name)),
+                            })
+                            .collect(),
+                    };
+                    Planned { action: describe_action(action), targets }
+                })
+                .collect()
+        });
+        let would_run = conditions.iter().all(|c| c.ok);
+        Ok(DryRun { conditions, actions, would_run })
+    }
+
+    /// Runs it now (conditions still apply), as if triggered by `trigger`.
+    pub async fn run(&self, core: &Core, id: &str, trigger: String, now: &Zoned) -> Result<Run, String> {
+        let a = self.get(id)?;
+        let run = self.execute(core, a, trigger, now).await;
+        self.record(core, &a.id, run.clone());
+        Ok(run)
+    }
+
+    async fn execute(&self, core: &Core, a: &Automation, trigger: String, now: &Zoned) -> Run {
+        let mut run = Run { at: now.strftime("%Y-%m-%dT%H:%M:%S%:z").to_string(), trigger, skipped: None, results: vec![] };
+        {
+            let mut history = self.history.lock().unwrap();
+            let h = history.entry(a.id.clone()).or_default();
+            if let Some(stopped) = &h.stopped {
+                run.skipped = Some(stopped.clone());
+                return run;
+            }
+            let minute_ago = Instant::now() - Duration::from_secs(60);
+            while h.recent.front().is_some_and(|t| *t < minute_ago) {
+                h.recent.pop_front();
+            }
+            if h.recent.len() >= MAX_RUNS_PER_MINUTE {
+                let why = format!("stopped: ran {MAX_RUNS_PER_MINUTE} times in a minute (a loop?); restart the core to resume");
+                tracing::error!(automation = %a.id, "{why}");
+                h.stopped = Some(why.clone());
+                run.skipped = Some(why);
+                return run;
+            }
+            h.recent.push_back(Instant::now());
+        }
+        for c in &a.conditions {
+            let (ok, reason) = core.with(|r| check(c, now, r.entities.values()));
+            if !ok {
+                run.skipped = Some(reason);
+                return run;
+            }
+        }
+        for action in &a.actions {
+            match action {
+                Action::Set { target, cap, value } => {
+                    let label = format!("set {cap} {}", value.plain());
+                    let results = core.with(|r| {
+                        let ids: Vec<(Uuid, String)> = target.entities(r.entities.values()).iter().map(|e| (e.id, e.name.clone())).collect();
+                        ids.into_iter()
+                            .map(|(id, name)| {
+                                let status = r.set_desired(id, cap, value.clone(), Instant::now());
+                                ActionResult {
+                                    entity: Some(id),
+                                    target: name,
+                                    action: label.clone(),
+                                    ok: status.is_ok(),
+                                    outcome: match status {
+                                        Ok(s) => serde_json::to_value(&s).ok().and_then(|v| v["state"].as_str().map(String::from)).unwrap_or_default(),
+                                        Err(e) => e,
+                                    },
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                    run.results.extend(nothing_matched(results, target, &label));
+                }
+                Action::Invoke { target, action, params } => {
+                    let label = format!("invoke {action}");
+                    let ids: Vec<(Uuid, String)> =
+                        core.with(|r| target.entities(r.entities.values()).iter().map(|e| (e.id, e.name.clone())).collect());
+                    let mut results = vec![];
+                    for (id, name) in ids {
+                        let outcome = match core.plugins.get() {
+                            Some(plugins) => plugins.invoke(core, id, action, params.clone()).await,
+                            None => Err("plugins are not running".into()),
+                        };
+                        results.push(ActionResult {
+                            entity: Some(id),
+                            target: name,
+                            action: label.clone(),
+                            ok: outcome.is_ok(),
+                            outcome: outcome.map_or_else(|e| e, |()| "sent".into()),
+                        });
+                    }
+                    run.results.extend(nothing_matched(results, target, &label));
+                }
+            }
+        }
+        run
+    }
+
+    fn record(&self, core: &Core, id: &str, run: Run) {
+        tracing::info!(automation = %id, trigger = %run.trigger, skipped = ?run.skipped, "automation ran");
+        let mut history = self.history.lock().unwrap();
+        let runs = &mut history.entry(id.into()).or_default().runs;
+        if runs.len() == KEEP_RUNS {
+            runs.pop_front();
+        }
+        runs.push_back(run.clone());
+        let _ = core.changes.send(Event::Automation { id: id.into(), run });
+    }
+
+    /// The automations a state change triggers, with what triggered them.
+    fn triggered_by(&self, core: &Core, change: &Change) -> Vec<(usize, String)> {
+        let Some(now) = change.slot.observed.clone() else { return vec![] };
+        let before = self.observed.lock().unwrap().insert((change.id, change.cap.clone()), now.clone());
+        if before.as_ref() == Some(&now) {
+            return vec![]; // Not an observed change (a wish, a status).
+        }
+        let Some(entity) = core.with(|r| r.entities.get(&change.id).cloned()) else { return vec![] };
+        self.list
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.enabled)
+            .filter_map(|(i, a)| {
+                a.triggers.iter().find_map(|t| match t {
+                    Trigger::When(w) if w.cap == change.cap && w.target.select.matches(&entity) && crosses(&w.test, before.as_ref(), &now) => {
+                        Some((i, format!("{} {}", entity.name, change.cap)))
+                    }
+                    _ => None,
+                })
+            })
+            .collect()
+    }
+
+    /// The engine: sleeps until the next `at`, wakes on observed changes. Runs forever.
+    pub async fn drive(self: Arc<Self>, core: Arc<Core>) {
+        let mut changes = core.changes.subscribe();
+        // Seed the observed values: a value already true at start is not an edge.
+        core.with(|r| {
+            let mut observed = self.observed.lock().unwrap();
+            for e in r.entities.values() {
+                for (cap, slot) in &e.caps {
+                    if let Some(v) = &slot.observed {
+                        observed.insert((e.id, cap.clone()), v.clone());
+                    }
+                }
+            }
+        });
+        let mut checked = Zoned::now();
+        loop {
+            let next = self.list.iter().filter(|a| a.enabled).filter_map(|a| a.next_time(&checked)).min();
+            // At most a minute: follows clock and time-zone changes.
+            let wait = next
+                .map(|n| n.duration_since(&Zoned::now()).unsigned_abs())
+                .unwrap_or(Duration::MAX)
+                .min(Duration::from_secs(60));
+            tokio::select! {
+                () = tokio::time::sleep(wait) => {
+                    let now = Zoned::now();
+                    for a in self.list.iter().filter(|a| a.enabled) {
+                        if let Some(due) = a.next_time(&checked).filter(|due| *due <= now) {
+                            let trigger = due.strftime("%H:%M").to_string();
+                            let run = self.execute(&core, a, trigger, &now).await;
+                            self.record(&core, &a.id, run);
+                        }
+                    }
+                    checked = now;
+                }
+                event = changes.recv() => match event {
+                    Ok(Event::Slot(change)) => {
+                        for (i, trigger) in self.triggered_by(&core, &change) {
+                            let a = &self.list[i];
+                            let run = self.execute(&core, a, trigger, &Zoned::now()).await;
+                            self.record(&core, &a.id, run);
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => tracing::warn!("automations missed {n} changes"),
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                },
+            }
+        }
+    }
+}
+
+fn nothing_matched(results: Vec<ActionResult>, target: &Target, label: &str) -> Vec<ActionResult> {
+    if !results.is_empty() {
+        return results;
+    }
+    vec![ActionResult { entity: None, target: target.text.clone(), action: label.into(), ok: false, outcome: "matches no device".into() }]
+}
+
+/// Whether a condition holds now, and why (or why not), in words for the dry run and the log.
+fn check<'a>(c: &Condition, now: &Zoned, entities: impl IntoIterator<Item = &'a Entity>) -> (bool, String) {
+    match c {
+        Condition::Between(from, to) => {
+            let ok = between(now.time(), *from, *to);
+            (ok, format!("{} is {}between {} and {}", now.strftime("%H:%M"), if ok { "" } else { "not " }, from.strftime("%H:%M"), to.strftime("%H:%M")))
+        }
+        Condition::Days(days) => {
+            let ok = days.contains(now);
+            (ok, format!("{} is {}one of {}", now.strftime("%a"), if ok { "" } else { "not " }, days.names().join(", ")))
+        }
+        Condition::State(t) => {
+            let values: Vec<(String, Option<CapValue>)> = t
+                .target
+                .entities(entities)
+                .into_iter()
+                .filter_map(|e| e.caps.get(&t.cap).map(|s| (e.name.clone(), s.observed.clone())))
+                .collect();
+            if values.is_empty() {
+                return (false, format!("`{}` matches no device with {}", t.target.text, t.cap));
+            }
+            let pass = |v: &Option<CapValue>| v.as_ref().is_some_and(|v| passes(&t.test, v));
+            let ok = if t.all { values.iter().all(|(_, v)| pass(v)) } else { values.iter().any(|(_, v)| pass(v)) };
+            let shown: Vec<String> = values
+                .iter()
+                .map(|(name, v)| format!("{name}: {}", v.as_ref().map_or("unknown".into(), |v| v.plain().to_string())))
+                .collect();
+            (ok, format!("{} {}", shown.join(", "), if ok { "(passes)" } else { "(does not pass)" }))
+        }
+    }
+}
+
+/// What may be wrong with an automation given the devices now: selectors matching nothing,
+/// devices without the capability or the action.
+fn problems<'a>(a: &Automation, entities: impl IntoIterator<Item = &'a Entity> + Clone) -> Vec<String> {
+    let mut out = vec![];
+    let mut empty = |target: &Target, need: &str, has: &dyn Fn(&Entity) -> bool| {
+        let matched = target.entities(entities.clone());
+        if matched.is_empty() {
+            out.push(format!("`{}` matches no device", target.text));
+        } else if !matched.iter().any(|e| has(e)) {
+            out.push(format!("`{}` matches no device with {need}", target.text));
+        }
+    };
+    for t in &a.triggers {
+        if let Trigger::When(w) = t {
+            empty(&w.target, &w.cap.to_string(), &|e| e.caps.contains_key(&w.cap));
+        }
+    }
+    for c in &a.conditions {
+        if let Condition::State(s) = c {
+            empty(&s.target, &s.cap.to_string(), &|e| e.caps.contains_key(&s.cap));
+        }
+    }
+    for action in &a.actions {
+        match action {
+            Action::Set { target, cap, .. } => empty(target, &cap.to_string(), &|e| e.caps.contains_key(cap)),
+            Action::Invoke { target, action, .. } => {
+                empty(target, &format!("the action `{action}`"), &|e| e.actions.iter().any(|d| d.name == *action))
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use jiff::tz::TimeZone;
+    use tokio::sync::mpsc;
+
+    use super::*;
+    use crate::{
+        model::{CapMeta, CapSlot},
+        reconciler::Reconciler,
+    };
+
+    fn config(toml_text: &str) -> Result<Automations, String> {
+        #[derive(Deserialize)]
+        struct File {
+            automation: Vec<AutomationConfig>,
+        }
+        let file: File = toml::from_str(toml_text).map_err(|e| e.to_string())?;
+        Automations::new(&file.automation)
+    }
+
+    fn paris(text: &str) -> Zoned {
+        let dt: jiff::civil::DateTime = text.parse().unwrap();
+        dt.to_zoned(TimeZone::get("Europe/Paris").unwrap()).unwrap()
+    }
+
+    fn lamp(on: bool) -> Entity {
+        Entity {
+            id: crate::model::entity_uuid("mock", "lamp"),
+            name: "Lampe".into(),
+            room: Some("Salon".into()),
+            tags: vec![],
+            available: true,
+            plugin: "mock".into(),
+            local_id: "lamp".into(),
+            device: None,
+            model: None,
+            actions: vec![],
+            caps: BTreeMap::from([
+                (CapKind::OnOff, CapSlot { observed: Some(CapValue::OnOff(on)), desired: Some(CapValue::OnOff(on)), ..Default::default() }),
+                (
+                    CapKind::Brightness,
+                    CapSlot { meta: CapMeta { max: Some(100.0), ..Default::default() }, observed: Some(CapValue::Brightness(10)), ..Default::default() },
+                ),
+            ]),
+        }
+    }
+
+    fn core(entities: Vec<Entity>) -> (Core, mpsc::UnboundedReceiver<crate::reconciler::Command>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        (Core::new(Reconciler::new(entities.into_iter().map(|e| (e.id, e)).collect()), tx), rx)
+    }
+
+    const EVENING: &str = r#"
+        [[automation]]
+        id = "evening"
+        name = "Lampe du soir"
+        [[automation.trigger]]
+        at = "19:30"
+        days = ["mon", "tue", "wed", "thu", "fri"]
+        [[automation.condition]]
+        between = ["18:00", "01:00"]
+        [[automation.action]]
+        set = { select = "room:Salon & cap:brightness", cap = "brightness", value = 40 }
+    "#;
+
+    #[test]
+    fn a_complete_automation_loads() {
+        let automations = config(EVENING).unwrap();
+        assert_eq!(automations.list[0].name, "Lampe du soir");
+    }
+
+    #[test]
+    fn config_errors_say_what_and_where() {
+        let base = |extra: &str, action: &str| format!(
+            "[[automation]]\nid = \"a\"\n[[automation.trigger]]\n{extra}\n[[automation.action]]\n{action}\n"
+        );
+        let ok_action = r#"set = { select = "room:Salon", cap = "on_off", value = true }"#;
+        for (text, what) in [
+            (base(r#"at = "25:00""#, ok_action), "not a time"),
+            (base(r#"at = "19:30"
+days = ["monday"]"#, ok_action), "unknown day"),
+            (base(r#"when = { select = "room:Salon", cap = "on_off", above = 1 }"#, ok_action), "not a number"),
+            (base(r#"when = { select = "room:Salon", cap = "on_off" }"#, ok_action), "exactly one test"),
+            (base(r#"at = "19:30""#, r#"set = { select = "room:Salon", cap = "brightnes", value = 40 }"#), "unknown capability"),
+            (base(r#"at = "19:30""#, r#"set = { select = "room:Salon", cap = "brightness", value = "high" }"#), "not a brightness"),
+            (base(r#"at = "19:30""#, r#"set = { select = "rooms:Salon", cap = "on_off", value = true }"#), "unknown term"),
+            (base(r#"at = "19:30""#, r#"sett = { select = "room:Salon", cap = "on_off", value = true }"#), "unknown field"),
+            (format!("{}\n{}", base(r#"at = "19:30""#, ok_action), base(r#"at = "19:30""#, ok_action)), "two automations"),
+        ] {
+            let err = config(&text).err().unwrap_or_default();
+            assert!(err.contains(what), "{what}: got `{err}` for\n{text}");
+        }
+    }
+
+    #[test]
+    fn next_time_respects_days_midnight_and_daylight_saving() {
+        let a = &config(EVENING).unwrap().list[0];
+        // Friday 20:00 -> Monday 19:30.
+        assert_eq!(a.next_time(&paris("2026-10-16T20:00")).unwrap().to_string(), "2026-10-19T19:30:00+02:00[Europe/Paris]");
+        // Same day, later.
+        assert_eq!(a.next_time(&paris("2026-10-19T08:00")).unwrap().datetime().to_string(), "2026-10-19T19:30:00");
+        // Exactly at the time: strictly after, so the next working day.
+        assert_eq!(a.next_time(&paris("2026-10-19T19:30")).unwrap().datetime().to_string(), "2026-10-20T19:30:00");
+        // A 02:30 trigger on the spring-forward night happens at 03:30.
+        let night = next_at("02:30".parse().unwrap(), Days::ALL, &paris("2026-03-29T00:00")).unwrap();
+        assert_eq!(night.to_string(), "2026-03-29T03:30:00+02:00[Europe/Paris]");
+        assert!(between("00:30".parse().unwrap(), "18:00".parse().unwrap(), "01:00".parse().unwrap()), "across midnight");
+    }
+
+    #[test]
+    fn state_triggers_fire_on_the_edge_only() {
+        let on = Test::Is(CapValue::OnOff(true));
+        assert!(crosses(&on, Some(&CapValue::OnOff(false)), &CapValue::OnOff(true)));
+        assert!(!crosses(&on, Some(&CapValue::OnOff(true)), &CapValue::OnOff(true)), "already on");
+        assert!(!crosses(&on, None, &CapValue::OnOff(true)), "first sighting is not an edge");
+        let above = Test::Above(50.0);
+        assert!(crosses(&above, Some(&CapValue::Volume(40)), &CapValue::Volume(60)));
+        assert!(!crosses(&above, Some(&CapValue::Volume(55)), &CapValue::Volume(60)), "was above already");
+    }
+
+    #[tokio::test]
+    async fn dry_run_changes_nothing_and_run_sets_desired_states() {
+        let automations = config(EVENING).unwrap();
+        let (core, mut commands) = core(vec![lamp(true)]);
+        let monday_evening = paris("2026-10-19T19:30");
+
+        let dry = automations.dry_run(&core, "evening", &monday_evening).unwrap();
+        assert!(dry.would_run);
+        assert_eq!(dry.actions[0].targets[0].name, "Lampe");
+        assert!(dry.actions[0].targets[0].changes);
+        assert!(commands.try_recv().is_err(), "a dry run sends nothing");
+
+        let run = automations.run(&core, "evening", "19:30".into(), &monday_evening).await.unwrap();
+        assert_eq!(run.skipped, None);
+        assert_eq!(run.results[0].outcome, "pending");
+        assert_eq!(commands.try_recv().unwrap().value, CapValue::Brightness(40));
+
+        let noon = automations.run(&core, "evening", "manual".into(), &paris("2026-10-19T12:00")).await.unwrap();
+        assert!(noon.skipped.unwrap().contains("not between 18:00 and 01:00"));
+    }
+
+    #[tokio::test]
+    async fn problems_name_selectors_that_match_nothing_and_the_log_is_bounded() {
+        let automations = config(
+            r#"
+            [[automation]]
+            id = "ghost"
+            [[automation.trigger]]
+            when = { select = "room:Cave", cap = "on_off", becomes = true }
+            [[automation.action]]
+            invoke = { select = "room:Salon", action = "blink" }
+        "#,
+        )
+        .unwrap();
+        let (core, _commands) = core(vec![lamp(false)]);
+        let now = paris("2026-10-19T12:00");
+        let list = automations.list(&core, &now);
+        let problems = list[0]["problems"].as_array().unwrap();
+        assert!(problems.iter().any(|p| p.as_str().unwrap().contains("`room:Cave` matches no device")));
+        assert!(problems.iter().any(|p| p.as_str().unwrap().contains("the action `blink`")));
+
+        for _ in 0..(MAX_RUNS_PER_MINUTE + 5) {
+            automations.run(&core, "ghost", "manual".into(), &now).await.unwrap();
+        }
+        let list = automations.list(&core, &now);
+        assert_eq!(list[0]["runs"].as_array().unwrap().len(), MAX_RUNS_PER_MINUTE + 5);
+        assert_eq!(list[0]["enabled"], false, "stopped by the loop guard");
+        assert!(list[0]["runs"][0]["skipped"].as_str().unwrap().contains("a loop?"));
+    }
+
+    #[tokio::test]
+    async fn an_observed_change_triggers_but_a_wish_does_not() {
+        let automations = config(
+            r#"
+            [[automation]]
+            id = "follow"
+            [[automation.trigger]]
+            when = { select = "room:Salon", cap = "on_off", becomes = true }
+            [[automation.action]]
+            set = { select = "room:Salon", cap = "brightness", value = 80 }
+        "#,
+        )
+        .unwrap();
+        let (core, _commands) = core(vec![lamp(false)]);
+        let id = lamp(false).id;
+        let change = |on: bool, observed: bool| Change {
+            id,
+            cap: CapKind::OnOff,
+            slot: CapSlot { observed: observed.then_some(CapValue::OnOff(on)), desired: Some(CapValue::OnOff(on)), ..Default::default() },
+        };
+        assert!(automations.triggered_by(&core, &change(false, true)).is_empty(), "first sighting");
+        assert!(automations.triggered_by(&core, &change(true, false)).is_empty(), "a wish only");
+        assert_eq!(automations.triggered_by(&core, &change(true, true)).len(), 1, "now really on");
+        assert!(automations.triggered_by(&core, &change(true, true)).is_empty(), "still on");
+    }
+}

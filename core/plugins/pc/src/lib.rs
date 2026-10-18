@@ -1,14 +1,15 @@
 //! A PC running the HomeMaid agent, as an entity: volume, mute and sensors (CPU, RAM, active window).
 //!
 //! Settings: `agent` = `ip:port` of the agent (`127.0.0.1:8124` on the same PC). Secret: `token`
-//! (the agent's `agent.token`). Momentary actions (media keys, launching apps) are not states:
-//! they go through the agent's direct channel, not the core.
+//! (the agent's `agent.token`). One-shot actions (plugin-api 1.1): media keys, lock, sleep,
+//! shutdown, opening a configured shortcut or app; they are not states, so they are actions,
+//! for automations and the app. The remote itself talks to the agent directly, for latency.
 
 use std::{collections::BTreeMap, net::SocketAddr, sync::Mutex};
 
 use homemaid_plugin::{
-    CapKind, CapMeta, CapValue, DiscoveredEntity, LOCAL_NETWORK, LogLevel, Manifest, Plugin, http, log, report_state,
-    secret, set_available,
+    ActionDecl, Actions, CapKind, CapMeta, CapValue, DiscoveredEntity, LOCAL_NETWORK, LogLevel, Manifest, Plugin, http,
+    log, report_state, secret, set_available,
 };
 use serde_json::{Value, json};
 
@@ -131,4 +132,41 @@ impl Plugin for Pc {
     }
 }
 
-homemaid_plugin::export!(Pc with_types_in homemaid_plugin::bindings);
+/// Actions without parameters, and the agent request each one sends.
+const SIMPLE: [(&str, &str, &str); 6] = [
+    ("play_pause", "media", "play_pause"),
+    ("next", "media", "next"),
+    ("previous", "media", "previous"),
+    ("lock", "power", "lock"),
+    ("sleep", "power", "sleep"),
+    ("shutdown", "power", "shutdown"),
+];
+
+impl Actions for Pc {
+    fn actions() -> Vec<ActionDecl> {
+        let named = |key: &str| Some(json!({ "type": "object", "properties": { key: { "type": "string" } }, "required": [key] }));
+        let simple = SIMPLE.iter().map(|(name, ..)| ActionDecl { local_id: LOCAL_ID.into(), name: (*name).into(), params: None });
+        simple
+            .chain([
+                ActionDecl { local_id: LOCAL_ID.into(), name: "open".into(), params: named("shortcut") },
+                ActionDecl { local_id: LOCAL_ID.into(), name: "launch".into(), params: named("app") },
+            ])
+            .collect()
+    }
+
+    fn invoke(local_id: &str, name: &str, params: Value) -> Result<(), String> {
+        if local_id != LOCAL_ID {
+            return Err(format!("unknown entity {local_id}"));
+        }
+        let text = |key: &str| params[key].as_str().map(str::to_string).ok_or(format!("`{name}` needs `{key}`"));
+        let request = match (name, SIMPLE.iter().find(|(n, ..)| *n == name)) {
+            (_, Some((_, kind, action))) => json!({ "type": kind, "action": action }),
+            ("open", None) => json!({ "type": "open", "shortcut": text("shortcut")? }),
+            ("launch", None) => json!({ "type": "launch", "app": text("app")? }),
+            _ => return Err(format!("unknown action `{name}`")),
+        };
+        with_state(|state| call(state, request).map(drop))
+    }
+}
+
+homemaid_plugin::export_with_actions!(Pc with_types_in homemaid_plugin::bindings_actions);

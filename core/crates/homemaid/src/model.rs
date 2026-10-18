@@ -47,6 +47,18 @@ pub struct Entity {
     #[serde(default)]
     pub model: Option<String>,
     pub caps: BTreeMap<CapKind, CapSlot>,
+    /// One-shot actions the plugin offers (media next, lock...): not states, never retried.
+    #[serde(default)]
+    pub actions: Vec<ActionDecl>,
+}
+
+/// An action an entity can do, declared by its plugin (plugin-api 1.1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActionDecl {
+    pub name: String,
+    /// JSON schema of the parameters; none takes no parameters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
 }
 
 const NAMESPACE: Uuid = Uuid::from_u128(0x5d1e_8c4a_9b3f_4e27_a6d0_1f2c_3b4a_5e6f);

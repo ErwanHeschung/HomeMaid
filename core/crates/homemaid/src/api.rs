@@ -2,8 +2,10 @@
 //!
 //! Methods: `entities.list`, `entity.set_desired { id, cap, value }`,
 //! `entity.update { id, name?, room?, tags?, model? }` (saved to the config file), `rooms.list`,
-//! `room.update { name, kind }` (saved too; empty kind clears it), `subscribe` (then
-//! `state.changed { id, cap, slot }`, `entity.changed { entity }` and `room.changed { name, kind }`
+//! `room.update { name, kind }` (saved too; empty kind clears it), `entity.invoke { id, action,
+//! params? }` (a one-shot action), `automations.list`, `automation.dry_run { id }`,
+//! `automation.run { id }`, `subscribe` (then `state.changed { id, cap, slot }`,
+//! `entity.changed { entity }`, `room.changed { name, kind }` and `automation.ran { id, run }`
 //! notifications).
 //! `/pair` serves the pairing QR code to the PC itself.
 
@@ -93,7 +95,9 @@ async fn session(mut socket: WebSocket, app: AppState) {
     loop {
         let reply = tokio::select! {
             msg = socket.recv() => match msg {
-                Some(Ok(Message::Text(text))) => handle(&app, text.as_str(), &mut subscribed),
+                // ponytail: one request at a time per client; an action waits for its plugin (ms
+                // usually, 70 s at worst). Spawn handlers if a slow plugin ever holds a client up.
+                Some(Ok(Message::Text(text))) => handle(&app, text.as_str(), &mut subscribed).await,
                 Some(Ok(_)) => continue,
                 _ => break,
             },
@@ -101,6 +105,9 @@ async fn session(mut socket: WebSocket, app: AppState) {
                 Ok(Event::Slot(change)) if subscribed => json!({ "jsonrpc": "2.0", "method": "state.changed", "params": change }),
                 Ok(Event::Entity(entity)) if subscribed => json!({ "jsonrpc": "2.0", "method": "entity.changed", "params": { "entity": entity } }),
                 Ok(Event::Room(room)) if subscribed => json!({ "jsonrpc": "2.0", "method": "room.changed", "params": room }),
+                Ok(Event::Automation { id, run }) if subscribed => {
+                    json!({ "jsonrpc": "2.0", "method": "automation.ran", "params": { "id": id, "run": run } })
+                }
                 Ok(_) => continue,
                 Err(RecvError::Lagged(n)) => {
                     tracing::warn!("websocket client lagged, {n} changes dropped");
@@ -131,7 +138,20 @@ struct SetDesired {
     value: CapValue,
 }
 
-fn handle(app: &AppState, text: &str, subscribed: &mut bool) -> Value {
+#[derive(Deserialize)]
+struct Invoke {
+    id: Uuid,
+    action: String,
+    #[serde(default)]
+    params: Value,
+}
+
+#[derive(Deserialize)]
+struct AutomationId {
+    id: String,
+}
+
+async fn handle(app: &AppState, text: &str, subscribed: &mut bool) -> Value {
     let req: Request = match serde_json::from_str(text) {
         Ok(req) => req,
         Err(e) => return error(Value::Null, -32700, e.to_string()),
@@ -155,6 +175,27 @@ fn handle(app: &AppState, text: &str, subscribed: &mut bool) -> Value {
         "room.update" => serde_json::from_value::<RoomConfig>(req.params)
             .map_err(|e| (-32602, e.to_string()))
             .and_then(|room| update_room(app, room).map_err(|e| (-32000, e))),
+        "entity.invoke" => match serde_json::from_value::<Invoke>(req.params) {
+            Err(e) => Err((-32602, e.to_string())),
+            Ok(p) => match app.core.plugins.get() {
+                Some(plugins) => plugins.invoke(&app.core, p.id, &p.action, p.params).await.map(|()| json!(true)).map_err(|e| (-32000, e)),
+                None => Err((-32000, "plugins are not running".into())),
+            },
+        },
+        "automations.list" => match app.core.automations.get() {
+            Some(automations) => Ok(automations.list(&app.core, &jiff::Zoned::now())),
+            None => Ok(json!([])),
+        },
+        "automation.dry_run" => match (serde_json::from_value::<AutomationId>(req.params), app.core.automations.get()) {
+            (Err(e), _) => Err((-32602, e.to_string())),
+            (Ok(_), None) => Err((-32000, "no automations".into())),
+            (Ok(p), Some(a)) => a.dry_run(&app.core, &p.id, &jiff::Zoned::now()).map(|d| json!(d)).map_err(|e| (-32000, e)),
+        },
+        "automation.run" => match (serde_json::from_value::<AutomationId>(req.params), app.core.automations.get()) {
+            (Err(e), _) => Err((-32602, e.to_string())),
+            (Ok(_), None) => Err((-32000, "no automations".into())),
+            (Ok(p), Some(a)) => a.run(&app.core, &p.id, "manual".into(), &jiff::Zoned::now()).await.map(|r| json!(r)).map_err(|e| (-32000, e)),
+        },
         "subscribe" => {
             *subscribed = true;
             Ok(json!(true))

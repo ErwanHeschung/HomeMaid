@@ -130,6 +130,9 @@ class CoreClient extends ChangeNotifier {
   /// Room kinds the user chose, by room name; the others are inferred from the name.
   final roomKinds = <String, String>{};
 
+  /// The core's automations (written in its homemaid.toml), with their last runs.
+  List<Automation> automations = const [];
+
   Future<Object?> call(String method, [Object? params]) {
     final id = ++_nextId;
     final completer = Completer<Object?>();
@@ -150,6 +153,24 @@ class CoreClient extends ChangeNotifier {
   /// An empty room removes it; an empty model goes back to the inferred one.
   Future<void> update(String id, {String? name, String? room, String? model}) =>
       call('entity.update', {'id': id, 'name': ?name, 'room': ?room, 'model': ?model});
+
+  /// Runs an entity's one-shot action now.
+  Future<void> invoke(String id, String action, [Map<String, Object?>? params]) =>
+      call('entity.invoke', {'id': id, 'action': action, 'params': ?params});
+
+  Future<void> refreshAutomations() async {
+    final list = await call('automations.list') as List;
+    automations = [for (final a in list) Automation.fromJson((a as Map).cast())];
+    notifyListeners();
+  }
+
+  Future<DryRun> dryRun(String id) async => DryRun.fromJson((await call('automation.dry_run', {'id': id}) as Map).cast());
+
+  Future<Run> runAutomation(String id) async {
+    final run = Run.fromJson((await call('automation.run', {'id': id}) as Map).cast());
+    await refreshAutomations();
+    return run;
+  }
 
   /// Saved in homemaid.toml; an empty kind goes back to the inferred one.
   Future<void> updateRoom(String name, String kind) => call('room.update', {'name': name, 'kind': kind});
@@ -176,6 +197,8 @@ class CoreClient extends ChangeNotifier {
       roomKinds
         ..clear()
         ..addEntries(rooms.map((r) => MapEntry((r as Map)['name'] as String, r['kind'] as String)));
+      // An older core has no automations: an empty list.
+      await refreshAutomations().catchError((Object _) {});
       entities
         ..clear()
         ..addEntries(list.map((json) {
@@ -209,6 +232,10 @@ class CoreClient extends ChangeNotifier {
       case 'entity.changed':
         final entity = Entity.fromJson((params['entity'] as Map).cast<String, dynamic>());
         entities[entity.id] = entity;
+      case 'automation.ran':
+        // The run comes with its automation's new history and next time: read them again.
+        refreshAutomations().catchError((Object _) {});
+        return;
       case 'room.changed':
         final name = params['name'] as String;
         if (params['kind'] case final String kind) {

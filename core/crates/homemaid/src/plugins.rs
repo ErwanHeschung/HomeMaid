@@ -1,4 +1,5 @@
-//! Plugin host (plugin-api v1): each WASM plugin runs sandboxed in its own thread.
+//! Plugin host (plugin-api 1.x): each WASM plugin runs sandboxed in its own thread. A plugin that
+//! exports `invoke` (plugin-api 1.1) also offers one-shot actions.
 //!
 //! Commands are applied as soon as they arrive, then the plugin is refreshed to read the new state
 //! back; in between, it is refreshed at the interval it asks for. A plugin that traps is marked offline and restarted with backoff.
@@ -27,7 +28,7 @@ use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView, sockets::SocketAddrUse};
 use crate::{
     Core,
     config::PluginConfig,
-    model::{CapKind, CapMeta, CapSlot, CapValue, Entity, entity_uuid},
+    model::{ActionDecl, CapKind, CapMeta, CapSlot, CapValue, Entity, entity_uuid},
     reconciler::Command,
     store,
 };
@@ -36,10 +37,44 @@ mod wit {
     wasmtime::component::bindgen!({ path: "../../plugin-api/wit", world: "plugin" });
 }
 
+/// The 1.1 world: the same host and types, plus actions.
+mod wit_actions {
+    wasmtime::component::bindgen!({
+        path: "../../plugin-api/wit",
+        world: "plugin-with-actions",
+        with: {
+            "homemaid:plugin/types": super::wit::homemaid::plugin::types,
+            "homemaid:plugin/host": super::wit::homemaid::plugin::host,
+        },
+    });
+}
+
 use wit::{
     Plugin,
     homemaid::plugin::{host, types},
 };
+use wit_actions::PluginWithActions;
+
+/// A running plugin, with or without actions; the calls they share go through [`call!`].
+enum Instance {
+    Plain(Plugin),
+    Actions(PluginWithActions),
+}
+
+macro_rules! call {
+    ($instance:expr, $method:ident($($arg:expr),*)) => {
+        match $instance {
+            Instance::Plain(p) => p.$method($($arg),*),
+            Instance::Actions(p) => p.$method($($arg),*),
+        }
+    };
+}
+
+/// What a plugin's thread is asked to do.
+enum Job {
+    Apply(String, Command),
+    Invoke { local_id: String, name: String, params: String, reply: tokio::sync::oneshot::Sender<Result<(), String>> },
+}
 
 const API_MAJOR: &str = "1.";
 const LOCAL_NETWORK: &str = "local-network";
@@ -54,7 +89,7 @@ const MAX_RESTART: Duration = Duration::from_secs(60);
 type Secrets = BTreeMap<String, BTreeMap<String, String>>;
 
 pub struct Plugins {
-    senders: HashMap<String, mpsc::Sender<(String, Command)>>,
+    senders: HashMap<String, mpsc::Sender<Job>>,
 }
 
 impl Plugins {
@@ -102,8 +137,35 @@ impl Plugins {
         let target = core.with(|r| r.entities.get(&command.entity).map(|e| (e.plugin.clone(), e.local_id.clone())));
         match target.and_then(|(plugin, local_id)| Some((self.senders.get(&plugin)?, local_id))) {
             // A stopped plugin drops the command; the reconciler fails it after its retries.
-            Some((tx, local_id)) => drop(tx.send((local_id, command))),
+            Some((tx, local_id)) => drop(tx.send(Job::Apply(local_id, command))),
             None => tracing::warn!(?command, "no plugin for entity, command dropped"),
+        }
+    }
+
+    /// Runs one of an entity's declared actions now. `params` is JSON (`{}` for none).
+    pub async fn invoke(&self, core: &Core, entity: Uuid, action: &str, params: serde_json::Value) -> Result<(), String> {
+        let (plugin, local_id, decl) = core.with(|r| {
+            let e = r.entities.get(&entity).ok_or("unknown entity")?;
+            if !e.available {
+                return Err(format!("{} is offline", e.name));
+            }
+            let decl = e.actions.iter().find(|a| a.name == action).cloned();
+            let decl = decl.ok_or_else(|| format!("{} has no action `{action}`", e.name))?;
+            Ok((e.plugin.clone(), e.local_id.clone(), decl))
+        })?;
+        let empty = params.is_null() || params.as_object().is_some_and(|o| o.is_empty());
+        if decl.params.is_none() && !empty {
+            return Err(format!("`{action}` takes no parameters"));
+        }
+        // ponytail: params are not checked against their JSON schema; add a validator when a plugin needs it.
+        let tx = self.senders.get(&plugin).ok_or_else(|| format!("plugin `{plugin}` is not running"))?;
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        let params = if params.is_null() { "{}".into() } else { params.to_string() };
+        tx.send(Job::Invoke { local_id, name: action.into(), params, reply }).map_err(|_| format!("plugin `{plugin}` stopped"))?;
+        match tokio::time::timeout(Duration::from_secs(70), answer).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(format!("plugin `{plugin}` stopped")),
+            Err(_) => Err(format!("plugin `{plugin}` did not answer")),
         }
     }
 }
@@ -122,7 +184,7 @@ struct Runner {
 }
 
 impl Runner {
-    fn supervise(&self, rx: &mpsc::Receiver<(String, Command)>) {
+    fn supervise(&self, rx: &mpsc::Receiver<Job>) {
         // Compiled here rather than in `start`: it takes seconds and must not hold up the core.
         let component = match Component::from_file(&self.engine, &self.cfg.path) {
             Ok(component) => component,
@@ -150,16 +212,22 @@ impl Runner {
         }
     }
 
-    fn run(&self, component: &Component, rx: &mpsc::Receiver<(String, Command)>, delay: &mut Duration) -> wasmtime::Result<Exit> {
+    fn run(&self, component: &Component, rx: &mpsc::Receiver<Job>, delay: &mut Duration) -> wasmtime::Result<Exit> {
         let network = Arc::new(AtomicBool::new(false));
         let mut store = self.store(network.clone())?;
         let mut linker = Linker::new(&self.engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
-        Plugin::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)?;
-        let plugin = Plugin::instantiate(&mut store, component, &linker)?;
+        // The 1.1 linker is a superset: it also satisfies 1.0 plugins.
+        PluginWithActions::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)?;
+        let has_actions = component.component_type().exports(&self.engine).any(|(name, _)| name == "invoke");
+        let plugin = if has_actions {
+            Instance::Actions(PluginWithActions::instantiate(&mut store, component, &linker)?)
+        } else {
+            Instance::Plain(Plugin::instantiate(&mut store, component, &linker)?)
+        };
 
         store.set_epoch_deadline(CALL_BUDGET);
-        let manifest = plugin.call_manifest(&mut store)?;
+        let manifest = call!(&plugin, call_manifest(&mut store))?;
         if let Err(reason) = check_manifest(&manifest, &self.cfg) {
             return Ok(Exit::Disabled(reason));
         }
@@ -168,10 +236,28 @@ impl Runner {
 
         let settings: Vec<(String, String)> = self.cfg.settings.clone().into_iter().collect();
         store.set_epoch_deadline(CALL_BUDGET);
-        plugin.call_init(&mut store, &settings)?.map_err(|e| wasmtime::Error::msg(format!("init: {e}")))?;
+        call!(&plugin, call_init(&mut store, &settings))?.map_err(|e| wasmtime::Error::msg(format!("init: {e}")))?;
         store.set_epoch_deadline(CALL_BUDGET);
-        let discovered = plugin.call_discover(&mut store)?.map_err(|e| wasmtime::Error::msg(format!("discover: {e}")))?;
-        let entities: Vec<Entity> = discovered.into_iter().map(|e| self.to_entity(e)).collect();
+        let discovered = call!(&plugin, call_discover(&mut store))?.map_err(|e| wasmtime::Error::msg(format!("discover: {e}")))?;
+        let mut actions: HashMap<String, Vec<ActionDecl>> = HashMap::new();
+        if let Instance::Actions(p) = &plugin {
+            store.set_epoch_deadline(CALL_BUDGET);
+            for a in p.call_list_actions(&mut store)? {
+                let params = match a.params.as_deref().map(serde_json::from_str).transpose() {
+                    Ok(params) => params,
+                    Err(e) => {
+                        tracing::warn!(plugin = %self.cfg.id, "{}: action `{}` ignored, invalid params schema: {e}", a.local_id, a.name);
+                        continue;
+                    }
+                };
+                actions.entry(a.local_id).or_default().push(ActionDecl { name: a.name, params });
+            }
+        }
+        let entities: Vec<Entity> =
+            discovered.into_iter().map(|e| {
+                let mine = actions.remove(&e.local_id).unwrap_or_default();
+                self.to_entity(e, mine)
+            }).collect();
         tracing::info!(plugin = %self.cfg.id, version = %manifest.version, "started with {} entities", entities.len());
         let now = Instant::now();
         self.core.with(|r| entities.into_iter().for_each(|e| r.upsert(e, now)));
@@ -180,18 +266,33 @@ impl Runner {
         let mut next_refresh = Instant::now();
         loop {
             match rx.recv_timeout(next_refresh.saturating_duration_since(Instant::now())) {
-                Ok((local_id, command)) => {
+                Ok(Job::Apply(local_id, command)) => {
                     let value = serde_json::to_string(&command.value)?;
                     store.set_epoch_deadline(CALL_BUDGET);
-                    if let Err(e) = plugin.call_apply(&mut store, &local_id, &command.cap.to_string(), &value)? {
+                    if let Err(e) = call!(&plugin, call_apply(&mut store, &local_id, &command.cap.to_string(), &value))? {
                         tracing::warn!(plugin = %self.cfg.id, ?command, "apply failed: {e}");
                     }
                     // Refresh right after, to read back the new state; queued commands are applied first.
                     next_refresh = Instant::now();
                 }
+                Ok(Job::Invoke { local_id, name, params, reply }) => {
+                    let result = match &plugin {
+                        Instance::Actions(p) => {
+                            store.set_epoch_deadline(CALL_BUDGET);
+                            p.call_invoke(&mut store, &local_id, &name, &params)?
+                        }
+                        Instance::Plain(_) => Err("this plugin has no actions (plugin-api 1.0)".into()),
+                    };
+                    if let Err(e) = &result {
+                        tracing::warn!(plugin = %self.cfg.id, %local_id, %name, "action failed: {e}");
+                    }
+                    let _ = reply.send(result);
+                    // An action may change states (pause, lock): read them back.
+                    next_refresh = Instant::now();
+                }
                 Err(RecvTimeoutError::Timeout) => {
                     store.set_epoch_deadline(CALL_BUDGET);
-                    let ms = plugin.call_refresh(&mut store)?;
+                    let ms = call!(&plugin, call_refresh(&mut store))?;
                     next_refresh = Instant::now() + Duration::from_millis(ms.into());
                 }
                 Err(RecvTimeoutError::Disconnected) => return Ok(Exit::Stopped),
@@ -233,7 +334,7 @@ impl Runner {
         Ok(store)
     }
 
-    fn to_entity(&self, e: types::Entity) -> Entity {
+    fn to_entity(&self, e: types::Entity, actions: Vec<ActionDecl>) -> Entity {
         let id = entity_uuid(&self.cfg.id, &e.local_id);
         let caps = e
             .capabilities
@@ -261,6 +362,7 @@ impl Runner {
             local_id: e.local_id,
             device: e.device,
             model: None,
+            actions,
             caps,
         };
         if let Some(o) = self.core.overrides.lock().unwrap().get(&id) {
@@ -338,6 +440,8 @@ impl WasiView for HostState {
 }
 
 impl types::Host for HostState {}
+
+impl wit_actions::homemaid::plugin::action_types::Host for HostState {}
 
 impl host::Host for HostState {
     fn log(&mut self, level: types::LogLevel, message: String) {

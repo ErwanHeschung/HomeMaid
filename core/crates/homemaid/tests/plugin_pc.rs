@@ -48,6 +48,17 @@ async fn pc_is_an_entity_with_volume_and_sensors() {
     wait_for("volume confirmed", Duration::from_secs(5), || slot(CapKind::Volume).status == CommandStatus::Confirmed).await;
     assert!(agent::recorded().contains(&Request::SetVolume { level: 30 }));
 
+    // Actions (plugin-api 1.1): sent to the agent, not states.
+    let plugins = core.plugins.get().unwrap();
+    plugins.invoke(&core, id, "next", serde_json::json!({})).await.unwrap();
+    plugins.invoke(&core, id, "lock", serde_json::Value::Null).await.unwrap();
+    assert!(agent::recorded().contains(&Request::Media { action: agent::Media::Next }));
+    assert!(agent::recorded().contains(&Request::Power { action: agent::Power::Lock }));
+    let err = plugins.invoke(&core, id, "next", serde_json::json!({ "x": 1 })).await.unwrap_err();
+    assert!(err.contains("no parameters"), "{err}");
+    let err = plugins.invoke(&core, id, "open", serde_json::json!({})).await.unwrap_err();
+    assert!(err.contains("needs `shortcut`"), "{err}");
+
     server.abort();
     wait_for("offline", Duration::from_secs(10), || !available()).await;
 }

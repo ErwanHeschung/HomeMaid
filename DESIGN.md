@@ -329,3 +329,18 @@ These are invariants between `app/tools/render/render.py`, `app/tools/render/roo
 - **Don't** add shadows, gradients or glows to UI chrome; light in this world is state.
 - **Don't** put device tiles in a grid; devices live in the room and in rows.
 - **Don't** expect light on walls: lit devices pool amber on the floor only; light spilling onto walls is not done yet.
+
+## Automations screen (Scénarios)
+
+Read-only: automations are written in the core's `homemaid.toml` (`app/lib/screens/automations.dart`).
+
+- **Row**: the last run's mark in the state grammar (amber square = acted, red = failed, outline =
+  skipped by a condition, dim = never ran), the name, the first trigger as a sentence, red "N
+  problems" when a selector matches nothing, and "Next: Today 22:00" in tabular figures.
+- **Sheet**: When / Only if / Then as sentences built from the core's JSON (`triggerText`,
+  `conditionText`, `actionText`; selectors humanized by `targetText`). Then "Try it" (outlined)
+  and "Run now" (filled). The dry-run result sits in a hairline panel, blue-edged when it would
+  run. Last runs follow, newest first.
+- **Device sheet actions** (plugin-api 1.1): one-shot actions without parameters show as outlined
+  buttons under the capabilities. Shut down is red and asks first, as on the remote. Actions never
+  take amber or the pending hatch: they are not states.

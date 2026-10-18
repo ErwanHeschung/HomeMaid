@@ -883,6 +883,240 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Auto · {kind}'**
   String autoAs(String kind);
+
+  /// No description provided for @navAutomations.
+  ///
+  /// In en, this message translates to:
+  /// **'Automations'**
+  String get navAutomations;
+
+  /// No description provided for @automationCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{No automations} =1{1 automation} other{{count} automations}}'**
+  String automationCount(int count);
+
+  /// No description provided for @noAutomations.
+  ///
+  /// In en, this message translates to:
+  /// **'Automations are written in homemaid.toml, as [[automation]]; homemaid.example.toml shows how. They appear here once the core restarts.'**
+  String get noAutomations;
+
+  /// No description provided for @everyDay.
+  ///
+  /// In en, this message translates to:
+  /// **'Every day'**
+  String get everyDay;
+
+  /// No description provided for @weekdays.
+  ///
+  /// In en, this message translates to:
+  /// **'Weekdays'**
+  String get weekdays;
+
+  /// No description provided for @weekend.
+  ///
+  /// In en, this message translates to:
+  /// **'Weekends'**
+  String get weekend;
+
+  /// No description provided for @atTime.
+  ///
+  /// In en, this message translates to:
+  /// **'{days} at {time}'**
+  String atTime(String days, String time);
+
+  /// No description provided for @whenIs.
+  ///
+  /// In en, this message translates to:
+  /// **'When {target} · {cap} becomes {value}'**
+  String whenIs(String target, String cap, String value);
+
+  /// No description provided for @whenAbove.
+  ///
+  /// In en, this message translates to:
+  /// **'When {target} · {cap} goes above {value}'**
+  String whenAbove(String target, String cap, String value);
+
+  /// No description provided for @whenBelow.
+  ///
+  /// In en, this message translates to:
+  /// **'When {target} · {cap} goes below {value}'**
+  String whenBelow(String target, String cap, String value);
+
+  /// No description provided for @whenChanges.
+  ///
+  /// In en, this message translates to:
+  /// **'When {target} · {cap} changes'**
+  String whenChanges(String target, String cap);
+
+  /// No description provided for @ifBetween.
+  ///
+  /// In en, this message translates to:
+  /// **'Between {from} and {to}'**
+  String ifBetween(String from, String to);
+
+  /// No description provided for @ifIs.
+  ///
+  /// In en, this message translates to:
+  /// **'If {target} · {cap} is {value}'**
+  String ifIs(String target, String cap, String value);
+
+  /// No description provided for @ifAbove.
+  ///
+  /// In en, this message translates to:
+  /// **'If {target} · {cap} is above {value}'**
+  String ifAbove(String target, String cap, String value);
+
+  /// No description provided for @ifBelow.
+  ///
+  /// In en, this message translates to:
+  /// **'If {target} · {cap} is below {value}'**
+  String ifBelow(String target, String cap, String value);
+
+  /// No description provided for @ifAll.
+  ///
+  /// In en, this message translates to:
+  /// **'{condition} (all of them)'**
+  String ifAll(String condition);
+
+  /// No description provided for @doSet.
+  ///
+  /// In en, this message translates to:
+  /// **'Set {target} · {cap} to {value}'**
+  String doSet(String target, String cap, String value);
+
+  /// No description provided for @doInvoke.
+  ///
+  /// In en, this message translates to:
+  /// **'{action} on {target}'**
+  String doInvoke(String action, String target);
+
+  /// No description provided for @sectionWhen.
+  ///
+  /// In en, this message translates to:
+  /// **'When'**
+  String get sectionWhen;
+
+  /// No description provided for @sectionIf.
+  ///
+  /// In en, this message translates to:
+  /// **'Only if'**
+  String get sectionIf;
+
+  /// No description provided for @sectionThen.
+  ///
+  /// In en, this message translates to:
+  /// **'Then'**
+  String get sectionThen;
+
+  /// No description provided for @sectionRuns.
+  ///
+  /// In en, this message translates to:
+  /// **'Last runs'**
+  String get sectionRuns;
+
+  /// No description provided for @tryIt.
+  ///
+  /// In en, this message translates to:
+  /// **'Try it'**
+  String get tryIt;
+
+  /// No description provided for @runNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Run now'**
+  String get runNow;
+
+  /// No description provided for @dryWouldRun.
+  ///
+  /// In en, this message translates to:
+  /// **'Would run now'**
+  String get dryWouldRun;
+
+  /// No description provided for @dryWouldNot.
+  ///
+  /// In en, this message translates to:
+  /// **'Would not run'**
+  String get dryWouldNot;
+
+  /// No description provided for @dryChanges.
+  ///
+  /// In en, this message translates to:
+  /// **'to do'**
+  String get dryChanges;
+
+  /// No description provided for @dryAlready.
+  ///
+  /// In en, this message translates to:
+  /// **'already so'**
+  String get dryAlready;
+
+  /// No description provided for @dryNoTarget.
+  ///
+  /// In en, this message translates to:
+  /// **'No device matches'**
+  String get dryNoTarget;
+
+  /// No description provided for @today.
+  ///
+  /// In en, this message translates to:
+  /// **'Today'**
+  String get today;
+
+  /// No description provided for @tomorrow.
+  ///
+  /// In en, this message translates to:
+  /// **'Tomorrow'**
+  String get tomorrow;
+
+  /// No description provided for @neverRan.
+  ///
+  /// In en, this message translates to:
+  /// **'Never ran'**
+  String get neverRan;
+
+  /// No description provided for @runActed.
+  ///
+  /// In en, this message translates to:
+  /// **'Acted'**
+  String get runActed;
+
+  /// No description provided for @runFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed'**
+  String get runFailed;
+
+  /// No description provided for @runSkipped.
+  ///
+  /// In en, this message translates to:
+  /// **'Skipped'**
+  String get runSkipped;
+
+  /// No description provided for @ranByHand.
+  ///
+  /// In en, this message translates to:
+  /// **'Run by hand'**
+  String get ranByHand;
+
+  /// No description provided for @automationDisabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Disabled'**
+  String get automationDisabled;
+
+  /// No description provided for @problemCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 problem} other{{count} problems}}'**
+  String problemCount(int count);
+
+  /// No description provided for @nextAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Next: {when}'**
+  String nextAt(String when);
 }
 
 class _AppLocalizationsDelegate

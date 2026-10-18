@@ -6,6 +6,7 @@ import 'connections.dart';
 import 'demo.dart';
 import 'discovery.dart';
 import 'l10n/app_localizations.dart';
+import 'screens/automations.dart';
 import 'screens/home.dart';
 import 'screens/pair.dart';
 import 'screens/remote.dart';
@@ -102,7 +103,7 @@ class _ShellState extends State<Shell> {
     await _connections.put(connection);
     if (!mounted) return;
     final l = AppLocalizations.of(context);
-    setState(() => _tab = connection.kind == 'core' ? 0 : 1);
+    setState(() => _tab = connection.kind == 'core' ? 0 : 2);
     final message = connection.kind == 'core'
         ? [l.pairedHome(connection.id), if (_connections.agents.isEmpty) l.alsoScanPc]
         : [l.pairedPc(connection.id), if (_connections.core == null) l.alsoScanHome];
@@ -119,6 +120,7 @@ class _ShellState extends State<Shell> {
         bottom: false,
         child: IndexedStack(index: _tab, children: [
           HomeScreen(core: _core, onPair: _pair),
+          AutomationsScreen(core: _core, onPair: _pair),
           RemoteScreen(agents: _agents.values.toList(), connections: _connections, onPair: _pair),
           SettingsScreen(connections: _connections, onPair: _pair),
         ]),
@@ -128,6 +130,7 @@ class _ShellState extends State<Shell> {
         onDestinationSelected: (i) => setState(() => _tab = i),
         destinations: [
           NavigationDestination(icon: const Icon(Icons.view_in_ar_outlined), selectedIcon: const Icon(Icons.view_in_ar), label: l.navHome),
+          NavigationDestination(icon: const Icon(Icons.schedule_outlined), selectedIcon: const Icon(Icons.schedule), label: l.navAutomations),
           NavigationDestination(icon: const Icon(Icons.mouse_outlined), selectedIcon: const Icon(Icons.mouse), label: l.navPc),
           NavigationDestination(icon: const Icon(Icons.tune_outlined), selectedIcon: const Icon(Icons.tune), label: l.navSettings),
         ],

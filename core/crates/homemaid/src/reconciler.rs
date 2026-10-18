@@ -212,6 +212,7 @@ mod tests {
             local_id: "lamp".into(),
             device: None,
             model: None,
+            actions: vec![],
             caps,
         };
         Reconciler::new(BTreeMap::from([(LAMP, entity)]))

@@ -17,6 +17,8 @@ pub struct Config {
     pub plugins: Vec<PluginConfig>,
     #[serde(default, rename = "room")]
     pub rooms: Vec<RoomConfig>,
+    #[serde(default, rename = "automation")]
+    pub automations: Vec<crate::automations::AutomationConfig>,
 }
 
 /// A room, by the name entities refer to. `kind` picks the app's furnished model of it

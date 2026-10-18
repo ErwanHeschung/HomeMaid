@@ -62,6 +62,34 @@ async fn update_is_saved_and_notified() {
     assert!(std::fs::read_to_string(&config_path).unwrap().starts_with("# kept\n"));
     assert_eq!(saved.entities[0].room.as_deref(), Some("salon"));
     assert_eq!(core.overrides.lock().unwrap()[&lamp].name.as_deref(), Some("Lampe"), "rediscovery uses it");
+
+    // Actions and automations, through the same socket.
+    let (reply, _) = call(5, "entity.invoke", json!({ "id": lamp, "action": "blink", "params": { "times": 2 } })).await;
+    assert_eq!(reply["result"], true, "{reply}");
+    let automations: Vec<homemaid::automations::AutomationConfig> = toml::from_str::<toml::Table>(
+        r#"
+        [[automation]]
+        id = "dim"
+        [[automation.trigger]]
+        at = "07:00"
+        [[automation.action]]
+        set = { select = "room:salon & cap:brightness", cap = "brightness", value = 30 }
+        "#,
+    )
+    .unwrap()["automation"]
+        .clone()
+        .try_into()
+        .unwrap();
+    let _ = core.automations.set(Arc::new(homemaid::automations::Automations::new(&automations).unwrap()));
+    let (reply, _) = call(6, "automations.list", json!(null)).await;
+    assert_eq!(reply["result"][0]["id"], "dim", "{reply}");
+    assert!(reply["result"][0]["next_run"].is_string());
+    let (reply, _) = call(7, "automation.dry_run", json!({ "id": "dim" })).await;
+    assert_eq!(reply["result"]["actions"][0]["targets"][0]["name"], "Lampe", "{reply}");
+    let (reply, seen) = call(8, "automation.run", json!({ "id": "dim" })).await;
+    assert_eq!(reply["result"]["results"][0]["outcome"], "pending", "{reply}");
+    let (_, more) = call(9, "entities.list", json!(null)).await;
+    assert!(seen.iter().chain(&more).any(|m| m["method"] == "automation.ran"), "notified");
 }
 
 #[tokio::test(flavor = "multi_thread")]

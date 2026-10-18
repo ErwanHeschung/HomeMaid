@@ -106,7 +106,9 @@ async fn run(args: Args, shutdown: impl Future<Output = ()> + Send + 'static) ->
             return Ok(());
         }
         let core_config = config.core.take().ok_or("--core needs a [core] section in the config")?;
-        run_core(core_config, &args.config, config.entities, config.rooms, config.plugins, until_stopped()).await
+        // Checked before anything starts: a broken automation is a config error.
+        let automations = homemaid::automations::Automations::new(&config.automations).map_err(|e| format!("{}: {e}", args.config.display()))?;
+        run_core(core_config, &args.config, config.entities, config.rooms, config.plugins, automations, until_stopped()).await
     };
     let agent = async {
         if !args.agent {
@@ -124,6 +126,7 @@ async fn run_core(
     overrides: Vec<config::EntityOverride>,
     rooms: Vec<config::RoomConfig>,
     plugins: Vec<config::PluginConfig>,
+    automations: homemaid::automations::Automations,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), String> {
     let data_dir = &config.data_dir;
@@ -139,13 +142,20 @@ async fn run_core(
     *core.overrides.lock().unwrap() = overrides.into_iter().map(|o| (o.id, o)).collect();
     *core.rooms.lock().unwrap() = rooms.into_iter().filter_map(|r| Some((r.name, r.kind.filter(|k| !k.is_empty())?))).collect();
 
-    let plugins = Plugins::start(core.clone(), plugins, data_dir, secrets)?;
+    let plugins = Arc::new(Plugins::start(core.clone(), plugins, data_dir, secrets)?);
+    let _ = core.plugins.set(plugins.clone());
     let router = core.clone();
     tokio::spawn(async move {
         while let Some(command) = command_rx.recv().await {
             plugins.dispatch(&router, command);
         }
     });
+
+    let automations = Arc::new(automations);
+    let _ = core.automations.set(automations.clone());
+    if !automations.is_empty() {
+        tokio::spawn(automations.drive(core.clone()));
+    }
 
     let ticker = core.clone();
     tokio::spawn(async move {

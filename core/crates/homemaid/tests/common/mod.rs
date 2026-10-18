@@ -35,6 +35,12 @@ pub struct Plugin<'a> {
 
 /// Runs the plugin on a fresh core. Keep the returned dir alive: it holds the plugin's KV store.
 pub fn start(plugin: Plugin) -> (Arc<Core>, TempDir) {
+    let path = build_plugin(plugin.package);
+    start_wasm(plugin, path)
+}
+
+/// Same with an already built `.wasm` (an older plugin-api, for compatibility tests).
+pub fn start_wasm(plugin: Plugin, path: PathBuf) -> (Arc<Core>, TempDir) {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let data = TempDir::new();
     let (commands, mut command_rx) = mpsc::unbounded_channel();
@@ -42,12 +48,13 @@ pub fn start(plugin: Plugin) -> (Arc<Core>, TempDir) {
     let pairs = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
     let config = PluginConfig {
         id: plugin.id.into(),
-        path: build_plugin(plugin.package),
+        path,
         permissions: plugin.permissions.iter().map(|p| p.to_string()).collect(),
         settings: pairs(plugin.settings),
     };
     let secrets = BTreeMap::from([(plugin.id.to_string(), pairs(plugin.secrets))]);
-    let plugins = Plugins::start(core.clone(), vec![config], &data.0, secrets).unwrap();
+    let plugins = Arc::new(Plugins::start(core.clone(), vec![config], &data.0, secrets).unwrap());
+    let _ = core.plugins.set(plugins.clone());
     let router = core.clone();
     tokio::spawn(async move {
         while let Some(command) = command_rx.recv().await {

@@ -207,5 +207,203 @@
         "type": "String"
       }
     }
+  },
+  "navAutomations": "Automations",
+  "automationCount": "{count, plural, =0{No automations} =1{1 automation} other{{count} automations}}",
+  "@automationCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "noAutomations": "Automations are written in homemaid.toml, as [[automation]]; homemaid.example.toml shows how. They appear here once the core restarts.",
+  "everyDay": "Every day",
+  "weekdays": "Weekdays",
+  "weekend": "Weekends",
+  "atTime": "{days} at {time}",
+  "@atTime": {
+    "placeholders": {
+      "days": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "whenIs": "When {target} · {cap} becomes {value}",
+  "@whenIs": {
+    "placeholders": {
+      "target": {
+        "type": "String"
+      },
+      "cap": {
+        "type": "String"
+      },
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "whenAbove": "When {target} · {cap} goes above {value}",
+  "@whenAbove": {
+    "placeholders": {
+      "target": {
+        "type": "String"
+      },
+      "cap": {
+        "type": "String"
+      },
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "whenBelow": "When {target} · {cap} goes below {value}",
+  "@whenBelow": {
+    "placeholders": {
+      "target": {
+        "type": "String"
+      },
+      "cap": {
+        "type": "String"
+      },
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "whenChanges": "When {target} · {cap} changes",
+  "@whenChanges": {
+    "placeholders": {
+      "target": {
+        "type": "String"
+      },
+      "cap": {
+        "type": "String"
+      }
+    }
+  },
+  "ifBetween": "Between {from} and {to}",
+  "@ifBetween": {
+    "placeholders": {
+      "from": {
+        "type": "String"
+      },
+      "to": {
+        "type": "String"
+      }
+    }
+  },
+  "ifIs": "If {target} · {cap} is {value}",
+  "@ifIs": {
+    "placeholders": {
+      "target": {
+        "type": "String"
+      },
+      "cap": {
+        "type": "String"
+      },
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "ifAbove": "If {target} · {cap} is above {value}",
+  "@ifAbove": {
+    "placeholders": {
+      "target": {
+        "type": "String"
+      },
+      "cap": {
+        "type": "String"
+      },
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "ifBelow": "If {target} · {cap} is below {value}",
+  "@ifBelow": {
+    "placeholders": {
+      "target": {
+        "type": "String"
+      },
+      "cap": {
+        "type": "String"
+      },
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "ifAll": "{condition} (all of them)",
+  "@ifAll": {
+    "placeholders": {
+      "condition": {
+        "type": "String"
+      }
+    }
+  },
+  "doSet": "Set {target} · {cap} to {value}",
+  "@doSet": {
+    "placeholders": {
+      "target": {
+        "type": "String"
+      },
+      "cap": {
+        "type": "String"
+      },
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "doInvoke": "{action} on {target}",
+  "@doInvoke": {
+    "placeholders": {
+      "action": {
+        "type": "String"
+      },
+      "target": {
+        "type": "String"
+      }
+    }
+  },
+  "sectionWhen": "When",
+  "sectionIf": "Only if",
+  "sectionThen": "Then",
+  "sectionRuns": "Last runs",
+  "tryIt": "Try it",
+  "runNow": "Run now",
+  "dryWouldRun": "Would run now",
+  "dryWouldNot": "Would not run",
+  "dryChanges": "to do",
+  "dryAlready": "already so",
+  "dryNoTarget": "No device matches",
+  "today": "Today",
+  "tomorrow": "Tomorrow",
+  "neverRan": "Never ran",
+  "runActed": "Acted",
+  "runFailed": "Failed",
+  "runSkipped": "Skipped",
+  "ranByHand": "Run by hand",
+  "automationDisabled": "Disabled",
+  "problemCount": "{count, plural, =1{1 problem} other{{count} problems}}",
+  "@problemCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nextAt": "Next: {when}",
+  "@nextAt": {
+    "placeholders": {
+      "when": {
+        "type": "String"
+      }
+    }
   }
 }

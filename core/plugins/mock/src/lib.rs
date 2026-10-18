@@ -1,11 +1,13 @@
 //! Mock plugin for integration tests: one lamp that confirms every command instantly.
 //!
 //! Setting `crash_once = "true"` makes the first refresh panic, once (remembered in the KV store),
-//! to test crash recovery.
+//! to test crash recovery. Its action `blink { times }` is recorded in the KV store (`blinked`).
 
 use std::{collections::BTreeMap, sync::Mutex};
 
-use homemaid_plugin::{CapKind, CapMeta, CapValue, DiscoveredEntity, LOCAL_NETWORK, Manifest, Plugin, report_state};
+use homemaid_plugin::{
+    ActionDecl, Actions, CapKind, CapMeta, CapValue, DiscoveredEntity, LOCAL_NETWORK, Manifest, Plugin, report_state,
+};
 
 static SETTINGS: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
 
@@ -53,4 +55,19 @@ impl Plugin for Mock {
     }
 }
 
-homemaid_plugin::export!(Mock with_types_in homemaid_plugin::bindings);
+impl Actions for Mock {
+    fn actions() -> Vec<ActionDecl> {
+        let times = serde_json::json!({ "type": "object", "properties": { "times": { "type": "integer" } } });
+        vec![ActionDecl { local_id: "lamp".into(), name: "blink".into(), params: Some(times) }]
+    }
+
+    fn invoke(local_id: &str, name: &str, params: serde_json::Value) -> Result<(), String> {
+        if (local_id, name) != ("lamp", "blink") {
+            return Err(format!("unknown action {local_id}/{name}"));
+        }
+        homemaid_plugin::kv_set("blinked", &params["times"].as_u64().unwrap_or(1).to_string());
+        Ok(())
+    }
+}
+
+homemaid_plugin::export_with_actions!(Mock with_types_in homemaid_plugin::bindings_actions);

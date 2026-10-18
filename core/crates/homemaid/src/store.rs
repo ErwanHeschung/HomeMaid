@@ -63,6 +63,7 @@ mod tests {
             local_id: "plug".into(),
             device: None,
             model: None,
+            actions: vec![],
             caps: BTreeMap::from([(CapKind::OnOff, slot)]),
         };
 

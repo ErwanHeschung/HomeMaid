@@ -1,4 +1,4 @@
-package homemaid:plugin@1.0.0;
+package homemaid:plugin@1.1.0;
 
 /// Capability kinds and values cross the boundary as strings (kind: "on_off", value and meta: JSON),
 /// so new capabilities do not break v1. The Rust SDK exposes them typed.
@@ -42,6 +42,17 @@ interface host {
     secret: func(name: string) -> option<string>;
 }
 
+/// plugin-api 1.1: one-shot actions (media next, lock...). Not states: the reconciler never
+/// retries them, and a 1.0 plugin, which has none, keeps working unchanged.
+interface action-types {
+    record action {
+        local-id: string,
+        name: string,
+        /// JSON schema of the parameters; none takes no parameters.
+        params: option<string>,
+    }
+}
+
 world plugin {
     use types.{entity, manifest};
     import host;
@@ -55,4 +66,15 @@ world plugin {
     /// Called right after commands and between them (adaptive polling; named refresh because `poll`
     /// clashes with libc). Returns the delay in ms before the next call.
     export refresh: func() -> u32;
+}
+
+/// A plugin with actions: everything a 1.0 plugin does, plus its actions.
+world plugin-with-actions {
+    include plugin;
+    use action-types.{action};
+
+    export list-actions: func() -> list<action>;
+    /// Does the action now; params is JSON (`{}` when it takes none). Success means sent, not
+    /// confirmed: an action has no state to confirm.
+    export invoke: func(local-id: string, name: string, params: string) -> result<_, string>;
 }

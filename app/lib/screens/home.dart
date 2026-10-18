@@ -12,6 +12,7 @@ import '../viewport/rooms.dart';
 import '../widgets/capability.dart';
 import '../widgets/model_names.dart';
 import '../widgets/state.dart';
+import 'automations.dart' show actionLabel;
 import 'common.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -301,6 +302,8 @@ class DeviceSheet extends StatelessWidget {
                 const SizedBox(height: 4),
                 for (final MapEntry(key: kind, value: slot) in entity.orderedCaps)
                   CapabilityTile(kind: kind, slot: slot, enabled: entity.available, onSet: (v) => onSet(kind, v)),
+                if (entity.actions.any((a) => a.params == null))
+                  _ActionRow(core: core, entity: entity),
               ]),
             ),
           );
@@ -468,4 +471,62 @@ class Gallery extends StatelessWidget {
       ]),
     );
   }
+}
+
+/// An entity's one-shot actions (those without parameters) as keys. They are not states: no
+/// switch, nothing pending; shutting down asks first.
+class _ActionRow extends StatelessWidget {
+  const _ActionRow({required this.core, required this.entity});
+
+  final CoreClient core;
+  final Entity entity;
+
+  static const _icons = {
+    'play_pause': Icons.play_arrow,
+    'next': Icons.skip_next,
+    'previous': Icons.skip_previous,
+    'lock': Icons.lock_outline,
+    'sleep': Icons.bedtime_outlined,
+    'shutdown': Icons.power_settings_new,
+  };
+
+  Future<void> _invoke(BuildContext context, String action) async {
+    final l = AppLocalizations.of(context);
+    if (action == 'shutdown') {
+      final sure = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          icon: const Icon(Icons.power_settings_new, color: Hm.danger),
+          title: Text(l.shutdownConfirm(entity.name)),
+          content: Text(l.shutdownBody),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(l.cancel)),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Hm.danger, foregroundColor: Hm.ground),
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(l.powerShutdown),
+            ),
+          ],
+        ),
+      );
+      if (sure != true || !context.mounted) return;
+    }
+    await core.invoke(entity.id, action).catchError((Object e) {
+      if (context.mounted) showError(context, e);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+        child: Wrap(spacing: 8, runSpacing: 8, children: [
+          for (final a in entity.actions.where((a) => a.params == null))
+            OutlinedButton.icon(
+              style: a.name == 'shutdown' ? OutlinedButton.styleFrom(foregroundColor: Hm.danger, side: const BorderSide(color: Hm.danger)) : null,
+              onPressed: entity.available ? () => _invoke(context, a.name) : null,
+              icon: Icon(_icons[a.name] ?? Icons.bolt_outlined, size: 18),
+              label: Text(actionLabel(context, a.name)),
+            ),
+        ]),
+      );
 }

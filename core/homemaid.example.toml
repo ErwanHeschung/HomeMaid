@@ -88,3 +88,25 @@ id = "b2ab420e-3e8d-569b-80ee-016956537f82"
 name = "Lampe salon"
 room = "salon"
 tags = ["lumiere"]
+
+# Automations: checked when the core starts (a mistake stops it, with the reason in the log).
+# Devices are chosen by selectors: room:, tag:, cap:, plugin:, device:, model:, id:, name:"..."
+# combined with & | ! and parentheses. Changing them takes a core restart.
+#
+# [[automation]]
+# id = "evening-lamp"
+# name = "Lampe du soir"
+# [[automation.trigger]]
+# at = "19:30"                                   # local time
+# days = ["mon", "tue", "wed", "thu", "fri"]     # default: every day
+# [[automation.condition]]
+# between = ["18:00", "01:00"]                   # across midnight when the end is earlier
+# [[automation.action]]
+# set = { select = "room:Salon & cap:brightness", cap = "brightness", value = 40 }
+#
+# [[automation]]
+# id = "pause-when-muted"
+# [[automation.trigger]]
+# when = { select = "plugin:pc", cap = "mute", becomes = true }   # or above = / below = / changes = true
+# [[automation.action]]
+# invoke = { select = "plugin:pc", action = "play_pause" }         # params = { ... } when the action takes some

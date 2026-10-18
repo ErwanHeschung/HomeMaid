@@ -1,15 +1,17 @@
 pub mod agent;
+pub mod automations;
 pub mod api;
 pub mod config;
 pub mod model;
 pub mod pairing;
 pub mod plugins;
 pub mod reconciler;
+pub mod selector;
 pub mod store;
 
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::Mutex,
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use tokio::sync::{Notify, broadcast, mpsc};
@@ -25,6 +27,8 @@ pub enum Event {
     Slot(Change),
     Entity(Entity),
     Room(config::RoomConfig),
+    /// An automation ran (or was skipped, with why).
+    Automation { id: String, run: automations::Run },
 }
 
 /// Shared runtime around the reconciler: routes its outputs to the driver and the API subscribers.
@@ -38,6 +42,10 @@ pub struct Core {
     pub overrides: Mutex<HashMap<Uuid, EntityOverride>>,
     /// Room kinds chosen by the user, by room name. Edited live by `room.update`.
     pub rooms: Mutex<BTreeMap<String, String>>,
+    /// The plugin host, set once started: actions are invoked through it.
+    pub plugins: OnceLock<Arc<plugins::Plugins>>,
+    /// The configured automations, set once started.
+    pub automations: OnceLock<Arc<automations::Automations>>,
 }
 
 impl Core {
@@ -49,6 +57,8 @@ impl Core {
             dirty: Notify::new(),
             overrides: Mutex::default(),
             rooms: Mutex::default(),
+            plugins: OnceLock::new(),
+            automations: OnceLock::new(),
         }
     }
 

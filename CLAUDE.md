@@ -99,6 +99,9 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
   - **Événements** : poll adaptatif. Un thread par plugin, `apply` dès qu'une commande arrive, sinon `refresh() -> délai en ms`. L'export s'appelle `refresh`, car `poll` entre en conflit avec la libc. Le vrai push arrivera en v2 avec WASIp3 async.
   - **Identité** : UUID v5 déterministe de `"<plugin>/<local_id>"`, donc rien à stocker. Le namespace ne doit jamais changer (test figé).
   - **Permissions** accordées dans `homemaid.toml` (`[[plugin]] permissions`). Les secrets sont dans `<data_dir>/secrets.toml`, le KV privé dans `<data_dir>/plugins/<id>.kv.json`.
+  - **plugin-api 1.1** (additif, package WIT `@1.1.0`) : **actions ponctuelles**. Un plugin qui exporte le monde `plugin-with-actions` (`list-actions`, `invoke`) déclare des actions par entité (`play_pause`, `lock`…, paramètres en schéma JSON). Ce ne sont pas des états : le réconciliateur ne les renvoie jamais.
+    - SDK : trait `Actions` et `export_with_actions!`. L'hôte détecte l'export `invoke` ; un plugin 1.0 se charge toujours (fixture `tests/fixtures/mock-plugin-api-1.0.wasm`).
+    - API : `entity.invoke { id, action, params? }`.
   - **Sandbox** : pas de fichiers, d'env ni de DNS ; sockets vers le réseau local uniquement ; 64 MiB de mémoire ; 60 s max par appel (temps réel, attente réseau comprise : ça attrape les plugins emballés, les timeouts réseau sont gérés par le plugin) ; redémarrage après crash avec un délai de 1 s à 60 s.
 - SDK Rust pour écrire un plugin, plus un **repo template** (`cargo generate`) donnant un plugin fonctionnel en quelques minutes.
 
@@ -149,6 +152,7 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
     - **fantôme ou contour** = hors ligne ;
     - **rouge** = échec ;
     - le bleu sert aussi à l'interaction et aux interrupteurs qui n'alimentent rien (muet, réglages).
+  - **Icône** : le logo (`app/tools/logo.png`, 1024 px, fond transparent) sur le fond graphite `#15171B` (`res/values/colors.xml`, aussi l'écran de lancement). La démo porte une étiquette « DÉMO ». Régénérer depuis `app/` : `uv run --with pillow python tools/icon.py tools/logo.png`.
   - **Thème** : `app/lib/theme.dart`. Fond graphite, police Barlow embarquée (`assets/fonts`, licence OFL), sombre uniquement (usage le soir, en intérieur).
   - **Modèles 3D** : rendus studio pré-calculés, pas de 3D temps réel. `app/tools/render/render.py` (Blender 5.2.2 Cycles, dans `~/.local/opt`) modélise les archétypes génériques (barrettes de 2 à 6 prises, prise, lampe, écran, module). Il rend 24 vues de rotation, plus une couche de lumière par élément allumable, teintée ambre par l'app. `pack.sh` convertit en WebP, estompe les bords des ombres et inscrit la provenance.
     - Commande, depuis `app/` : `~/.local/opt/blender-5.2.2-linux-x64/blender -b -P tools/render/render.py && IMPECCABLE=<chemin du script impeccable> ./tools/render/pack.sh`.
@@ -183,6 +187,22 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
 - **Ampoules connectées** : modèle à préciser.
 - **PC** : via l'agent PC.
 
+### Automatisations (étape 6, phase A)
+- Écrites dans `homemaid.toml` (`[[automation]]` avec `[[automation.trigger]]`, `[[automation.condition]]`, `[[automation.action]]`), exemples dans `homemaid.example.toml`. Le module est `core/crates/homemaid/src/automations.rs`.
+- **Vérifiées au chargement** : une faute (heure, jour, capacité, valeur, sélecteur, champ inconnu) empêche le core de démarrer, avec un message précis. Ce qui dépend des appareils découverts (sélecteur vide, action absente) est signalé comme « problème », sans bloquer.
+- **Déclencheurs** :
+  - `at` (heure locale, `days`), via le crate `jiff` ;
+  - `when` (un état **observé** franchit une valeur : `becomes`, `above`, `below`, `changes`). Seul le front compte, et un souhait ne déclenche jamais.
+- **Conditions** : `between` (passe minuit), `days`, `state` (`is`, `above`, `below`, `all`).
+- **Actions** : `set` (un état désiré, le réconciliateur fait le reste) ou `invoke` (une action ponctuelle).
+- **Sélecteurs** (`selector.rs`) : `room:`, `tag:`, `cap:`, `plugin:`, `device:`, `model:`, `id:`, `name:"…"`, avec `&`, `|`, `!` et des parenthèses. Jamais d'UUID ni de nom fragile dans une automatisation.
+- **Dry-run** (`automation.dry_run`) : conditions avec leur raison, et appareils visés avec « à faire » ou « déjà fait ». Rien n'est envoyé.
+- **Journal** : les 20 dernières exécutions en mémoire (`automations.list`, notification `automation.ran`).
+- **Garde-fou** : plus de 10 exécutions par minute arrêtent l'automatisation jusqu'au redémarrage (une boucle entre deux automatisations).
+- Les modifier demande de **redémarrer le core** (pas de rechargement à chaud).
+- **App** : onglet Scénarios, en lecture seule (phrases, prochaine exécution, journal, Essayer et Lancer). Les actions apparaissent aussi en touches dans le panneau d'un appareil.
+- **Phase B, à faire** : lever et coucher du soleil, délégation des plannings au P300.
+
 ## Roadmap MVP
 
 1. **Core minimal** : modèle Entity/Capability, état désiré/observé, réconciliateur, API WebSocket, config déclarative. Binaire `homemaid` avec les flags `--core` et `--agent` dès le départ.
@@ -190,7 +210,7 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
 3. **Plugin TP-Link** (P300), qui sert aussi de plugin de référence et d'exemple.
 4. **Agent PC** (Windows) + écran télécommande dans l'app. Mode combiné `--core --agent`, et service Windows.
 5. **App Flutter** : liste par pièce, contrôle des capacités de base.
-6. **Automatisations** typées + dry-run, avec **délégation des plannings** aux appareils qui le supportent.
+6. **Automatisations** typées + dry-run, avec **délégation des plannings** aux appareils qui le supportent. *(Phase A faite : automatisations, sélecteurs, dry-run, actions ponctuelles. Phase B : soleil, délégation au P300.)*
 7. **Registre de plugins** (index GitHub, vérification de signature).
 8. Historique avec downsampling.
 9. (Plus tard) Mode dégradé de l'app sans core, et migration vers un host dédié.

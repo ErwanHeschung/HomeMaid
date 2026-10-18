@@ -98,6 +98,8 @@ String summary(BuildContext context, Entity e) {
 }
 
 /// The words of the common yes/no sensors; others read "name · Yes".
+String? yesNoWord(AppLocalizations l, String kind, bool on) => _yesNo(l, kind, on);
+
 String? _yesNo(AppLocalizations l, String kind, bool on) => switch (kind) {
       'custom:locked' => on ? l.stateLocked : l.stateUnlocked,
       'custom:open' || 'custom:contact' => on ? l.stateOpen : l.stateClosed,

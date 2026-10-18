@@ -438,4 +438,165 @@ class AppLocalizationsFr extends AppLocalizations {
   String autoAs(String kind) {
     return 'Auto · $kind';
   }
+
+  @override
+  String get navAutomations => 'Scénarios';
+
+  @override
+  String automationCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count scénarios',
+      one: '1 scénario',
+      zero: 'Aucun scénario',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get noAutomations =>
+      'Les scénarios s\'écrivent dans homemaid.toml, en [[automation]] ; homemaid.example.toml montre comment. Ils apparaissent ici au redémarrage du core.';
+
+  @override
+  String get everyDay => 'Tous les jours';
+
+  @override
+  String get weekdays => 'Du lundi au vendredi';
+
+  @override
+  String get weekend => 'Le week-end';
+
+  @override
+  String atTime(String days, String time) {
+    return '$days à $time';
+  }
+
+  @override
+  String whenIs(String target, String cap, String value) {
+    return 'Quand $target · $cap passe à $value';
+  }
+
+  @override
+  String whenAbove(String target, String cap, String value) {
+    return 'Quand $target · $cap dépasse $value';
+  }
+
+  @override
+  String whenBelow(String target, String cap, String value) {
+    return 'Quand $target · $cap passe sous $value';
+  }
+
+  @override
+  String whenChanges(String target, String cap) {
+    return 'Quand $target · $cap change';
+  }
+
+  @override
+  String ifBetween(String from, String to) {
+    return 'Entre $from et $to';
+  }
+
+  @override
+  String ifIs(String target, String cap, String value) {
+    return 'Si $target · $cap est $value';
+  }
+
+  @override
+  String ifAbove(String target, String cap, String value) {
+    return 'Si $target · $cap est au-dessus de $value';
+  }
+
+  @override
+  String ifBelow(String target, String cap, String value) {
+    return 'Si $target · $cap est en dessous de $value';
+  }
+
+  @override
+  String ifAll(String condition) {
+    return '$condition (tous)';
+  }
+
+  @override
+  String doSet(String target, String cap, String value) {
+    return 'Mettre $target · $cap à $value';
+  }
+
+  @override
+  String doInvoke(String action, String target) {
+    return '$action sur $target';
+  }
+
+  @override
+  String get sectionWhen => 'Quand';
+
+  @override
+  String get sectionIf => 'Seulement si';
+
+  @override
+  String get sectionThen => 'Alors';
+
+  @override
+  String get sectionRuns => 'Dernières exécutions';
+
+  @override
+  String get tryIt => 'Essayer';
+
+  @override
+  String get runNow => 'Lancer';
+
+  @override
+  String get dryWouldRun => 'S\'exécuterait maintenant';
+
+  @override
+  String get dryWouldNot => 'Ne s\'exécuterait pas';
+
+  @override
+  String get dryChanges => 'à faire';
+
+  @override
+  String get dryAlready => 'déjà fait';
+
+  @override
+  String get dryNoTarget => 'Aucun appareil ne correspond';
+
+  @override
+  String get today => 'Aujourd\'hui';
+
+  @override
+  String get tomorrow => 'Demain';
+
+  @override
+  String get neverRan => 'Jamais exécuté';
+
+  @override
+  String get runActed => 'A agi';
+
+  @override
+  String get runFailed => 'Échec';
+
+  @override
+  String get runSkipped => 'Sauté';
+
+  @override
+  String get ranByHand => 'Lancé à la main';
+
+  @override
+  String get automationDisabled => 'Désactivé';
+
+  @override
+  String problemCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count problèmes',
+      one: '1 problème',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String nextAt(String when) {
+    return 'Prochaine : $when';
+  }
 }

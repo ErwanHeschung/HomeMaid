@@ -36,10 +36,13 @@ AgentClient demoAgent() => AgentClient.detached(
 class DemoCore extends CoreClient {
   DemoCore() : super.detached() {
     connected = true;
-    for (final e in _home(PlatformDispatcher.instance.locale.languageCode == 'fr')) {
+    for (final e in _home(_fr)) {
       entities[e.id] = e;
     }
+    automations = _automations(_fr);
   }
+
+  final _fr = PlatformDispatcher.instance.locale.languageCode == 'fr';
 
   @override
   Connection get connection => demoConnections.first;
@@ -61,6 +64,42 @@ class DemoCore extends CoreClient {
         ? Slot(meta: slot.meta, observed: slot.observed, desired: wanted, state: 'failed', reason: 'not confirmed after 5 attempts')
         : Slot(meta: slot.meta, observed: wanted, desired: wanted, state: 'confirmed');
     notifyListeners();
+  }
+
+  @override
+  Future<void> invoke(String id, String action, [Map<String, Object?>? params]) =>
+      Future<void>.delayed(const Duration(milliseconds: 300));
+
+  @override
+  Future<void> refreshAutomations() async {}
+
+  @override
+  Future<DryRun> dryRun(String id) async {
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    return _dryRuns(_fr)[id] ?? DryRun(wouldRun: false);
+  }
+
+  @override
+  Future<Run> runAutomation(String id) async {
+    final dry = await dryRun(id);
+    final run = Run(
+      at: DateTime.now(),
+      trigger: 'manual',
+      skipped: dry.wouldRun ? null : dry.conditions.where((c) => !c.ok).map((c) => c.reason).firstOrNull,
+      results: dry.wouldRun
+          ? [for (final a in dry.actions) for (final t in a.targets) RunResult(target: t.name, action: a.action.keys.first, ok: t.error == null, outcome: t.error ?? 'pending')]
+          : const [],
+    );
+    automations = [
+      for (final a in automations)
+        a.id == id
+            ? Automation(
+                id: a.id, name: a.name, enabled: a.enabled, triggers: a.triggers, conditions: a.conditions, actions: a.actions,
+                nextRun: a.nextRun, problems: a.problems, runs: [run, ...a.runs].take(20).toList())
+            : a,
+    ];
+    notifyListeners();
+    return run;
   }
 
   @override
@@ -100,8 +139,11 @@ Map<String, dynamic> _slot(Object? observed, {Object? desired, String state = 'c
     };
 
 Entity _entity(String id, String name, String? room, Map<String, Map<String, dynamic>> caps,
-        {String? device, bool available = true, String? model}) =>
-    Entity.fromJson({'id': id, 'name': name, 'room': room, 'available': available, 'plugin': 'demo', 'device': device, 'model': model, 'caps': caps});
+        {String? device, bool available = true, String? model, List<String> actions = const []}) =>
+    Entity.fromJson({
+      'id': id, 'name': name, 'room': room, 'available': available, 'plugin': 'demo', 'device': device, 'model': model,
+      'caps': caps, 'actions': [for (final a in actions) {'name': a}],
+    });
 
 const _level = {'min': 0.0, 'max': 100.0, 'unit': '%'};
 const _watts = {'read_only': true, 'unit': 'W'};
@@ -146,7 +188,7 @@ List<Entity> _home(bool fr) {
       'custom:cpu': _slot({'custom': 23.4}, meta: const {'read_only': true, 'unit': '%', 'schema': {'type': 'number'}}),
       'custom:memory': _slot({'custom': 61.0}, meta: const {'read_only': true, 'unit': '%', 'schema': {'type': 'number'}}),
       'custom:active_window': _slot({'custom': 'Visual Studio Code'}, meta: const {'read_only': true, 'schema': {'type': ['string', 'null']}}),
-    }),
+    }, actions: const ['play_pause', 'previous', 'next', 'lock', 'sleep', 'shutdown']),
     _entity('demo-ac', t('Climatiseur', 'Air conditioner'), office, _switch(false), model: 'air_conditioner'),
     _entity('demo-thermostat', t('Thermostat', 'Thermostat'), office, {
       'custom:temperature': _slot({'custom': 20.5}, meta: const {'read_only': true, 'unit': '°C', 'schema': {'type': 'number'}}),
@@ -219,4 +261,128 @@ List<Entity> _home(bool fr) {
     // No room yet, and the stubborn one.
     _entity(_stubborn, t('Prise du garage', 'Garage outlet'), null, _switch(false)),
   ];
+}
+
+/// Automations covering every case: a time trigger that acted, a state trigger, a run skipped by
+/// its condition, a selector matching nothing (a problem), and a failed run.
+List<Automation> _automations(bool fr) {
+  String t(String french, String english) => fr ? french : english;
+  final now = DateTime.now();
+  DateTime next(int hour, int minute, {bool weekdays = false}) {
+    var at = DateTime(now.year, now.month, now.day, hour, minute);
+    while (!at.isAfter(now) || (weekdays && at.weekday > DateTime.friday)) {
+      at = at.add(const Duration(days: 1));
+    }
+    return at;
+  }
+
+  // The last time a trigger at hour:minute fired (on a weekday when asked).
+  DateTime last(int hour, int minute, {bool weekdays = false}) {
+    var at = DateTime(now.year, now.month, now.day, hour, minute);
+    while (!at.isBefore(now) || (weekdays && at.weekday > DateTime.friday)) {
+      at = at.subtract(const Duration(days: 1));
+    }
+    return at;
+  }
+
+  DateTime ago(Duration d) => now.subtract(d);
+  final living = t('Salon', 'Living room'), bedroom = t('Chambre', 'Bedroom');
+  const week = ['mon', 'tue', 'wed', 'thu', 'fri'];
+  return [
+    Automation(
+      id: 'evening',
+      name: t('Lampe du soir', 'Evening lamp'),
+      enabled: true,
+      triggers: [{'at': '19:30', 'days': week}],
+      conditions: [{'between': ['18:00', '01:00']}],
+      actions: [{'set': {'select': 'room:"$living" & cap:brightness', 'cap': 'brightness', 'value': 40}}],
+      nextRun: next(19, 30, weekdays: true),
+      runs: [
+        Run(at: last(19, 30, weekdays: true), trigger: '19:30', results: [
+          RunResult(target: t('Plafonnier', 'Ceiling light'), action: 'set brightness 40', ok: true, outcome: 'confirmed'),
+          RunResult(target: t('Lampadaire', 'Floor lamp'), action: 'set brightness 40', ok: true, outcome: 'confirmed'),
+        ]),
+      ],
+    ),
+    Automation(
+      id: 'pause-on-mute',
+      name: t('Pause quand je coupe le son', 'Pause when muted'),
+      enabled: true,
+      triggers: [{'when': {'select': 'plugin:pc', 'cap': 'mute', 'test': {'is': true}}}],
+      actions: [{'invoke': {'select': 'plugin:pc', 'action': 'play_pause', 'params': null}}],
+      runs: [
+        Run(at: ago(const Duration(hours: 3, minutes: 12)), trigger: 'DEMO-PC mute', results: [
+          const RunResult(target: 'DEMO-PC', action: 'invoke play_pause', ok: true, outcome: 'sent'),
+        ]),
+      ],
+    ),
+    Automation(
+      id: 'heater-night',
+      name: t('Radiateur la nuit', 'Heater at night'),
+      enabled: true,
+      triggers: [{'at': '22:00', 'days': [...week, 'sat', 'sun']}],
+      conditions: [{'state': {'select': 'room:$bedroom & model:fan', 'cap': 'on_off', 'test': {'is': false}, 'all': false}}],
+      actions: [{'set': {'select': 'room:$bedroom & model:radiator', 'cap': 'on_off', 'value': true}}],
+      nextRun: next(22, 0),
+      runs: [
+        Run(at: last(22, 0), trigger: '22:00', skipped: t('Ventilateur : allumé (ne passe pas)', 'Fan: on (does not pass)')),
+      ],
+    ),
+    Automation(
+      id: 'garage',
+      name: t('Lumière du garage', 'Garage light'),
+      enabled: true,
+      triggers: [{'when': {'select': 'tag:garage-door', 'cap': 'custom:open', 'test': {'is': true}}}],
+      actions: [{'set': {'select': 'room:Garage & cap:on_off', 'cap': 'on_off', 'value': true}}],
+      problems: const ['`tag:garage-door` matches no device', '`room:Garage & cap:on_off` matches no device'],
+    ),
+    Automation(
+      id: 'coffee',
+      name: t('Café du matin', 'Morning coffee'),
+      enabled: true,
+      triggers: [{'at': '07:00', 'days': week}],
+      actions: [{'set': {'select': 'model:coffee_maker', 'cap': 'on_off', 'value': true}}],
+      nextRun: next(7, 0, weekdays: true),
+      runs: [
+        Run(at: last(7, 0, weekdays: true), trigger: '07:00', results: [
+          RunResult(target: t('Cafetière', 'Coffee maker'), action: 'set on_off true', ok: false, outcome: t('non confirmée après 5 essais', 'not confirmed after 5 attempts')),
+        ]),
+      ],
+    ),
+  ];
+}
+
+Map<String, DryRun> _dryRuns(bool fr) {
+  String t(String french, String english) => fr ? french : english;
+  final now = DateTime.now();
+  final evening = now.hour >= 18 || now.hour < 1;
+  final time = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+  return {
+    'evening': DryRun(
+      wouldRun: evening,
+      conditions: [(ok: evening, reason: t('$time ${evening ? 'est' : "n'est pas"} entre 18:00 et 01:00', '$time is ${evening ? '' : 'not '}between 18:00 and 01:00'))],
+      actions: [
+        (
+          action: {'set': {'select': 'room:Salon & cap:brightness', 'cap': 'brightness', 'value': 40}},
+          targets: [(name: t('Plafonnier', 'Ceiling light'), changes: true, error: null), (name: t('Lampadaire', 'Floor lamp'), changes: true, error: null)],
+        ),
+      ],
+    ),
+    'pause-on-mute': DryRun(wouldRun: true, actions: [
+      (action: {'invoke': {'select': 'plugin:pc', 'action': 'play_pause'}}, targets: [(name: 'DEMO-PC', changes: true, error: null)]),
+    ]),
+    'heater-night': DryRun(
+      wouldRun: false,
+      conditions: [(ok: false, reason: t('Ventilateur : allumé (ne passe pas)', 'Fan: on (does not pass)'))],
+      actions: [
+        (action: {'set': {'select': 'room:Chambre & model:radiator', 'cap': 'on_off', 'value': true}}, targets: [(name: t('Radiateur d\'appoint', 'Space heater'), changes: false, error: null)]),
+      ],
+    ),
+    'garage': DryRun(wouldRun: true, actions: [
+      (action: {'set': {'select': 'room:Garage & cap:on_off', 'cap': 'on_off', 'value': true}}, targets: const []),
+    ]),
+    'coffee': DryRun(wouldRun: true, actions: [
+      (action: {'set': {'select': 'model:coffee_maker', 'cap': 'on_off', 'value': true}}, targets: [(name: t('Cafetière', 'Coffee maker'), changes: true, error: null)]),
+    ]),
+  };
 }
