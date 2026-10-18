@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push cancels the run still going on the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  core:
+    name: Core · clippy and tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # The plugin tests build the plugins to wasm themselves.
+          targets: wasm32-wasip2
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Clippy, plugins as wasm
+        run: cargo clippy -p homemaid-plugin -p mock-plugin -p pc-plugin -p tplink-plugin --target wasm32-wasip2 -- -D warnings
+      - name: Tests
+        run: cargo test
+
+  windows:
+    name: Windows exe · clippy and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu, wasm32-wasip2
+          components: clippy
+      - name: mingw-w64 (linker and windres, as in development)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: windows
+      - name: Clippy
+        run: cargo clippy -p homemaid --all-targets --target x86_64-pc-windows-gnu -- -D warnings
+      - name: Build
+        run: |
+          cargo build --release -p homemaid --target x86_64-pc-windows-gnu
+          cargo build --release -p pc-plugin -p tplink-plugin --target wasm32-wasip2
+      - name: Package (copy the folder, double-click homemaid.exe)
+        run: |
+          mkdir -p dist/HomeMaid/plugins
+          cp target/x86_64-pc-windows-gnu/release/homemaid.exe dist/HomeMaid/
+          cp "$(find target/x86_64-pc-windows-gnu/release/build -path '*webview2-com-sys-*/out/x64/WebView2Loader.dll' | head -1)" dist/HomeMaid/
+          cp target/wasm32-wasip2/release/pc_plugin.wasm target/wasm32-wasip2/release/tplink_plugin.wasm dist/HomeMaid/plugins/
+          cp homemaid.example.toml dist/HomeMaid/
+          ls -lR dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: HomeMaid-windows
+          path: core/dist/HomeMaid
+
+  app:
+    name: App · analyze and tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.7
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Analyze
+        run: flutter analyze
+      - name: Tests
+        run: flutter test
+
+  apk:
+    name: App · APKs
+    # Pushes to main only: a pull request is checked by the app job.
+    if: github.event_name != 'pull_request'
+    needs: app
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.7
+          channel: stable
+          cache: true
+      - name: Build (real and demo)
+        run: |
+          flutter build apk --release --flavor real
+          flutter build apk --release --flavor demo --dart-define=HOMEMAID_DEMO=true
+      - uses: actions/upload-artifact@v7
+        with:
+          name: HomeMaid-android
+          path: app/build/app/outputs/flutter-apk/*.apk
