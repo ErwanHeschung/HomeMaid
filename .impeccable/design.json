@@ -1,0 +1,446 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-18T16:41:57+00:00",
+  "title": "Design System: HomeMaid",
+  "extensions": {
+    "colorMeta": {
+      "graphite-ground": {
+        "role": "neutral",
+        "displayName": "Graphite Ground",
+        "canonical": "#15171B",
+        "tonalRamp": [
+          "#1B1D22",
+          "#353A44",
+          "#505766",
+          "#6A7488",
+          "#8B93A4",
+          "#ADB3BF",
+          "#CFD2D9",
+          "#F1F2F4"
+        ]
+      },
+      "graphite-panel": {
+        "role": "neutral",
+        "displayName": "Graphite Panel",
+        "canonical": "#1C1F24",
+        "tonalRamp": [
+          "#1B1E22",
+          "#353B44",
+          "#505866",
+          "#6A7688",
+          "#8B94A4",
+          "#ADB3BF",
+          "#CFD3D9",
+          "#F1F2F4"
+        ]
+      },
+      "graphite-raised": {
+        "role": "neutral",
+        "displayName": "Graphite Raised",
+        "canonical": "#252930",
+        "tonalRamp": [
+          "#1B1E23",
+          "#353B45",
+          "#4F5867",
+          "#6A7589",
+          "#8A94A5",
+          "#ACB3BF",
+          "#CED2DA",
+          "#F1F2F4"
+        ]
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#343A42",
+        "tonalRamp": [
+          "#1B1E22",
+          "#363C44",
+          "#505A66",
+          "#6B7788",
+          "#8B96A4",
+          "#ADB5BE",
+          "#CFD3D9",
+          "#F1F2F4"
+        ]
+      },
+      "hairline-strong": {
+        "role": "neutral",
+        "displayName": "Hairline Strong",
+        "canonical": "#4B525C",
+        "tonalRamp": [
+          "#1B1E22",
+          "#373C43",
+          "#525964",
+          "#6D7786",
+          "#8D96A2",
+          "#AEB4BD",
+          "#D0D3D8",
+          "#F1F2F4"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#EEF0F2",
+        "tonalRamp": [
+          "#1B1F23",
+          "#353D45",
+          "#4F5B67",
+          "#697989",
+          "#8A98A5",
+          "#ACB6C0",
+          "#CED4DA",
+          "#F1F2F4"
+        ]
+      },
+      "ink-dim": {
+        "role": "neutral",
+        "displayName": "Ink Dim",
+        "canonical": "#A2A9B3",
+        "tonalRamp": [
+          "#1C1E22",
+          "#373C43",
+          "#525964",
+          "#6D7786",
+          "#8D96A2",
+          "#AEB4BD",
+          "#D0D3D8",
+          "#F1F2F4"
+        ]
+      },
+      "selection-blue": {
+        "role": "primary",
+        "displayName": "Selection Blue",
+        "canonical": "#7FA8FF",
+        "tonalRamp": [
+          "#00143D",
+          "#00277A",
+          "#003AB6",
+          "#004EF3",
+          "#3072FF",
+          "#6D9BFF",
+          "#A9C5FF",
+          "#E5EEFF"
+        ]
+      },
+      "selection-blue-ink": {
+        "role": "primary",
+        "displayName": "Selection Blue Ink",
+        "canonical": "#0B1A3A",
+        "tonalRamp": [
+          "#0A1733",
+          "#132E66",
+          "#1D4599",
+          "#275BCC",
+          "#517EDE",
+          "#84A4E8",
+          "#B7C9F1",
+          "#EAEFFB"
+        ]
+      },
+      "selection-blue-container": {
+        "role": "primary",
+        "displayName": "Selection Blue Container",
+        "canonical": "#233656",
+        "tonalRamp": [
+          "#121B2B",
+          "#233656",
+          "#355181",
+          "#466CAC",
+          "#6C8CC3",
+          "#97AED5",
+          "#C2CFE6",
+          "#EDF1F8"
+        ]
+      },
+      "physical-amber": {
+        "role": "secondary",
+        "displayName": "Physical Amber",
+        "canonical": "#FFB547",
+        "tonalRamp": [
+          "#3D2500",
+          "#7A4900",
+          "#B66D00",
+          "#F39100",
+          "#FFAC30",
+          "#FFC46D",
+          "#FFDCA9",
+          "#FFF5E5"
+        ]
+      },
+      "physical-amber-ink": {
+        "role": "secondary",
+        "displayName": "Physical Amber Ink",
+        "canonical": "#2E1D00",
+        "tonalRamp": [
+          "#3D2700",
+          "#7A4D00",
+          "#B67300",
+          "#F39900",
+          "#FFB330",
+          "#FFC96D",
+          "#FFDFA9",
+          "#FFF6E5"
+        ]
+      },
+      "fault-red": {
+        "role": "tertiary",
+        "displayName": "Fault Red",
+        "canonical": "#FF7468",
+        "tonalRamp": [
+          "#3D0500",
+          "#7A0A00",
+          "#B60E00",
+          "#F31300",
+          "#FF4130",
+          "#FF786D",
+          "#FFB0A9",
+          "#FFE8E5"
+        ]
+      },
+      "swatch-off": {
+        "role": "neutral",
+        "displayName": "Swatch Off",
+        "canonical": "#8F96A0",
+        "tonalRamp": [
+          "#1C1E21",
+          "#383C42",
+          "#545A63",
+          "#6F7883",
+          "#8F96A0",
+          "#B0B5BC",
+          "#D0D3D8",
+          "#F1F2F3"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Screen title: current room name, Settings."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Sheet device name, PC hostname, empty-state title."
+      },
+      "title-large": {
+        "displayName": "Title Large",
+        "purpose": "Power sheet hostname."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Device row name, settings list titles."
+      },
+      "title-small": {
+        "displayName": "Title Small",
+        "purpose": "Room tabs, section headers in Ink Dim."
+      },
+      "body-large": {
+        "displayName": "Body Large",
+        "purpose": "Capability labels and readings, settings rows."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Row summaries, count line, hints, fields."
+      },
+      "body-small": {
+        "displayName": "Body Small",
+        "purpose": "Trackpad hint."
+      },
+      "label-large": {
+        "displayName": "Label Large",
+        "purpose": "Button text."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Callout name, nav labels (condensed)."
+      },
+      "label-small": {
+        "displayName": "Label Small",
+        "purpose": "Callout value, overflow note, captions (condensed)."
+      },
+      "figures": {
+        "displayName": "Figures",
+        "purpose": "Tabular figures on every changing number."
+      }
+    },
+    "shadows": [
+      {
+        "name": "selection-halo",
+        "value": "Hm.select, srcIn, MaskFilter.blur(outer, 7)",
+        "purpose": "Behind the selected device silhouette in the viewport."
+      },
+      {
+        "name": "failure-halo",
+        "value": "Hm.danger, srcIn, MaskFilter.blur(outer, 10)",
+        "purpose": "Behind a device whose command failed."
+      },
+      {
+        "name": "amber-bloom",
+        "value": "glow pass x Hm.on(alpha=level), modulate + plus, blur(normal, 9 x scale)",
+        "purpose": "Light parts of devices that are physically on."
+      },
+      {
+        "name": "amber-pool",
+        "value": "Hm.on at 0.13 (lamps) / 0.24 (small LED) x level, radius 0.8 units, blur 14",
+        "purpose": "Light spilled on the floor under what is on."
+      }
+    ],
+    "motion": [
+      {
+        "name": "flip",
+        "value": "220ms, easeOutCubic in / easeInCubic out, slide from 0.7 height + fade",
+        "purpose": "FlipText: values change in place."
+      },
+      {
+        "name": "state-ease",
+        "value": "exponential, tau 120ms",
+        "purpose": "Amber and hatch fading towards their targets in the viewport."
+      },
+      {
+        "name": "orbit-inertia",
+        "value": "0.008 rad/px, decay exp(-3.5 t), settle on nearest 15deg view",
+        "purpose": "Turning the room over its 90deg arc."
+      },
+      {
+        "name": "trackpad-hint",
+        "value": "180ms opacity",
+        "purpose": "Trackpad hint fades out under a finger."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "phone",
+        "value": "single column, Android portrait"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Filled Button",
+      "kind": "button",
+      "refersTo": "button-filled",
+      "description": "Primary action, 48px, 6px radius.",
+      "html": "<button class=\"ds-btn-filled\">Save</button>",
+      "css": ".ds-btn-filled { font-family: Barlow, sans-serif; background: #7FA8FF; color: #0B1A3A; border: none; border-radius: 6px; min-height: 48px; padding: 0 24px; font-size: 15px; font-weight: 600; letter-spacing: 0.2px; } .ds-btn-filled:hover { background: #95B7FF; } .ds-btn-filled:focus-visible { outline: 2px solid #EEF0F2; outline-offset: 2px; }"
+    },
+    {
+      "name": "Outlined Button",
+      "kind": "button",
+      "refersTo": "button-outlined",
+      "description": "Secondary action with a strong hairline.",
+      "html": "<button class=\"ds-btn-outlined\">Pair</button>",
+      "css": ".ds-btn-outlined { font-family: Barlow, sans-serif; background: transparent; color: #EEF0F2; border: 1px solid #4B525C; border-radius: 6px; min-height: 48px; padding: 0 20px; font-size: 15px; font-weight: 600; } .ds-btn-outlined:hover { background: rgba(127,168,255,0.08); } .ds-btn-outlined:focus-visible { border-color: #7FA8FF; }"
+    },
+    {
+      "name": "Device Row",
+      "kind": "custom",
+      "refersTo": "device-row",
+      "description": "State swatch, name, flipping summary in the state colour, power switch.",
+      "html": "<div class=\"ds-row\"><span class=\"ds-swatch\"></span><div><div class=\"ds-row-name\">Ceiling light</div><div class=\"ds-row-val\">On · 70 %</div></div><span class=\"ds-switch\"></span></div><div class=\"ds-row\"><span class=\"ds-swatch ds-pending\"></span><div><div class=\"ds-row-name\">Console</div><div class=\"ds-row-val ds-blue\">On</div></div><span class=\"ds-switch ds-switch-pending\"></span></div>",
+      "css": ".ds-row { font-family: Barlow, sans-serif; display: flex; align-items: center; gap: 16px; min-height: 64px; padding: 8px 12px 8px 20px; background: #15171B; border-bottom: 1px solid #343A42; } .ds-row > div { flex: 1; } .ds-row:hover { background: rgba(127,168,255,0.08); } .ds-swatch { width: 14px; height: 14px; background: #FFB547; } .ds-pending { background: repeating-linear-gradient(135deg, #8F96A0 0 2px, #7FA8FF 2px 4px); } .ds-row-name { color: #EEF0F2; font-size: 16px; font-weight: 600; } .ds-row-val { color: #FFB547; font-size: 14px; font-variant-numeric: tabular-nums; } .ds-blue { color: #7FA8FF; } .ds-switch { width: 52px; height: 32px; border-radius: 16px; background: #FFB547; } .ds-switch-pending { background: #7FA8FF; }"
+    },
+    {
+      "name": "Callout Plate",
+      "kind": "custom",
+      "refersTo": "callout-plate",
+      "description": "CAD callout over the room: plate on a shoulder, leader to a state-carrying pick point.",
+      "html": "<div class=\"ds-callout\"><div class=\"ds-callout-plate\"><div class=\"ds-callout-name\">Floor lamp</div><div class=\"ds-callout-val\">On · 45 %</div></div><div class=\"ds-callout-shoulder\"></div></div>",
+      "css": ".ds-callout { font-family: \"Barlow Semi Condensed\", Barlow, sans-serif; width: 124px; background: #2A2E35; padding: 8px; } .ds-callout-plate { display: inline-block; background: rgba(21,23,27,0.88); border: 1px solid #343A42; border-radius: 6px; padding: 4px 6px; } .ds-callout-plate:hover { border-color: #7FA8FF; } .ds-callout-name { color: #EEF0F2; font-size: 13px; font-weight: 500; letter-spacing: 0.2px; } .ds-callout-val { color: #FFB547; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; } .ds-callout-shoulder { height: 1px; background: rgba(162,169,179,0.8); }"
+    },
+    {
+      "name": "Round Key",
+      "kind": "button",
+      "refersTo": "round-key",
+      "description": "Remote key: hairline ring, ink icon; primary and selected in blue, power in red.",
+      "html": "<button class=\"ds-key\" aria-label=\"Previous\"><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\"><path fill=\"currentColor\" d=\"M6 6h2v12H6zm3.5 6 8.5 6V6z\"/></svg></button><button class=\"ds-key ds-key-primary\" aria-label=\"Play\"><svg width=\"30\" height=\"30\" viewBox=\"0 0 24 24\"><path fill=\"currentColor\" d=\"M8 5v14l11-7z\"/></svg></button><button class=\"ds-key ds-key-power\" aria-label=\"Power\"><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\"><path fill=\"currentColor\" d=\"M13 3h-2v10h2zm4.83 2.17-1.42 1.42A6.92 6.92 0 0 1 19 12a7 7 0 1 1-11.42-5.42L6.17 5.17A9 9 0 1 0 21 12a8.96 8.96 0 0 0-3.17-6.83\"/></svg></button>",
+      "css": ".ds-key { width: 56px; height: 56px; border-radius: 50%; border: 1.5px solid #4B525C; background: transparent; color: #EEF0F2; display: inline-grid; place-items: center; margin: 4px; } .ds-key:hover { background: rgba(238,240,242,0.06); } .ds-key:focus-visible { outline: 2px solid #7FA8FF; outline-offset: 2px; } .ds-key-primary { width: 72px; height: 72px; border: 2px solid #7FA8FF; color: #7FA8FF; background: rgba(127,168,255,0.12); } .ds-key-power { border-color: #FF7468; color: #FF7468; }"
+    },
+    {
+      "name": "Room Tabs",
+      "kind": "nav",
+      "refersTo": "room-tab",
+      "description": "Rooms as tabs; current in ink with a blue underline.",
+      "html": "<nav class=\"ds-tabs\"><a>Bedroom</a><a class=\"ds-tab-on\" aria-current=\"true\">Living room</a><a>Office</a></nav>",
+      "css": ".ds-tabs { font-family: Barlow, sans-serif; display: flex; background: #15171B; padding: 0 12px; } .ds-tabs a { height: 48px; display: flex; align-items: center; padding: 0 10px; color: #A2A9B3; font-size: 14px; font-weight: 600; border-bottom: 2px solid transparent; cursor: pointer; } .ds-tabs a:hover { color: #EEF0F2; } .ds-tab-on { color: #EEF0F2 !important; border-bottom-color: #7FA8FF !important; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Filled panel field, hairline border, blue on focus.",
+      "html": "<input class=\"ds-input\" placeholder=\"Name\" />",
+      "css": ".ds-input { font-family: Barlow, sans-serif; background: #1C1F24; color: #EEF0F2; border: 1px solid #343A42; border-radius: 6px; padding: 14px 12px; font-size: 14px; } .ds-input::placeholder { color: #A2A9B3; } .ds-input:hover { border-color: #4B525C; } .ds-input:focus-visible { outline: none; border: 1.5px solid #7FA8FF; }"
+    },
+    {
+      "name": "Sketch Plane",
+      "kind": "custom",
+      "description": "Trackpad: dot grid, blue crosshair and live coordinate readout.",
+      "html": "<div class=\"ds-plane\"><span class=\"ds-plane-x\"></span><span class=\"ds-plane-y\"></span><span class=\"ds-plane-read\">x 132   y  96</span></div>",
+      "css": ".ds-plane { position: relative; width: 280px; height: 180px; border: 1px solid #343A42; border-radius: 6px; background-color: #1C1F24; background-image: radial-gradient(#4B525C 0.8px, transparent 0.9px); background-size: 22px 22px; background-position: 11px 11px; } .ds-plane-x { position: absolute; left: 0; right: 0; top: 96px; height: 1px; background: rgba(127,168,255,0.7); } .ds-plane-y { position: absolute; top: 0; bottom: 0; left: 132px; width: 1px; background: rgba(127,168,255,0.7); } .ds-plane-read { position: absolute; left: 144px; top: 72px; font: 500 12px \"Barlow Semi Condensed\", sans-serif; color: #7FA8FF; font-variant-numeric: tabular-nums; white-space: pre; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Viewport",
+    "overview": "**Creative North Star: \"The Viewport\"**\n\nThe home is a live CAD model. Each room is a furnished dollhouse cut-away (two walls, a lit cut section, dark furniture) standing on a graphite floor that is the real construction grid. The devices are studio-rendered satin clay parts set on its walls, furniture tops, windows, door, floor and ceiling, each annotated by a leader-line callout carrying its true state. The grammar is Fusion 360 / Onshape: graphite ground, hairline panels, small radii, a technical grotesk with tabular figures, one selection blue, and one amber that only ever means \"physically on\". It refuses the category default, a grid of rounded device tiles.\n\nDepth lives in the renders, not in the chrome. The interface around the room is flat graphite planes separated by hairlines, so the room and its amber are the only things with volume or light. State changes happen in place: amber fades up, the blue hatch resolves to solid, the value flips inside its own box, and nothing else moves.\n\nThe PC remote belongs to the same world: round hairline keys in ink, service logos in ink, and a trackpad drawn as a sketch plane (dot grid, crosshair under the finger, live x/y readout).",
+    "keyCharacteristics": [
+      "Dark only: graphite grounds, built for evenings indoors.",
+      "Amber is the device's reported state, never a wish.",
+      "One state grammar everywhere: viewport, callouts, pick points, rows, sheet.",
+      "Pre-rendered studio views (Blender Cycles), composited in Flutter; no real-time 3D.",
+      "Barlow with tabular figures; condensed Barlow for annotation labels.",
+      "Rectangular parts with a 6px radius and hairline borders; only remote keys are round."
+    ],
+    "rules": [
+      {
+        "name": "The Observed Amber Rule",
+        "body": "Amber comes from the observed state only (`onLevel` in `app/lib/widgets/state.dart`). A pending wish never lights anything: the switch stays blue, the text is blue, the model is hatched, until the device confirms.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Meaning Rule",
+        "body": "Blue is interaction and waiting; amber is physical power; red is failure, alarm or destruction. A toggle that powers nothing (mute, invert scroll, a boolean `custom:` capability) is blue, never amber.",
+        "section": "colors"
+      },
+      {
+        "name": "The Ink Logo Rule",
+        "body": "Service logos (Simple Icons, CC0, `app/assets/logos/`, see `app/tools/logos.md`) are drawn in ink like every other key, blue when active. Brand colours are refused.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tabular Figures Rule",
+        "body": "Every changing number (summaries, percent, watts, volume, counts, host:port, trackpad coordinates) sets `fontFeatures: Hm.tabular` so values flip without jitter.",
+        "section": "typography"
+      },
+      {
+        "name": "The Two Facts Rule",
+        "body": "A summary (`summary()` in `widgets/state.dart`) says at most two facts joined by \" · \": \"On · 70 %\", \"On · 410 W\", \"Locked · Closed\". Watts keep one decimal only under 10 W.",
+        "section": "typography"
+      },
+      {
+        "name": "The Light Is State Rule",
+        "body": "The only glows in the app are state: amber light passes (multiplied, plus a bloom, softer at 0.75 for screens and appliances), amber floor pools (0.13 for lamps, 0.24 for small-LED devices), a blue selection halo or red failure halo behind the device silhouette. No decorative shadow or glow on UI chrome.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** route every state colour through `stateColor` / `onLevel` / `isPending` in `app/lib/widgets/state.dart`.",
+      "**Do** add a new capability by extending `CapabilityTile`, `capLabel` and, if it has a summary fact, `summary`; unknown `custom:*` capabilities must still render generically.",
+      "**Do** add a new model in three places together: geometry in `render.py`, an entry in `catalog` (`models.dart`) with anchor, scale and mounts, and a label in `widgets/model_names.dart`; then re-render and re-pack.",
+      "**Do** add a new room kind in `room.py` (all three sizes, its mounts), `roomKinds` and `inferRoomKind` in `rooms.dart`, and its FR/EN label.",
+      "**Do** add a remote key as a `_Round`: hairline ring, ink icon, blue only when primary or selected, red only for destructive power.",
+      "**Do** keep values in place: changing numbers use `FlipText` and tabular figures, and layout never moves on a state change.",
+      "**Do** honour reduced motion (`MediaQuery.disableAnimations`): flips, easing and spin snap instantly."
+    ],
+    "donts": [
+      "**Don't** light anything amber from a desired state, or use amber for a switch that powers nothing.",
+      "**Don't** colour service logos in their brand colours.",
+      "**Don't** add real-time 3D; extend the pre-rendered views and keep camera constants identical on both sides.",
+      "**Don't** choose a model or room from a brand or plugin name.",
+      "**Don't** add shadows, gradients or glows to UI chrome; light in this world is state.",
+      "**Don't** put device tiles in a grid; devices live in the room and in rows.",
+      "**Don't** expect light on walls: lit devices pool amber on the floor only; light spilling onto walls is not done yet."
+    ]
+  }
+}
