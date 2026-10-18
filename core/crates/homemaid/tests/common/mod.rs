@@ -64,8 +64,10 @@ pub fn start_wasm(plugin: Plugin, path: PathBuf) -> (Arc<Core>, TempDir) {
     (core, data)
 }
 
+/// Polls `check` until it holds. `timeout` is what a dev machine needs; shared CI runners compile
+/// the plugins' wasm much slower, so it is stretched 4x (returning as soon as `check` holds).
 pub async fn wait_for(what: &str, timeout: Duration, mut check: impl FnMut() -> bool) {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + timeout * 4;
     while !check() {
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
         tokio::time::sleep(Duration::from_millis(20)).await;

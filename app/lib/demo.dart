@@ -363,7 +363,7 @@ Map<String, DryRun> _dryRuns(bool fr) {
       conditions: [(ok: evening, reason: t('$time ${evening ? 'est' : "n'est pas"} entre 18:00 et 01:00', '$time is ${evening ? '' : 'not '}between 18:00 and 01:00'))],
       actions: [
         (
-          action: {'set': {'select': 'room:Salon & cap:brightness', 'cap': 'brightness', 'value': 40}},
+          action: {'set': {'select': 'room:"${t('Salon', 'Living room')}" & cap:brightness', 'cap': 'brightness', 'value': 40}},
           targets: [(name: t('Plafonnier', 'Ceiling light'), changes: true, error: null), (name: t('Lampadaire', 'Floor lamp'), changes: true, error: null)],
         ),
       ],
@@ -375,7 +375,7 @@ Map<String, DryRun> _dryRuns(bool fr) {
       wouldRun: false,
       conditions: [(ok: false, reason: t('Ventilateur : allumé (ne passe pas)', 'Fan: on (does not pass)'))],
       actions: [
-        (action: {'set': {'select': 'room:Chambre & model:radiator', 'cap': 'on_off', 'value': true}}, targets: [(name: t('Radiateur d\'appoint', 'Space heater'), changes: false, error: null)]),
+        (action: {'set': {'select': 'room:${t('Chambre', 'Bedroom')} & model:radiator', 'cap': 'on_off', 'value': true}}, targets: [(name: t('Radiateur d\'appoint', 'Space heater'), changes: false, error: null)]),
       ],
     ),
     'garage': DryRun(wouldRun: true, actions: [

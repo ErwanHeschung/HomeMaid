@@ -36,7 +36,11 @@ jobs:
       - name: Clippy, plugins as wasm
         run: cargo clippy -p homemaid-plugin -p mock-plugin -p pc-plugin -p tplink-plugin --target wasm32-wasip2 -- -D warnings
       - name: Tests
-        run: cargo test
+        run: cargo test 2>&1 | tee test.log; exit ${PIPESTATUS[0]}
+      # Annotations are readable without access to the logs.
+      - name: Report test failures
+        if: failure()
+        run: grep -E "panicked|timed out|FAILED|error(\[|:)" test.log | head -20 | sed 's/^/::error::/' || true
 
   windows:
     name: Windows exe · clippy and build

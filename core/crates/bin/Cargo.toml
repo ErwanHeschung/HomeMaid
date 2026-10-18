@@ -2,6 +2,7 @@
 name = "homemaid-bin"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 
 # The one executable: the server from its flags, or the desktop client on Windows.
 [[bin]]
