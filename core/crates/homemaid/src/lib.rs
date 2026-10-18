@@ -7,6 +7,7 @@ pub mod pairing;
 pub mod plugins;
 pub mod reconciler;
 pub mod selector;
+pub mod server;
 pub mod store;
 
 use std::{

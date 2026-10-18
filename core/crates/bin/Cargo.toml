@@ -1,0 +1,24 @@
+[package]
+name = "homemaid-bin"
+version = "0.1.0"
+edition = "2024"
+
+# The one executable: the server from its flags, or the desktop client on Windows.
+[[bin]]
+name = "homemaid"
+path = "src/main.rs"
+
+[dependencies]
+homemaid = { path = "../homemaid" }
+clap = { version = "4.6.7", features = ["derive"] }
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "signal", "sync"] }
+tracing = "0.1.44"
+
+[target.'cfg(windows)'.dependencies]
+homemaid-desktop = { path = "../desktop" }
+windows = { version = "0.62.2", features = ["Win32_System_Console"] }
+windows-service = "0.8.1"
+
+[build-dependencies]
+# The exe's icon (assets/homemaid.ico, made by app/tools/icon.py), also used by the tray.
+embed-resource = "3.0.12"

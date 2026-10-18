@@ -1,0 +1,19 @@
+[package]
+name = "homemaid-desktop"
+version = "0.1.0"
+edition = "2024"
+
+# The desktop client: Windows only (an empty library elsewhere).
+[target.'cfg(windows)'.dependencies]
+homemaid = { path = "../homemaid" }
+serde_json = "1.0.154"
+tao = { version = "0.37.1", default-features = false, features = ["rwh_06"] }
+tracing = "0.1.44"
+tray-icon = { version = "0.26.1", default-features = false }
+windows = { version = "0.62.2", features = [
+    "Win32_Globalization",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+wry = { version = "0.57.0", default-features = false }

@@ -2,5 +2,5 @@
 members = ["crates/*", "plugin-api", "plugins/*"]
 # Plugins ship as wasm (`cargo build -p tplink-plugin --target wasm32-wasip2`); tplink is also
 # built natively so `cargo test` runs its unit tests.
-default-members = ["crates/homemaid", "crates/caps", "plugins/tplink"]
+default-members = ["crates/homemaid", "crates/bin", "crates/desktop", "crates/caps", "plugins/tplink"]
 resolver = "3"

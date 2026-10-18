@@ -172,10 +172,10 @@
     last = s;
     if (s.qr) qr = s.qr;
     $('host').textContent = s.host;
-    $('run').classList.toggle('starting', !s.hub.ready);
-    $('run-text').textContent = s.hub.ready ? T.running : T.starting;
-    $('hub-sub').textContent = `${s.ip}:${s.hub.port}`;
-    $('hub-devices').textContent = s.hub.ready ? T.devices(s.hub.devices, s.hub.online) : '';
+    $('run').classList.toggle('starting', !s.ready);
+    $('run-text').textContent = s.ready ? T.running : T.starting;
+    $('hub-sub').textContent = s.address;
+    $('hub-devices').textContent = s.ready ? T.devices(s.devices, s.online) : '';
     const agent = $('agent');
     agent.disabled = false;
     agent.setAttribute('aria-checked', String(!!(s.agent && s.agent.on)));

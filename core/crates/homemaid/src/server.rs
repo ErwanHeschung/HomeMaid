@@ -1,99 +1,24 @@
-// No console window when started at logon or as a service; `attach_console` keeps terminal logs.
-#![cfg_attr(windows, windows_subsystem = "windows")]
+//! Running the hub (core) and the PC agent. The `homemaid` binary runs them from its flags
+//! ([`run`]); the desktop client drives them through a [`Handle`], and knows nothing else of them.
 
 use std::{
     fs::File,
     future::Future,
     net::SocketAddr,
     path::{Path, PathBuf},
-    process::ExitCode,
     sync::{Arc, Mutex, OnceLock},
+    thread,
     time::{Duration, Instant},
 };
 
-use clap::Parser;
-use homemaid::{Core, agent, api, config, pairing, plugins::Plugins, reconciler::Reconciler, store};
-use tokio::sync::{mpsc, watch};
+use serde::Serialize;
+use tokio::sync::{mpsc, oneshot, watch};
 
-#[cfg(windows)]
-mod desktop;
+use crate::{Core, agent, api, automations::Automations, config, pairing, plugins::Plugins, reconciler::Reconciler, store};
 
-/// The running core, for the desktop window's status.
-#[cfg_attr(not(windows), allow(dead_code))]
-static CORE: OnceLock<Arc<Core>> = OnceLock::new();
-
-/// HomeMaid home automation hub. Roles are enabled by flags and can be combined. On Windows,
-/// without --core or --agent, it runs as a desktop app: hub and PC control, an icon in the
-/// notification area and a window, with homemaid.toml next to the exe.
-#[derive(Parser)]
-struct Args {
-    /// Run the core: entity registry, reconciler, plugins and API.
-    #[arg(long)]
-    core: bool,
-    /// Run the PC agent: remote control of this PC. Must run in the user's session, not as a service.
-    #[arg(long)]
-    agent: bool,
-    /// Configuration file [default: homemaid.toml, next to the exe in desktop mode].
-    #[arg(long)]
-    config: Option<PathBuf>,
-    /// Write logs to this file instead of the console.
-    #[arg(long)]
-    log_file: Option<PathBuf>,
-    /// Run under the Windows service control manager (set in the service's command line).
-    #[cfg(windows)]
-    #[arg(long)]
-    service: bool,
-    /// Desktop mode: start in the notification area without opening the window (at logon).
-    #[cfg(windows)]
-    #[arg(long)]
-    background: bool,
-}
-
-impl Args {
-    fn config(&self) -> PathBuf {
-        self.config.clone().unwrap_or_else(|| "homemaid.toml".into())
-    }
-
-    /// The agent always on with --agent, absent otherwise.
-    fn agent_switch(&self) -> Option<watch::Receiver<bool>> {
-        self.agent.then(|| watch::channel(true).1)
-    }
-}
-
-fn main() -> ExitCode {
-    #[cfg(windows)]
-    attach_console();
-    let args = Args::parse();
-    #[cfg(windows)]
-    if !args.core && !args.agent && !args.service {
-        return desktop::main(args);
-    }
-    if let Err(e) = init_logging(args.log_file.as_deref()) {
-        eprintln!("{e}");
-        return ExitCode::FAILURE;
-    }
-    #[cfg(windows)]
-    if args.service {
-        return report(service::start());
-    }
-    report(block_on(run(args.config(), args.core, args.agent_switch(), async {
-        let _ = tokio::signal::ctrl_c().await;
-    })))
-}
-
-fn report(result: Result<(), String>) -> ExitCode {
-    match result {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            tracing::error!("{e}");
-            eprintln!("{e}");
-            ExitCode::FAILURE
-        }
-    }
-}
-
-fn init_logging(log_file: Option<&Path>) -> Result<(), String> {
-    match log_file {
+/// Logs to `file` (appended), or to the console.
+pub fn init_logging(file: Option<&Path>) -> Result<(), String> {
+    match file {
         Some(path) => {
             let file = File::options()
                 .create(true)
@@ -107,17 +32,28 @@ fn init_logging(log_file: Option<&Path>) -> Result<(), String> {
     Ok(())
 }
 
-fn block_on(future: impl Future<Output = Result<(), String>>) -> Result<(), String> {
-    tokio::runtime::Runtime::new().map_err(|e| e.to_string())?.block_on(future)
+/// The agent switch of `--agent`: always on.
+pub fn always_on() -> watch::Receiver<bool> {
+    watch::channel(true).1
 }
 
 /// Runs the requested roles until `shutdown` completes, then stops them cleanly. The agent runs
 /// while its switch is on (with --agent it stays on).
-async fn run(
+pub async fn run(
     config_path: PathBuf,
     run_core: bool,
     agent_switch: Option<watch::Receiver<bool>>,
     shutdown: impl Future<Output = ()> + Send + 'static,
+) -> Result<(), String> {
+    serve(config_path, run_core, agent_switch, shutdown, Arc::default()).await
+}
+
+async fn serve(
+    config_path: PathBuf,
+    run_core: bool,
+    agent_switch: Option<watch::Receiver<bool>>,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+    published: Arc<OnceLock<Arc<Core>>>,
 ) -> Result<(), String> {
     if !run_core && agent_switch.is_none() {
         return Err("nothing to run: pass --core and/or --agent".into());
@@ -141,8 +77,8 @@ async fn run(
         }
         let core_config = config.core.take().ok_or("--core needs a [core] section in the config")?;
         // Checked before anything starts: a broken automation is a config error.
-        let automations = homemaid::automations::Automations::new(&config.automations).map_err(|e| format!("{}: {e}", config_path.display()))?;
-        start_core(core_config, &config_path, config.entities, config.rooms, config.plugins, automations, until_stopped()).await
+        let automations = Automations::new(&config.automations).map_err(|e| format!("{}: {e}", config_path.display()))?;
+        start_core(core_config, &config_path, config.entities, config.rooms, config.plugins, automations, until_stopped(), &published).await
     };
     let agent = async {
         let Some(mut switch) = agent_switch else { return Ok(()) };
@@ -181,14 +117,17 @@ async fn run(
     tokio::try_join!(core, agent).map(|_| ())
 }
 
+// The pieces of the config the hub needs, plus where to publish it: grouping them would only rename them.
+#[allow(clippy::too_many_arguments)]
 async fn start_core(
     config: config::CoreConfig,
     config_path: &Path,
     overrides: Vec<config::EntityOverride>,
     rooms: Vec<config::RoomConfig>,
     plugins: Vec<config::PluginConfig>,
-    automations: homemaid::automations::Automations,
+    automations: Automations,
     shutdown: impl Future<Output = ()> + Send + 'static,
+    published: &OnceLock<Arc<Core>>,
 ) -> Result<(), String> {
     let data_dir = &config.data_dir;
     std::fs::create_dir_all(data_dir).map_err(|e| format!("{}: {e}", data_dir.display()))?;
@@ -200,7 +139,7 @@ async fn start_core(
     let (commands, mut command_rx) = mpsc::unbounded_channel();
     let entities = store::restore(snapshot, &overrides);
     let core = Arc::new(Core::new(Reconciler::new(entities), commands));
-    let _ = CORE.set(core.clone());
+    let _ = published.set(core.clone());
     *core.overrides.lock().unwrap() = overrides.into_iter().map(|o| (o.id, o)).collect();
     *core.rooms.lock().unwrap() = rooms.into_iter().filter_map(|r| Some((r.name, r.kind.filter(|k| !k.is_empty())?))).collect();
 
@@ -258,72 +197,109 @@ fn save(core: &Core, path: &Path) {
     }
 }
 
-/// Reuses the console of the terminal we were started from, if any (GUI-subsystem binary).
-#[cfg(windows)]
-fn attach_console() {
-    use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
-    let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+
+/// A running server, driven from another thread (the desktop client).
+pub struct Handle {
+    config_path: PathBuf,
+    core: Arc<OnceLock<Arc<Core>>>,
+    core_bind: SocketAddr,
+    data_dir: PathBuf,
+    agent: Option<(watch::Sender<bool>, u16)>,
+    qr: (String, Option<String>),
+    stop: Mutex<Option<oneshot::Sender<()>>>,
 }
 
-/// Windows service entry: `homemaid.exe --core --service --config ... --log-file ...`, installed with `sc.exe create`.
-#[cfg(windows)]
-mod service {
-    use std::{ffi::OsString, time::Duration};
+/// What the desktop window shows of the server.
+#[derive(Debug, Serialize)]
+pub struct Status {
+    /// The hub is up (plugins started, API listening soon).
+    pub ready: bool,
+    pub devices: usize,
+    pub online: usize,
+    /// Where the phone reaches the hub: LAN IP and port.
+    pub address: String,
+    pub host: String,
+    pub agent: Option<AgentStatus>,
+}
 
-    use clap::Parser;
-    use windows_service::{
-        define_windows_service,
-        service::{ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType},
-        service_control_handler::{self, ServiceControlHandlerResult},
-        service_dispatcher,
-    };
+#[derive(Debug, Serialize)]
+pub struct AgentStatus {
+    pub on: bool,
+    pub port: u16,
+}
 
-    const NAME: &str = "HomeMaid";
-
-    define_windows_service!(ffi_service_main, service_main);
-
-    pub fn start() -> Result<(), String> {
-        service_dispatcher::start(NAME, ffi_service_main).map_err(|e| format!("not started by the service manager: {e}"))
+impl Handle {
+    /// Starts the hub, and the agent if the config has one (as its `enabled` says), on a thread
+    /// and runtime of their own. `stopped` is called once both are down, with how they ended.
+    pub fn spawn(config_path: PathBuf, stopped: impl FnOnce(Result<(), String>) + Send + 'static) -> Result<Self, String> {
+        let config = config::load(&config_path)?;
+        let core = config.core.as_ref().ok_or_else(|| format!("{}: no [core] section", config_path.display()))?;
+        let qr = (
+            pairing::qr_svg("core", core.bind, &core.token),
+            config.agent.as_ref().map(|a| pairing::qr_svg("agent", a.bind, &a.token)),
+        );
+        let agent = config.agent.as_ref().map(|a| (watch::channel(a.enabled), a.bind.port()));
+        let switch = agent.as_ref().map(|((_, rx), _)| rx.clone());
+        let (stop, stop_rx) = oneshot::channel();
+        let published = Arc::new(OnceLock::new());
+        let (path, core_slot) = (config_path.clone(), published.clone());
+        thread::Builder::new()
+            .name("server".into())
+            .spawn(move || {
+                let result = tokio::runtime::Runtime::new().map_err(|e| e.to_string()).and_then(|runtime| {
+                    runtime.block_on(serve(path, true, switch, async { drop(stop_rx.await) }, core_slot))
+                });
+                stopped(result);
+            })
+            .map_err(|e| e.to_string())?;
+        Ok(Self {
+            core_bind: core.bind,
+            data_dir: core.data_dir.clone(),
+            config_path,
+            core: published,
+            agent: agent.map(|((tx, _), port)| (tx, port)),
+            qr,
+            stop: Mutex::new(Some(stop)),
+        })
     }
 
-    fn service_main(_service_args: Vec<OsString>) {
-        if let Err(e) = run_service() {
-            tracing::error!("service failed: {e}");
+    pub fn status(&self) -> Status {
+        let counts = self.core.get().map(|core| core.with(|r| (r.entities.len(), r.entities.values().filter(|e| e.available).count())));
+        Status {
+            ready: counts.is_some(),
+            devices: counts.map_or(0, |c| c.0),
+            online: counts.map_or(0, |c| c.1),
+            address: format!("{}:{}", pairing::lan_ip(self.core_bind), self.core_bind.port()),
+            host: pairing::hostname(),
+            agent: self.agent.as_ref().map(|(switch, port)| AgentStatus { on: *switch.borrow(), port: *port }),
         }
     }
 
-    fn run_service() -> Result<(), String> {
-        let (stop, stopped) = tokio::sync::oneshot::channel();
-        let mut stop = Some(stop);
-        let handler = move |control| match control {
-            ServiceControl::Stop | ServiceControl::Shutdown => {
-                if let Some(stop) = stop.take() {
-                    let _ = stop.send(());
-                }
-                ServiceControlHandlerResult::NoError
-            }
-            ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
-            _ => ServiceControlHandlerResult::NotImplemented,
-        };
-        let status = service_control_handler::register(NAME, handler).map_err(|e| e.to_string())?;
-        let set = |state, accept| {
-            status.set_service_status(ServiceStatus {
-                service_type: ServiceType::OWN_PROCESS,
-                current_state: state,
-                controls_accepted: accept,
-                exit_code: ServiceExitCode::Win32(0),
-                checkpoint: 0,
-                wait_hint: Duration::from_secs(10),
-                process_id: None,
-            })
-        };
-        set(ServiceState::Running, ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN).map_err(|e| e.to_string())?;
-        // The service's own command line (binPath), not the start parameters.
-        let args = super::Args::parse();
-        let result = super::block_on(super::run(args.config(), args.core, args.agent_switch(), async {
-            let _ = stopped.await;
-        }));
-        set(ServiceState::Stopped, ServiceControlAccept::empty()).map_err(|e| e.to_string())?;
-        result
+    /// The hub's data folder, where a client may keep its own files too.
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
+    /// The pairing QR codes (SVG) of the hub and of the agent. They hold the tokens: show them
+    /// on this PC only.
+    pub fn pairing_qr(&self) -> (&str, Option<&str>) {
+        (&self.qr.0, self.qr.1.as_deref())
+    }
+
+    /// Switches the agent on or off, and saves it in the config. `Ok(true)` when the config had
+    /// no `[agent]` yet and gained one: only a restart picks it up.
+    pub fn set_agent(&self, on: bool) -> Result<bool, String> {
+        let created = config::set_agent_enabled(&self.config_path, on)?;
+        if let Some((switch, _)) = &self.agent {
+            switch.send_replace(on);
+        }
+        Ok(created)
+    }
+
+    /// Stops the hub and the agent cleanly (the state is saved); `stopped` follows.
+    pub fn stop(&self) {
+        if let Some(stop) = self.stop.lock().unwrap().take() {
+            let _ = stop.send(());
+        }
     }
 }

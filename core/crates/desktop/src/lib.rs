@@ -1,7 +1,10 @@
-//! Desktop mode (Windows, `homemaid.exe` without --core or --agent): the hub and PC control in
-//! one process, the logo in the notification area, and a window (a WebView2 page,
-//! `desktop.html`) with the state, the pairing QR codes and the switches. The config and the log
-//! live next to the exe. Started again while running, it shows the running one's window.
+//! The desktop client (Windows, `homemaid.exe` without --core or --agent): the logo in the
+//! notification area and a window (a WebView2 page, `window.html`) with the state, the pairing QR
+//! codes and the switches. It runs the server in the same process but only drives it through
+//! `homemaid::server::Handle`. The config and the log live next to the exe; started again while
+//! running, it shows the running one's window. The tray and window icon is resource 1 of the exe
+//! (`crates/bin/build.rs`).
+#![cfg(windows)]
 
 use std::{
     borrow::Cow,
@@ -10,7 +13,10 @@ use std::{
     thread,
 };
 
-use homemaid::{config, pairing};
+use homemaid::{
+    config,
+    server::{self, Handle},
+};
 use serde_json::{Value, json};
 use tao::{
     dpi::LogicalSize,
@@ -19,7 +25,6 @@ use tao::{
     platform::windows::IconExtWindows,
     window::{Icon, Theme, Window, WindowBuilder},
 };
-use tokio::sync::{oneshot, watch};
 use tray_icon::{
     MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
@@ -35,8 +40,6 @@ use windows::{
 };
 use wry::{WebViewBuilder, http::Response};
 
-use super::{Args, CORE};
-
 enum UserEvent {
     Show,
     Ipc(String),
@@ -45,10 +48,12 @@ enum UserEvent {
     Stopped(Result<(), String>),
 }
 
-pub fn main(args: Args) -> ExitCode {
+/// Runs the client until Quit. `config` and `log_file` default to files next to the exe;
+/// `background` starts without opening the window (at logon).
+pub fn main(config: Option<PathBuf>, log_file: Option<PathBuf>, background: bool) -> ExitCode {
     let dir = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf)).unwrap_or_else(|| ".".into());
-    let config_path = args.config.clone().unwrap_or_else(|| dir.join("homemaid.toml"));
-    if let Err(e) = super::init_logging(Some(&args.log_file.clone().unwrap_or_else(|| dir.join("homemaid.log")))) {
+    let config_path = config.clone().unwrap_or_else(|| dir.join("homemaid.toml"));
+    if let Err(e) = server::init_logging(Some(&log_file.unwrap_or_else(|| dir.join("homemaid.log")))) {
         return fail(&e);
     }
     let Some(show_event) = single_instance() else { return ExitCode::SUCCESS };
@@ -58,7 +63,7 @@ pub fn main(args: Args) -> ExitCode {
         }
         tracing::info!("first start: wrote {}", config_path.display());
     }
-    match run(args, dir, config_path, show_event) {
+    match run(config, background, dir, config_path, show_event) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => fail(&e),
     }
@@ -95,30 +100,14 @@ fn french() -> bool {
     language & 0x3ff == 0x0c
 }
 
-fn run(args: Args, dir: PathBuf, config_path: PathBuf, show_event: HANDLE) -> Result<(), String> {
-    let config = config::load(&config_path)?;
-    let core = config.core.as_ref().ok_or_else(|| format!("{}: no [core] section", config_path.display()))?;
-    let core_bind = core.bind;
-    let qr = json!({
-        "core": pairing::qr_svg("core", core.bind, &core.token),
-        "agent": config.agent.as_ref().map(|a| pairing::qr_svg("agent", a.bind, &a.token)),
-    });
-    let agent_port = config.agent.as_ref().map(|a| a.bind.port());
-    let (switch, switch_rx) = watch::channel(config.agent.as_ref().is_some_and(|a| a.enabled));
-
+fn run(config: Option<PathBuf>, background: bool, dir: PathBuf, config_path: PathBuf, show_event: HANDLE) -> Result<(), String> {
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
-    // The hub and the agent, on a tokio runtime of their own.
-    let (stop, stopped) = oneshot::channel::<()>();
     let runner = proxy.clone();
-    let path = config_path.clone();
-    thread::spawn(move || {
-        let result = super::block_on(super::run(path, true, agent_port.map(|_| switch_rx), async {
-            let _ = stopped.await;
-        }));
-        let _ = runner.send_event(UserEvent::Stopped(result));
-    });
+    let server = Handle::spawn(config_path, move |result| drop(runner.send_event(UserEvent::Stopped(result))))?;
+    let (core_qr, agent_qr) = server.pairing_qr();
+    let qr = json!({ "core": core_qr, "agent": agent_qr });
 
     // A second instance sets the event: show the window.
     let shower = proxy.clone();
@@ -145,7 +134,7 @@ fn run(args: Args, dir: PathBuf, config_path: PathBuf, show_event: HANDLE) -> Re
         .build(&event_loop)
         .map_err(|e| e.to_string())?;
     // WebView2's own files (cache, settings) in the data folder, not next to the exe.
-    let mut context = wry::WebContext::new(Some(core.data_dir.join("webview")));
+    let mut context = wry::WebContext::new(Some(server.data_dir().join("webview")));
     let to_loop = proxy.clone();
     let webview = WebViewBuilder::new_with_web_context(&mut context)
         .with_custom_protocol("homemaid".into(), |_, request| asset(request.uri().path()))
@@ -159,7 +148,6 @@ fn run(args: Args, dir: PathBuf, config_path: PathBuf, show_event: HANDLE) -> Re
     let open = MenuItem::new(if fr { "Ouvrir HomeMaid" } else { "Open HomeMaid" }, true, None);
     let quit = MenuItem::new(if fr { "Quitter" } else { "Quit" }, true, None);
     let mut tray: Option<TrayIcon> = None;
-    let mut stop = Some(stop);
     let mut restart = false;
 
     event_loop.run(move |event, _, control_flow| {
@@ -170,13 +158,13 @@ fn run(args: Args, dir: PathBuf, config_path: PathBuf, show_event: HANDLE) -> Re
                 let _ = menu.append_items(&[&open, &PredefinedMenuItem::separator(), &quit]);
                 tray = TrayIconBuilder::new()
                     .with_icon(tray_icon::Icon::from_resource(1, None).expect("the exe has its icon (build.rs)"))
-                    .with_tooltip(tooltip(fr, *switch.borrow()))
+                    .with_tooltip(tooltip(fr, server.status().agent.is_some_and(|a| a.on)))
                     .with_menu(Box::new(menu))
                     .with_menu_on_left_click(false)
                     .build()
                     .map_err(|e| tracing::error!("no notification-area icon: {e}"))
                     .ok();
-                if !args.background {
+                if !background {
                     show(&window);
                 }
             }
@@ -188,11 +176,11 @@ fn run(args: Args, dir: PathBuf, config_path: PathBuf, show_event: HANDLE) -> Re
                 ..
             })) => show(&window),
             Event::UserEvent(UserEvent::Menu(e)) if e.id == *open.id() => show(&window),
-            Event::UserEvent(UserEvent::Menu(e)) if e.id == *quit.id() => request_stop(&mut stop),
+            Event::UserEvent(UserEvent::Menu(e)) if e.id == *quit.id() => server.stop(),
             Event::UserEvent(UserEvent::Ipc(message)) => {
                 let message: Value = serde_json::from_str(&message).unwrap_or_default();
                 let on = message["on"].as_bool().unwrap_or(false);
-                let status = || status(core_bind, agent_port, *switch.borrow(), &dir);
+                let status = || status(&server);
                 let reply = match message["cmd"].as_str().unwrap_or_default() {
                     "init" => {
                         let mut s = status();
@@ -200,14 +188,13 @@ fn run(args: Args, dir: PathBuf, config_path: PathBuf, show_event: HANDLE) -> Re
                         s
                     }
                     "status" => status(),
-                    "agent" => match config::set_agent_enabled(&config_path, on) {
+                    "agent" => match server.set_agent(on) {
                         // A new [agent] section is read at start.
                         Ok(true) => {
                             restart = true;
-                            return request_stop(&mut stop);
+                            return server.stop();
                         }
                         Ok(false) => {
-                            switch.send_replace(on);
                             if let Some(tray) = &tray {
                                 let _ = tray.set_tooltip(Some(tooltip(fr, on)));
                             }
@@ -225,9 +212,9 @@ fn run(args: Args, dir: PathBuf, config_path: PathBuf, show_event: HANDLE) -> Re
                     }
                     "restart" => {
                         restart = true;
-                        return request_stop(&mut stop);
+                        return server.stop();
                     }
-                    "quit" => return request_stop(&mut stop),
+                    "quit" => return server.stop(),
                     _ => return,
                 };
                 let _ = webview.evaluate_script(&format!("hm({reply})"));
@@ -241,7 +228,7 @@ fn run(args: Args, dir: PathBuf, config_path: PathBuf, show_event: HANDLE) -> Re
                         // Free the single-instance event first, or the new process would just show us.
                         let _ = unsafe { CloseHandle(show_event) };
                         let mut again = Command::new(std::env::current_exe().unwrap_or_else(|_| "homemaid.exe".into()));
-                        if let Some(config) = &args.config {
+                        if let Some(config) = &config {
                             again.arg("--config").arg(config);
                         }
                         if let Err(e) = again.spawn() {
@@ -255,13 +242,6 @@ fn run(args: Args, dir: PathBuf, config_path: PathBuf, show_event: HANDLE) -> Re
             _ => {}
         }
     })
-}
-
-/// Stops the hub and the agent; the loop exits once they are down (`UserEvent::Stopped`).
-fn request_stop(stop: &mut Option<oneshot::Sender<()>>) {
-    if let Some(stop) = stop.take() {
-        let _ = stop.send(());
-    }
 }
 
 fn show(window: &Window) {
@@ -279,23 +259,18 @@ fn tooltip(fr: bool, agent: bool) -> &'static str {
     }
 }
 
-fn status(core_bind: std::net::SocketAddr, agent_port: Option<u16>, agent_on: bool, dir: &Path) -> Value {
-    let devices = CORE.get().map(|core| core.with(|r| (r.entities.len(), r.entities.values().filter(|e| e.available).count())));
-    json!({
-        "host": pairing::hostname(),
-        "ip": pairing::lan_ip(core_bind).to_string(),
-        "hub": { "port": core_bind.port(), "ready": devices.is_some(), "devices": devices.map(|d| d.0), "online": devices.map(|d| d.1) },
-        "agent": agent_port.map(|port| json!({ "port": port, "on": agent_on })),
-        "startup": startup::is_on(),
-        "version": env!("CARGO_PKG_VERSION"),
-        "dir": dir.display().to_string(),
-    })
+/// The server's status, plus what only the client knows.
+fn status(server: &Handle) -> Value {
+    let mut status = serde_json::to_value(server.status()).unwrap_or_default();
+    status["startup"] = json!(startup::is_on());
+    status["version"] = json!(env!("CARGO_PKG_VERSION"));
+    status
 }
 
 /// The window's files, served from the exe (`homemaid://localhost/...`).
 fn asset(path: &str) -> Response<Cow<'static, [u8]>> {
     let (body, kind): (&'static [u8], &str) = match path {
-        "/" => (include_bytes!("desktop.html"), "text/html; charset=utf-8"),
+        "/" => (include_bytes!("window.html"), "text/html; charset=utf-8"),
         "/logo.png" => (include_bytes!("../../../../app/assets/brand/logo.png"), "image/png"),
         "/barlow.ttf" => (include_bytes!("../../../../app/assets/fonts/Barlow-Regular.ttf"), "font/ttf"),
         "/barlow-semibold.ttf" => (include_bytes!("../../../../app/assets/fonts/Barlow-SemiBold.ttf"), "font/ttf"),

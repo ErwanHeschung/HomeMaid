@@ -1578,8 +1578,6 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "caps",
- "clap",
- "embed-resource",
  "enigo",
  "futures-util",
  "jiff",
@@ -1588,7 +1586,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sysinfo",
- "tao",
  "tokio",
  "tokio-tungstenite",
  "toml 1.1.8+spec-1.1.0",
@@ -1596,12 +1593,36 @@ dependencies = [
  "tplink-plugin",
  "tracing",
  "tracing-subscriber",
- "tray-icon",
  "uuid",
  "wasmtime",
  "wasmtime-wasi",
  "windows 0.62.2",
+]
+
+[[package]]
+name = "homemaid-bin"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "embed-resource",
+ "homemaid",
+ "homemaid-desktop",
+ "tokio",
+ "tracing",
+ "windows 0.62.2",
  "windows-service",
+]
+
+[[package]]
+name = "homemaid-desktop"
+version = "0.1.0"
+dependencies = [
+ "homemaid",
+ "serde_json",
+ "tao",
+ "tracing",
+ "tray-icon",
+ "windows 0.62.2",
  "wry",
 ]
 

@@ -63,16 +63,16 @@ Un **seul binaire** `homemaid` dont les rôles sont activés par flags :
 Le passage d'un mode à l'autre ne doit demander **aucune modification de code**, seulement de configuration. Le core doit donc rester portable (Windows, Linux x86_64, Linux ARM64).
 
 Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête quand plus rien ne l'utilise et complique le réseau.
-- **Mode bureau** (le cas normal, `core/crates/homemaid/src/desktop.rs`) : `homemaid.exe` **sans flag de rôle**, lancé par un double-clic.
+- **Mode bureau** (le cas normal, client dans `core/crates/desktop`) : `homemaid.exe` **sans flag de rôle**, lancé par un double-clic.
   - Il fait tourner le hub et l'agent dans un seul process, avec `homemaid.toml` et `homemaid.log` à côté de l'exe.
   - **Premier lancement** (pas de `homemaid.toml`) : il l'écrit lui-même (`config::write_first`) avec le hub, l'agent, des tokens aléatoires (`uuid` v4, aléa de l'OS) et le plugin `pc` si `plugins/pc_plugin.wasm` est là. Le token de l'agent va aussi dans `data/secrets.toml` (`[pc] token`). Personne ne tape de token : l'app les lit dans les QR. Activer « Contrôle du PC » sans section `[agent]` la crée de la même façon, puis redémarre.
   - WebView2 range son cache dans `data/webview`.
   - Le **logo est dans la zone de notification** tant qu'il tourne (clic : la fenêtre ; menu : Ouvrir, Quitter).
-  - La **fenêtre HomeMaid** est une page (`desktop.html`) dans une WebView2 (`wry` + `tao`, façon Tauri), servie depuis l'exe par le protocole `homemaid://`. Pas de serveur HTTP pour elle : elle parle au process par IPC.
+  - La **fenêtre HomeMaid** est une page (`window.html`) dans une WebView2 (`wry` + `tao`, façon Tauri), servie depuis l'exe par le protocole `homemaid://`. Pas de serveur HTTP pour elle : elle parle au process par IPC.
   - Contenu : état du hub, QR d'appairage (maison et PC), « Contrôle du PC » (`[agent] enabled`, l'agent s'arrête et repart à chaud), « Démarrer avec Windows » (valeur `HomeMaid` de `HKCU\…\Run`, `--background`), Ouvrir le dossier, Redémarrer, Quitter.
   - Une seconde instance montre la fenêtre de la première (événement nommé `Local\HomeMaid.Show`). Les erreurs de démarrage s'affichent dans une boîte de dialogue.
   - **Déploiement** : `homemaid.exe` + `WebView2Loader.dll` (mingw ne peut pas l'intégrer à l'exe ; copiée depuis `target/x86_64-pc-windows-gnu/release/build/webview2-com-sys-*/out/x64/`) + `plugins/`. Le runtime WebView2 est fourni par Windows 10/11.
-  - L'icône de l'exe et de la zone de notification vient de `assets/homemaid.ico` (généré par `app/tools/icon.py`, compilé par `build.rs` avec `embed-resource`).
+  - L'icône de l'exe et de la zone de notification vient de `crates/bin/assets/homemaid.ico` (généré par `app/tools/icon.py`, compilé par `crates/bin/build.rs` avec `embed-resource`).
 - **Flags** (serveur, tests) : `--core`, `--agent`, `--config`, `--log-file` comme avant. Le binaire est en sous-système GUI ; il se rattache au terminal parent s'il y en a un.
 - **Option avancée, hub au boot** : le core en **service Windows** (`--service`). L'agent doit alors tourner à part à l'ouverture de session, car un service tourne en session 0 et ne peut pas injecter souris ou clavier :
   ```
@@ -234,7 +234,11 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
 Un monorepo est acceptable au début. Seuls `plugin-registry` et `plugin-template` doivent être séparés dès leur création.
 
 Disposition actuelle du monorepo :
-- `core/` : workspace Cargo (`crates/homemaid` = binaire core + agent, puis `plugin-api/` et `plugins/`). Lancer `cargo` depuis ce dossier.
+- `core/` : workspace Cargo. Lancer `cargo` depuis ce dossier.
+  - `crates/homemaid` : la **librairie serveur** (hub, agent, API, config). `server.rs` les démarre : `server::run` pour les flags, `server::Handle` (`status`, `set_agent`, `pairing_qr`, `stop`) pour un client. Aucune dépendance graphique.
+  - `crates/desktop` (`homemaid-desktop`) : le **client PC** Windows (zone de notification, fenêtre WebView2). Il ne connaît du serveur que `Handle`.
+  - `crates/bin` (`homemaid-bin`) : le binaire `homemaid`, qui analyse les flags et lance soit le serveur, soit le client. Il porte aussi l'icône de l'exe et le service Windows.
+  - `crates/caps`, `plugin-api/`, `plugins/`.
 - `app/` : application Flutter.
 
 ## Environnement de développement
@@ -250,8 +254,8 @@ Le développement se fait sous **WSL2 (Ubuntu)** sur le PC Windows de l'auteur.
   Ensuite, `wsl --shutdown`, puis autoriser les ports entrants dans le pare-feu Windows (Hyper-V firewall). Le multicast (mDNS) peut rester capricieux sous WSL : toujours prévoir une configuration par **IP directe** en plus de la découverte.
 - **Agent PC et mode PC = runner** : ils doivent tourner **côté Windows**, car l'injection souris/clavier est impossible depuis WSL. Deux options :
   - cross-compiler depuis WSL (`cargo-xwin` pour la cible `x86_64-pc-windows-msvc`, ou `x86_64-pc-windows-gnu` avec mingw) puis lancer le `.exe` sous Windows ;
-    - **choisi** : mingw-w64 (`apt install mingw-w64`), puis `cargo build --release -p homemaid --target x86_64-pc-windows-gnu`. L'exe ne dépend que de DLL système ;
-    - vérification sans quitter WSL : `cargo clippy -p homemaid --all-targets --target x86_64-pc-windows-gnu`. Les tests du bureau factice (`tests/agent.rs`, `tests/plugin_pc.rs`) sont exclus sous Windows ;
+    - **choisi** : mingw-w64 (`apt install mingw-w64`), puis `cargo build --release -p homemaid-bin --target x86_64-pc-windows-gnu`. L'exe ne dépend que de DLL système ;
+    - vérification sans quitter WSL : `cargo clippy -p homemaid -p homemaid-desktop -p homemaid-bin --all-targets --target x86_64-pc-windows-gnu`. Les tests du bureau factice (`tests/agent.rs`, `tests/plugin_pc.rs`) sont exclus sous Windows ;
   - builder directement avec cargo sous Windows.
   Le code spécifique Windows est isolé derrière `#[cfg(windows)]` pour que le reste compile et se teste sous Linux.
 - **App Flutter** : SDK dans WSL. Tests sur le téléphone physique via **débogage ADB Wi-Fi** (`adb pair` puis `adb connect`, Android 11+). Pas d'émulateur dans WSL. Alternative : Flutter installé côté Windows pour l'app seulement.

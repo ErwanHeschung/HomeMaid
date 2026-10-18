@@ -57,10 +57,10 @@ jobs:
           workspaces: core
           key: windows
       - name: Clippy
-        run: cargo clippy -p homemaid --all-targets --target x86_64-pc-windows-gnu -- -D warnings
+        run: cargo clippy -p homemaid -p homemaid-desktop -p homemaid-bin --all-targets --target x86_64-pc-windows-gnu -- -D warnings
       - name: Build
         run: |
-          cargo build --release -p homemaid --target x86_64-pc-windows-gnu
+          cargo build --release -p homemaid-bin --target x86_64-pc-windows-gnu
           cargo build --release -p pc-plugin -p tplink-plugin --target wasm32-wasip2
       - name: Package (copy the folder, double-click homemaid.exe)
         run: |

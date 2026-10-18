@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 caps = { path = "../caps" }
 axum = { version = "0.8.9", features = ["ws"] }
-clap = { version = "4.6.7", features = ["derive"] }
 jiff = "0.2.38"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
@@ -35,29 +34,16 @@ wasmtime-wasi = "49.0.3"
 
 [target.'cfg(windows)'.dependencies]
 enigo = "0.6.1"
-# Desktop mode: the window (a WebView2 page) and the notification-area icon.
-tao = { version = "0.37.1", default-features = false, features = ["rwh_06"] }
-tray-icon = { version = "0.26.1", default-features = false }
-wry = { version = "0.57.0", default-features = false }
 windows = { version = "0.62.2", features = [
     "Win32_Media_Audio",
     "Win32_Media_Audio_Endpoints",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
-    "Win32_Globalization",
-    "Win32_System_Console",
     "Win32_System_Power",
-    "Win32_System_Registry",
     "Win32_System_Shutdown",
-    "Win32_System_Threading",
     "Win32_System_Variant",
     "Win32_UI_WindowsAndMessaging",
 ] }
-windows-service = "0.8.1"
-
-[build-dependencies]
-# The exe's icon (assets/homemaid.ico, made by app/tools/icon.py), also used by the tray.
-embed-resource = "3.0.12"
 
 [dev-dependencies]
 # The fake P300 of tests/plugin_tplink.rs reuses the plugin's KLAP implementation.
