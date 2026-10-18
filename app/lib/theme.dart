@@ -1,5 +1,6 @@
-/// The "Viewport" world: a live CAD model of the home. Graphite ground, matte clay greys,
-/// one selection blue for interaction and pending, one amber that only means "physically on".
+/// The "Viewport" world: a live CAD model of the home. Graphite ground, matte clay greys, and the
+/// logo's two colours: its lavender, primary, for everything (HomeMaid, interaction, "physically
+/// on"), its pink, secondary, for a request still pending only.
 library;
 
 
@@ -16,30 +17,42 @@ abstract final class Hm {
   static const text = Color(0xFFEEF0F2);
   static const textDim = Color(0xFFA2A9B3);
 
-  /// CAD selection blue: interaction, focus, selection, and a request still pending.
-  static const select = Color(0xFF7FA8FF);
+  /// The logo's lavender, the primary colour: HomeMaid itself (the active tab, the main button),
+  /// interaction, focus, selection, and "physically on".
+  static const select = Color(0xFFA699DC);
+  static const selectInk = Color(0xFF1E1638);
 
-  /// Only ever "physically on": a powered socket, a lit bulb, a running screen.
-  static const on = Color(0xFFFFB547);
-  static const danger = Color(0xFFFF7468);
+  static const brand = select;
+  static const brandInk = selectInk;
+
+  /// "Physically on" (a powered socket, a lit bulb, a running screen), from the observed state only.
+  static const on = select;
+  static const onInk = selectInk;
+
+  /// The logo's pink, secondary: a request sent and not yet confirmed. Nothing else is pink.
+  static const pending = Color(0xFFFD77B1);
+  static const pendingInk = Color(0xFF3A0A22);
+
+  /// A true red, well apart from the pink.
+  static const danger = Color(0xFFFF5545);
 
   static const radius = 6.0;
 
-  /// Switches that do not power anything (mute, settings) use selection blue, not amber.
-  static Widget settingSwitch(BuildContext context, Widget child) {
+  /// A switch whose change the device has not confirmed yet: pink.
+  static Widget pendingSwitch(BuildContext context, Widget child) {
     final theme = Theme.of(context);
     return Theme(
       data: theme.copyWith(
         switchTheme: theme.switchTheme.copyWith(
           thumbColor: WidgetStateProperty.resolveWith((s) {
             if (s.contains(WidgetState.disabled)) return lineStrong;
-            return s.contains(WidgetState.selected) ? const Color(0xFF0B1A3A) : textDim;
+            return s.contains(WidgetState.selected) ? pendingInk : textDim;
           }),
           trackColor: WidgetStateProperty.resolveWith((s) {
             if (s.contains(WidgetState.disabled)) return raised;
-            return s.contains(WidgetState.selected) ? select : raised;
+            return s.contains(WidgetState.selected) ? pending : raised;
           }),
-          trackOutlineColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? select : lineStrong),
+          trackOutlineColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? pending : lineStrong),
         ),
       ),
       child: child,
@@ -53,13 +66,13 @@ abstract final class Hm {
     const scheme = ColorScheme(
       brightness: Brightness.dark,
       primary: select,
-      onPrimary: Color(0xFF0B1A3A),
-      primaryContainer: Color(0xFF233656),
+      onPrimary: selectInk,
+      primaryContainer: Color(0xFF2E2950),
       onPrimaryContainer: text,
-      secondary: on,
-      onSecondary: Color(0xFF2E1D00),
-      tertiary: on,
-      onTertiary: Color(0xFF2E1D00),
+      secondary: pending,
+      onSecondary: pendingInk,
+      tertiary: pending,
+      onTertiary: pendingInk,
       error: danger,
       onError: Color(0xFF3A0905),
       surface: ground,
@@ -74,7 +87,7 @@ abstract final class Hm {
       outlineVariant: line,
       inverseSurface: text,
       onInverseSurface: ground,
-      inversePrimary: Color(0xFF2F5FC8),
+      inversePrimary: Color(0xFF6A5BB8),
     );
 
     const family = 'Barlow';
@@ -107,11 +120,11 @@ abstract final class Hm {
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: panel,
         surfaceTintColor: Colors.transparent,
-        indicatorColor: select.withValues(alpha: 0.16),
+        indicatorColor: brand.withValues(alpha: 0.16),
         indicatorShape: shape,
         height: 68,
         iconTheme: WidgetStateProperty.resolveWith(
-          (s) => IconThemeData(color: s.contains(WidgetState.selected) ? select : textDim),
+          (s) => IconThemeData(color: s.contains(WidgetState.selected) ? brand : textDim),
         ),
         labelTextStyle: WidgetStateProperty.resolveWith(
           (s) => type.labelMedium!.copyWith(color: s.contains(WidgetState.selected) ? text : textDim),
@@ -120,7 +133,7 @@ abstract final class Hm {
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith((s) {
           if (s.contains(WidgetState.disabled)) return lineStrong;
-          return s.contains(WidgetState.selected) ? const Color(0xFF2E1D00) : textDim;
+          return s.contains(WidgetState.selected) ? onInk : textDim;
         }),
         trackColor: WidgetStateProperty.resolveWith((s) {
           if (s.contains(WidgetState.disabled)) return raised;
@@ -134,11 +147,17 @@ abstract final class Hm {
         activeTrackColor: select,
         inactiveTrackColor: raised,
         thumbColor: text,
-        overlayColor: Color(0x297FA8FF),
+        overlayColor: Color(0x29A699DC),
         trackHeight: 4,
       ),
       filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(minimumSize: const Size(64, 48), shape: shape, textStyle: type.labelLarge),
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(64, 48),
+          shape: shape,
+          textStyle: type.labelLarge,
+          backgroundColor: brand,
+          foregroundColor: brandInk,
+        ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(

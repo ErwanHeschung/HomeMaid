@@ -109,10 +109,10 @@
           "#F1F2F4"
         ]
       },
-      "selection-blue": {
+      "selection-lavender": {
         "role": "primary",
-        "displayName": "Selection Blue",
-        "canonical": "#7FA8FF",
+        "displayName": "Selection Lavender",
+        "canonical": "#A699DC",
         "tonalRamp": [
           "#00143D",
           "#00277A",
@@ -124,10 +124,10 @@
           "#E5EEFF"
         ]
       },
-      "selection-blue-ink": {
+      "selection-lavender-ink": {
         "role": "primary",
-        "displayName": "Selection Blue Ink",
-        "canonical": "#0B1A3A",
+        "displayName": "Selection Lavender Ink",
+        "canonical": "#1E1638",
         "tonalRamp": [
           "#0A1733",
           "#132E66",
@@ -139,13 +139,13 @@
           "#EAEFFB"
         ]
       },
-      "selection-blue-container": {
+      "selection-lavender-container": {
         "role": "primary",
-        "displayName": "Selection Blue Container",
-        "canonical": "#233656",
+        "displayName": "Selection Lavender Container",
+        "canonical": "#2E2950",
         "tonalRamp": [
           "#121B2B",
-          "#233656",
+          "#2E2950",
           "#355181",
           "#466CAC",
           "#6C8CC3",
@@ -154,10 +154,10 @@
           "#EDF1F8"
         ]
       },
-      "physical-amber": {
+      "pending-pink": {
         "role": "secondary",
-        "displayName": "Physical Amber",
-        "canonical": "#FFB547",
+        "displayName": "Pending Pink",
+        "canonical": "#FD77B1",
         "tonalRamp": [
           "#3D2500",
           "#7A4900",
@@ -169,10 +169,10 @@
           "#FFF5E5"
         ]
       },
-      "physical-amber-ink": {
+      "pending-pink-ink": {
         "role": "secondary",
-        "displayName": "Physical Amber Ink",
-        "canonical": "#2E1D00",
+        "displayName": "Pending Pink Ink",
+        "canonical": "#3A0A22",
         "tonalRamp": [
           "#3D2700",
           "#7A4D00",
@@ -187,7 +187,7 @@
       "fault-red": {
         "role": "tertiary",
         "displayName": "Fault Red",
-        "canonical": "#FF7468",
+        "canonical": "#FF5545",
         "tonalRamp": [
           "#3D0500",
           "#7A0A00",
@@ -277,12 +277,12 @@
         "purpose": "Behind a device whose command failed."
       },
       {
-        "name": "amber-bloom",
+        "name": "pink-bloom",
         "value": "glow pass x Hm.on(alpha=level), modulate + plus, blur(normal, 9 x scale)",
         "purpose": "Light parts of devices that are physically on."
       },
       {
-        "name": "amber-pool",
+        "name": "pink-pool",
         "value": "Hm.on at 0.13 (lamps) / 0.24 (small LED) x level, radius 0.8 units, blur 14",
         "purpose": "Light spilled on the floor under what is on."
       }
@@ -296,7 +296,7 @@
       {
         "name": "state-ease",
         "value": "exponential, tau 120ms",
-        "purpose": "Amber and hatch fading towards their targets in the viewport."
+        "purpose": "Pink and hatch fading towards their targets in the viewport."
       },
       {
         "name": "orbit-inertia",
@@ -323,7 +323,7 @@
       "refersTo": "button-filled",
       "description": "Primary action, 48px, 6px radius.",
       "html": "<button class=\"ds-btn-filled\">Save</button>",
-      "css": ".ds-btn-filled { font-family: Barlow, sans-serif; background: #7FA8FF; color: #0B1A3A; border: none; border-radius: 6px; min-height: 48px; padding: 0 24px; font-size: 15px; font-weight: 600; letter-spacing: 0.2px; } .ds-btn-filled:hover { background: #95B7FF; } .ds-btn-filled:focus-visible { outline: 2px solid #EEF0F2; outline-offset: 2px; }"
+      "css": ".ds-btn-filled { font-family: Barlow, sans-serif; background: #A699DC; color: #1E1638; border: none; border-radius: 6px; min-height: 48px; padding: 0 24px; font-size: 15px; font-weight: 600; letter-spacing: 0.2px; } .ds-btn-filled:hover { background: #B8AEE4; } .ds-btn-filled:focus-visible { outline: 2px solid #EEF0F2; outline-offset: 2px; }"
     },
     {
       "name": "Outlined Button",
@@ -331,15 +331,15 @@
       "refersTo": "button-outlined",
       "description": "Secondary action with a strong hairline.",
       "html": "<button class=\"ds-btn-outlined\">Pair</button>",
-      "css": ".ds-btn-outlined { font-family: Barlow, sans-serif; background: transparent; color: #EEF0F2; border: 1px solid #4B525C; border-radius: 6px; min-height: 48px; padding: 0 20px; font-size: 15px; font-weight: 600; } .ds-btn-outlined:hover { background: rgba(127,168,255,0.08); } .ds-btn-outlined:focus-visible { border-color: #7FA8FF; }"
+      "css": ".ds-btn-outlined { font-family: Barlow, sans-serif; background: transparent; color: #EEF0F2; border: 1px solid #4B525C; border-radius: 6px; min-height: 48px; padding: 0 20px; font-size: 15px; font-weight: 600; } .ds-btn-outlined:hover { background: rgba(166,153,220,0.08); } .ds-btn-outlined:focus-visible { border-color: #A699DC; }"
     },
     {
       "name": "Device Row",
       "kind": "custom",
       "refersTo": "device-row",
       "description": "State swatch, name, flipping summary in the state colour, power switch.",
-      "html": "<div class=\"ds-row\"><span class=\"ds-swatch\"></span><div><div class=\"ds-row-name\">Ceiling light</div><div class=\"ds-row-val\">On · 70 %</div></div><span class=\"ds-switch\"></span></div><div class=\"ds-row\"><span class=\"ds-swatch ds-pending\"></span><div><div class=\"ds-row-name\">Console</div><div class=\"ds-row-val ds-blue\">On</div></div><span class=\"ds-switch ds-switch-pending\"></span></div>",
-      "css": ".ds-row { font-family: Barlow, sans-serif; display: flex; align-items: center; gap: 16px; min-height: 64px; padding: 8px 12px 8px 20px; background: #15171B; border-bottom: 1px solid #343A42; } .ds-row > div { flex: 1; } .ds-row:hover { background: rgba(127,168,255,0.08); } .ds-swatch { width: 14px; height: 14px; background: #FFB547; } .ds-pending { background: repeating-linear-gradient(135deg, #8F96A0 0 2px, #7FA8FF 2px 4px); } .ds-row-name { color: #EEF0F2; font-size: 16px; font-weight: 600; } .ds-row-val { color: #FFB547; font-size: 14px; font-variant-numeric: tabular-nums; } .ds-blue { color: #7FA8FF; } .ds-switch { width: 52px; height: 32px; border-radius: 16px; background: #FFB547; } .ds-switch-pending { background: #7FA8FF; }"
+      "html": "<div class=\"ds-row\"><span class=\"ds-swatch\"></span><div><div class=\"ds-row-name\">Ceiling light</div><div class=\"ds-row-val\">On · 70 %</div></div><span class=\"ds-switch\"></span></div><div class=\"ds-row\"><span class=\"ds-swatch ds-pending\"></span><div><div class=\"ds-row-name\">Console</div><div class=\"ds-row-val ds-lavender\">On</div></div><span class=\"ds-switch ds-switch-pending\"></span></div>",
+      "css": ".ds-row { font-family: Barlow, sans-serif; display: flex; align-items: center; gap: 16px; min-height: 64px; padding: 8px 12px 8px 20px; background: #15171B; border-bottom: 1px solid #343A42; } .ds-row > div { flex: 1; } .ds-row:hover { background: rgba(166,153,220,0.08); } .ds-swatch { width: 14px; height: 14px; background: #A699DC; } .ds-pending { background: repeating-linear-gradient(135deg, #8F96A0 0 2px, #FD77B1 2px 4px); } .ds-row-name { color: #EEF0F2; font-size: 16px; font-weight: 600; } .ds-row-val { color: #A699DC; font-size: 14px; font-variant-numeric: tabular-nums; } .ds-lavender { color: #FD77B1; } .ds-switch { width: 52px; height: 32px; border-radius: 16px; background: #A699DC; } .ds-switch-pending { background: #FD77B1; }"
     },
     {
       "name": "Callout Plate",
@@ -347,46 +347,46 @@
       "refersTo": "callout-plate",
       "description": "CAD callout over the room: plate on a shoulder, leader to a state-carrying pick point.",
       "html": "<div class=\"ds-callout\"><div class=\"ds-callout-plate\"><div class=\"ds-callout-name\">Floor lamp</div><div class=\"ds-callout-val\">On · 45 %</div></div><div class=\"ds-callout-shoulder\"></div></div>",
-      "css": ".ds-callout { font-family: \"Barlow Semi Condensed\", Barlow, sans-serif; width: 124px; background: #2A2E35; padding: 8px; } .ds-callout-plate { display: inline-block; background: rgba(21,23,27,0.88); border: 1px solid #343A42; border-radius: 6px; padding: 4px 6px; } .ds-callout-plate:hover { border-color: #7FA8FF; } .ds-callout-name { color: #EEF0F2; font-size: 13px; font-weight: 500; letter-spacing: 0.2px; } .ds-callout-val { color: #FFB547; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; } .ds-callout-shoulder { height: 1px; background: rgba(162,169,179,0.8); }"
+      "css": ".ds-callout { font-family: \"Barlow Semi Condensed\", Barlow, sans-serif; width: 124px; background: #2A2E35; padding: 8px; } .ds-callout-plate { display: inline-block; background: rgba(21,23,27,0.88); border: 1px solid #343A42; border-radius: 6px; padding: 4px 6px; } .ds-callout-plate:hover { border-color: #A699DC; } .ds-callout-name { color: #EEF0F2; font-size: 13px; font-weight: 500; letter-spacing: 0.2px; } .ds-callout-val { color: #A699DC; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; } .ds-callout-shoulder { height: 1px; background: rgba(162,169,179,0.8); }"
     },
     {
       "name": "Round Key",
       "kind": "button",
       "refersTo": "round-key",
-      "description": "Remote key: hairline ring, ink icon; primary and selected in blue, power in red.",
+      "description": "Remote key: hairline ring, ink icon; primary and selected in lavender, power in red.",
       "html": "<button class=\"ds-key\" aria-label=\"Previous\"><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\"><path fill=\"currentColor\" d=\"M6 6h2v12H6zm3.5 6 8.5 6V6z\"/></svg></button><button class=\"ds-key ds-key-primary\" aria-label=\"Play\"><svg width=\"30\" height=\"30\" viewBox=\"0 0 24 24\"><path fill=\"currentColor\" d=\"M8 5v14l11-7z\"/></svg></button><button class=\"ds-key ds-key-power\" aria-label=\"Power\"><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\"><path fill=\"currentColor\" d=\"M13 3h-2v10h2zm4.83 2.17-1.42 1.42A6.92 6.92 0 0 1 19 12a7 7 0 1 1-11.42-5.42L6.17 5.17A9 9 0 1 0 21 12a8.96 8.96 0 0 0-3.17-6.83\"/></svg></button>",
-      "css": ".ds-key { width: 56px; height: 56px; border-radius: 50%; border: 1.5px solid #4B525C; background: transparent; color: #EEF0F2; display: inline-grid; place-items: center; margin: 4px; } .ds-key:hover { background: rgba(238,240,242,0.06); } .ds-key:focus-visible { outline: 2px solid #7FA8FF; outline-offset: 2px; } .ds-key-primary { width: 72px; height: 72px; border: 2px solid #7FA8FF; color: #7FA8FF; background: rgba(127,168,255,0.12); } .ds-key-power { border-color: #FF7468; color: #FF7468; }"
+      "css": ".ds-key { width: 56px; height: 56px; border-radius: 50%; border: 1.5px solid #4B525C; background: transparent; color: #EEF0F2; display: inline-grid; place-items: center; margin: 4px; } .ds-key:hover { background: rgba(238,240,242,0.06); } .ds-key:focus-visible { outline: 2px solid #A699DC; outline-offset: 2px; } .ds-key-primary { width: 72px; height: 72px; border: 2px solid #A699DC; color: #A699DC; background: rgba(166,153,220,0.12); } .ds-key-power { border-color: #FF5545; color: #FF5545; }"
     },
     {
       "name": "Room Tabs",
       "kind": "nav",
       "refersTo": "room-tab",
-      "description": "Rooms as tabs; current in ink with a blue underline.",
+      "description": "Rooms as tabs; current in ink with a lavender underline.",
       "html": "<nav class=\"ds-tabs\"><a>Bedroom</a><a class=\"ds-tab-on\" aria-current=\"true\">Living room</a><a>Office</a></nav>",
-      "css": ".ds-tabs { font-family: Barlow, sans-serif; display: flex; background: #15171B; padding: 0 12px; } .ds-tabs a { height: 48px; display: flex; align-items: center; padding: 0 10px; color: #A2A9B3; font-size: 14px; font-weight: 600; border-bottom: 2px solid transparent; cursor: pointer; } .ds-tabs a:hover { color: #EEF0F2; } .ds-tab-on { color: #EEF0F2 !important; border-bottom-color: #7FA8FF !important; }"
+      "css": ".ds-tabs { font-family: Barlow, sans-serif; display: flex; background: #15171B; padding: 0 12px; } .ds-tabs a { height: 48px; display: flex; align-items: center; padding: 0 10px; color: #A2A9B3; font-size: 14px; font-weight: 600; border-bottom: 2px solid transparent; cursor: pointer; } .ds-tabs a:hover { color: #EEF0F2; } .ds-tab-on { color: #EEF0F2 !important; border-bottom-color: #A699DC !important; }"
     },
     {
       "name": "Text Field",
       "kind": "input",
       "refersTo": "input",
-      "description": "Filled panel field, hairline border, blue on focus.",
+      "description": "Filled panel field, hairline border, lavender on focus.",
       "html": "<input class=\"ds-input\" placeholder=\"Name\" />",
-      "css": ".ds-input { font-family: Barlow, sans-serif; background: #1C1F24; color: #EEF0F2; border: 1px solid #343A42; border-radius: 6px; padding: 14px 12px; font-size: 14px; } .ds-input::placeholder { color: #A2A9B3; } .ds-input:hover { border-color: #4B525C; } .ds-input:focus-visible { outline: none; border: 1.5px solid #7FA8FF; }"
+      "css": ".ds-input { font-family: Barlow, sans-serif; background: #1C1F24; color: #EEF0F2; border: 1px solid #343A42; border-radius: 6px; padding: 14px 12px; font-size: 14px; } .ds-input::placeholder { color: #A2A9B3; } .ds-input:hover { border-color: #4B525C; } .ds-input:focus-visible { outline: none; border: 1.5px solid #A699DC; }"
     },
     {
       "name": "Sketch Plane",
       "kind": "custom",
-      "description": "Trackpad: dot grid, blue crosshair and live coordinate readout.",
+      "description": "Trackpad: dot grid, lavender crosshair and live coordinate readout.",
       "html": "<div class=\"ds-plane\"><span class=\"ds-plane-x\"></span><span class=\"ds-plane-y\"></span><span class=\"ds-plane-read\">x 132   y  96</span></div>",
-      "css": ".ds-plane { position: relative; width: 280px; height: 180px; border: 1px solid #343A42; border-radius: 6px; background-color: #1C1F24; background-image: radial-gradient(#4B525C 0.8px, transparent 0.9px); background-size: 22px 22px; background-position: 11px 11px; } .ds-plane-x { position: absolute; left: 0; right: 0; top: 96px; height: 1px; background: rgba(127,168,255,0.7); } .ds-plane-y { position: absolute; top: 0; bottom: 0; left: 132px; width: 1px; background: rgba(127,168,255,0.7); } .ds-plane-read { position: absolute; left: 144px; top: 72px; font: 500 12px \"Barlow Semi Condensed\", sans-serif; color: #7FA8FF; font-variant-numeric: tabular-nums; white-space: pre; }"
+      "css": ".ds-plane { position: relative; width: 280px; height: 180px; border: 1px solid #343A42; border-radius: 6px; background-color: #1C1F24; background-image: radial-gradient(#4B525C 0.8px, transparent 0.9px); background-size: 22px 22px; background-position: 11px 11px; } .ds-plane-x { position: absolute; left: 0; right: 0; top: 96px; height: 1px; background: rgba(166,153,220,0.7); } .ds-plane-y { position: absolute; top: 0; bottom: 0; left: 132px; width: 1px; background: rgba(166,153,220,0.7); } .ds-plane-read { position: absolute; left: 144px; top: 72px; font: 500 12px \"Barlow Semi Condensed\", sans-serif; color: #A699DC; font-variant-numeric: tabular-nums; white-space: pre; }"
     }
   ],
   "narrative": {
     "northStar": "The Viewport",
-    "overview": "**Creative North Star: \"The Viewport\"**\n\nThe home is a live CAD model. Each room is a furnished dollhouse cut-away (two walls, a lit cut section, dark furniture) standing on a graphite floor that is the real construction grid. The devices are studio-rendered satin clay parts set on its walls, furniture tops, windows, door, floor and ceiling, each annotated by a leader-line callout carrying its true state. The grammar is Fusion 360 / Onshape: graphite ground, hairline panels, small radii, a technical grotesk with tabular figures, one selection blue, and one amber that only ever means \"physically on\". It refuses the category default, a grid of rounded device tiles.\n\nDepth lives in the renders, not in the chrome. The interface around the room is flat graphite planes separated by hairlines, so the room and its amber are the only things with volume or light. State changes happen in place: amber fades up, the blue hatch resolves to solid, the value flips inside its own box, and nothing else moves.\n\nThe PC remote belongs to the same world: round hairline keys in ink, service logos in ink, and a trackpad drawn as a sketch plane (dot grid, crosshair under the finger, live x/y readout).",
+    "overview": "**Creative North Star: \"The Viewport\"**\n\nThe home is a live CAD model. Each room is a furnished dollhouse cut-away (two walls, a lit cut section, dark furniture) standing on a graphite floor that is the real construction grid. The devices are studio-rendered satin clay parts set on its walls, furniture tops, windows, door, floor and ceiling, each annotated by a leader-line callout carrying its true state. The grammar is Fusion 360 / Onshape: graphite ground, hairline panels, small radii, a technical grotesk with tabular figures, one selection lavender, and one pink that only ever means \"physically on\". It refuses the category default, a grid of rounded device tiles.\n\nDepth lives in the renders, not in the chrome. The interface around the room is flat graphite planes separated by hairlines, so the room and its pink are the only things with volume or light. State changes happen in place: pink fades up, the lavender hatch resolves to solid, the value flips inside its own box, and nothing else moves.\n\nThe PC remote belongs to the same world: round hairline keys in ink, service logos in ink, and a trackpad drawn as a sketch plane (dot grid, crosshair under the finger, live x/y readout).",
     "keyCharacteristics": [
       "Dark only: graphite grounds, built for evenings indoors.",
-      "Amber is the device's reported state, never a wish.",
+      "Pink is the device's reported state, never a wish.",
       "One state grammar everywhere: viewport, callouts, pick points, rows, sheet.",
       "Pre-rendered studio views (Blender Cycles), composited in Flutter; no real-time 3D.",
       "Barlow with tabular figures; condensed Barlow for annotation labels.",
@@ -394,18 +394,18 @@
     ],
     "rules": [
       {
-        "name": "The Observed Amber Rule",
-        "body": "Amber comes from the observed state only (`onLevel` in `app/lib/widgets/state.dart`). A pending wish never lights anything: the switch stays blue, the text is blue, the model is hatched, until the device confirms.",
+        "name": "The Observed Pink Rule",
+        "body": "Pink comes from the observed state only (`onLevel` in `app/lib/widgets/state.dart`). A pending wish never lights anything: the switch stays lavender, the text is lavender, the model is hatched, until the device confirms.",
         "section": "colors"
       },
       {
         "name": "The One Meaning Rule",
-        "body": "Blue is interaction and waiting; amber is physical power; red is failure, alarm or destruction. A toggle that powers nothing (mute, invert scroll, a boolean `custom:` capability) is blue, never amber.",
+        "body": "Lavender is interaction and waiting; pink is physical power; red is failure, alarm or destruction. A toggle that powers nothing (mute, invert scroll, a boolean `custom:` capability) is lavender, never pink.",
         "section": "colors"
       },
       {
         "name": "The Ink Logo Rule",
-        "body": "Service logos (Simple Icons, CC0, `app/assets/logos/`, see `app/tools/logos.md`) are drawn in ink like every other key, blue when active. Brand colours are refused.",
+        "body": "Service logos (Simple Icons, CC0, `app/assets/logos/`, see `app/tools/logos.md`) are drawn in ink like every other key, lavender when active. Brand colours are refused.",
         "section": "colors"
       },
       {
@@ -420,7 +420,7 @@
       },
       {
         "name": "The Light Is State Rule",
-        "body": "The only glows in the app are state: amber light passes (multiplied, plus a bloom, softer at 0.75 for screens and appliances), amber floor pools (0.13 for lamps, 0.24 for small-LED devices), a blue selection halo or red failure halo behind the device silhouette. No decorative shadow or glow on UI chrome.",
+        "body": "The only glows in the app are state: pink light passes (multiplied, plus a bloom, softer at 0.75 for screens and appliances), pink floor pools (0.13 for lamps, 0.24 for small-LED devices), a lavender selection halo or red failure halo behind the device silhouette. No decorative shadow or glow on UI chrome.",
         "section": "elevation"
       }
     ],
@@ -429,18 +429,18 @@
       "**Do** add a new capability by extending `CapabilityTile`, `capLabel` and, if it has a summary fact, `summary`; unknown `custom:*` capabilities must still render generically.",
       "**Do** add a new model in three places together: geometry in `render.py`, an entry in `catalog` (`models.dart`) with anchor, scale and mounts, and a label in `widgets/model_names.dart`; then re-render and re-pack.",
       "**Do** add a new room kind in `room.py` (all three sizes, its mounts), `roomKinds` and `inferRoomKind` in `rooms.dart`, and its FR/EN label.",
-      "**Do** add a remote key as a `_Round`: hairline ring, ink icon, blue only when primary or selected, red only for destructive power.",
+      "**Do** add a remote key as a `_Round`: hairline ring, ink icon, lavender only when primary or selected, red only for destructive power.",
       "**Do** keep values in place: changing numbers use `FlipText` and tabular figures, and layout never moves on a state change.",
       "**Do** honour reduced motion (`MediaQuery.disableAnimations`): flips, easing and spin snap instantly."
     ],
     "donts": [
-      "**Don't** light anything amber from a desired state, or use amber for a switch that powers nothing.",
+      "**Don't** light anything pink from a desired state, or use pink for a switch that powers nothing.",
       "**Don't** colour service logos in their brand colours.",
       "**Don't** add real-time 3D; extend the pre-rendered views and keep camera constants identical on both sides.",
       "**Don't** choose a model or room from a brand or plugin name.",
       "**Don't** add shadows, gradients or glows to UI chrome; light in this world is state.",
       "**Don't** put device tiles in a grid; devices live in the room and in rows.",
-      "**Don't** expect light on walls: lit devices pool amber on the floor only; light spilling onto walls is not done yet."
+      "**Don't** expect light on walls: lit devices pool pink on the floor only; light spilling onto walls is not done yet."
     ]
   }
 }

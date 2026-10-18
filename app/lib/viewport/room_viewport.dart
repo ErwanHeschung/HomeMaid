@@ -1,5 +1,5 @@
 /// The room as a live model: a furnished dollhouse cut-away with the studio-rendered devices set in
-/// it, annotated by leader-line callouts. Amber = physically on; blue hatch = pending; ghosted =
+/// it, annotated by leader-line callouts. Pink = physically on; lavender hatch = pending; ghosted =
 /// offline; red = failed. It turns over the 90° arc its views were rendered for.
 library;
 
@@ -400,7 +400,7 @@ class _RoomPainter extends CustomPainter {
     final selectedHere = members.any((e) => e.id == selected);
     final failedHere = single && isFailed(members.first);
 
-    // Halo behind the silhouette: selection blue, or red when the device's command failed.
+    // Halo behind the silhouette: lavender, or red when the device's command failed.
     if (selectedHere || failedHere) {
       canvas.drawImageRect(
         base,
@@ -427,13 +427,13 @@ class _RoomPainter extends CustomPainter {
     if (hatch > 0.01) {
       canvas.saveLayer(rect, Paint());
       canvas.drawImageRect(base, src, rect, Paint());
-      _hatchRect(canvas, rect, Hm.select.withValues(alpha: 0.75 * hatch), BlendMode.srcATop);
+      _hatchRect(canvas, rect, Hm.pending.withValues(alpha: 0.75 * hatch), BlendMode.srcATop);
       canvas.restore();
     } else {
       canvas.drawImageRect(base, src, rect, Paint());
     }
 
-    // Light passes, tinted amber by multiplication (the render's falloff survives), with a bloom.
+    // Light passes, tinted lavender by multiplication (the render's falloff survives), with a bloom.
     // Large emitters (screens) are kept softer.
     final strength = const {'screen', 'tv', 'washing_machine', 'fridge', 'climate_sensor'}.contains(d.group.model) ? 0.75 : 1.0;
     for (final (j, e) in members.indexed) {
@@ -466,9 +466,9 @@ class _RoomPainter extends CustomPainter {
         } else if ((pending[e.id] ?? 0) > 0.01) {
           canvas.save();
           canvas.clipRect(mark);
-          _hatchRect(canvas, mark, Hm.select.withValues(alpha: pending[e.id]!), BlendMode.srcOver);
+          _hatchRect(canvas, mark, Hm.pending.withValues(alpha: pending[e.id]!), BlendMode.srcOver);
           canvas.restore();
-          canvas.drawRect(mark, outline..color = Hm.select);
+          canvas.drawRect(mark, outline..color = Hm.pending);
         }
       }
     }
@@ -495,7 +495,7 @@ class _RoomPainter extends CustomPainter {
   /// their spill on the floor is stronger to say "on".
   static const _lamps = {'lamp', 'bulb', 'ceiling_light', 'floor_lamp', 'light_strip', 'screen', 'tv'};
 
-  /// Amber spilled on the floor under what is on.
+  /// Pink spilled on the floor under what is on.
   void _paintLightPools(Canvas canvas) {
     for (final MapEntry(key: id, value: anchor) in scene.anchors.entries) {
       final level = on[id] ?? 0;
@@ -527,7 +527,7 @@ class _RoomPainter extends CustomPainter {
   }
 
   /// The pick point at a callout's end carries the state, for the devices whose light is too
-  /// small to see: amber on, blue ring pending, outline offline, red failed or alarming.
+  /// small to see: lavender on, pink ring pending, outline offline, red failed or alarming.
   void _paintPick(Canvas canvas, Offset at, Entity e) {
     canvas.drawCircle(at, 6.5, Paint()..color = Hm.ground);
     final ring = Paint()
@@ -538,8 +538,8 @@ class _RoomPainter extends CustomPainter {
     } else if (isFailed(e) || alarming(e)) {
       canvas.drawCircle(at, 5, Paint()..color = Hm.danger);
     } else if ((pending[e.id] ?? 0) > 0.01) {
-      canvas.drawCircle(at, 2.5, Paint()..color = Hm.select);
-      canvas.drawCircle(at, 4.5, ring..color = Hm.select);
+      canvas.drawCircle(at, 2.5, Paint()..color = Hm.pending);
+      canvas.drawCircle(at, 4.5, ring..color = Hm.pending);
     } else {
       canvas.drawCircle(at, 5, Paint()..color = Color.lerp(Hm.textDim, Hm.on, on[e.id] ?? 0)!);
     }

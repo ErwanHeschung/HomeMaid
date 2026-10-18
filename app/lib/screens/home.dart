@@ -34,7 +34,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
     final core = widget.core;
-    if (core == null) return EmptyState(title: l.pairHomeTitle, hint: l.pairHomeHint, onPair: widget.onPair);
+    if (core == null) {
+      return EmptyState(title: l.pairHomeTitle, hint: l.pairHomeHint, onPair: widget.onPair, hero: const Logo(size: 120));
+    }
     return ListenableBuilder(
       listenable: core,
       builder: (context, _) {
@@ -49,6 +51,8 @@ class _HomeScreenState extends State<HomeScreen> {
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 20, 8, 4),
             child: Row(children: [
+              // The brand mark, on the root screen only (inner screens carry their own titles).
+              const Padding(padding: EdgeInsets.only(right: 12), child: Logo(size: 30)),
               Expanded(
                 child: Text(
                   current == null ? l.navHome : (roomName ?? l.noRoom),
@@ -187,7 +191,7 @@ class _RoomTabs extends StatelessWidget {
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     border: Border(
-                      bottom: BorderSide(color: room == current ? Hm.select : Colors.transparent, width: 2),
+                      bottom: BorderSide(color: room == current ? Hm.brand : Colors.transparent, width: 2),
                     ),
                   ),
                   child: Text(

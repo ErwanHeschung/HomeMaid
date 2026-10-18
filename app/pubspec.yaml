@@ -29,6 +29,7 @@ flutter:
 
   # Studio renders of the device models (tools/render/render.py, then pack.sh).
   assets:
+    - assets/brand/
     - assets/models/strip_2/
     - assets/models/strip_3/
     - assets/models/strip_4/

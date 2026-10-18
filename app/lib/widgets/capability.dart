@@ -32,11 +32,11 @@ class CapabilityTile extends StatelessWidget {
       return _LevelSlider(label: label, status: _Status(slot), slot: slot, writable: writable, onSet: onSet);
     }
     final Widget control = switch (kind) {
-      // Amber only once the device confirms: a pending wish keeps the track blue.
+      // Lavender only once the device confirms: a pending wish keeps the track pink.
       'on_off' => slot.pending
-          ? Hm.settingSwitch(context, Switch(value: value == true, onChanged: writable ? onSet : null))
+          ? Hm.pendingSwitch(context, Switch(value: value == true, onChanged: writable ? onSet : null))
           : Switch(value: value == true, onChanged: writable ? onSet : null),
-      'mute' => Hm.settingSwitch(context, Switch(value: value == true, onChanged: writable ? onSet : null)),
+      'mute' => Switch(value: value == true, onChanged: writable ? onSet : null),
       'power' => _Reading(_watts(value)),
       _ => _generic(value, writable),
     };
@@ -58,9 +58,7 @@ class CapabilityTile extends StatelessWidget {
     final type = slot.schema?['type'];
     bool isType(String t) => type == t || (type is List && type.contains(t));
     if (isType('boolean') && value is bool?) {
-      return Builder(
-        builder: (context) => Hm.settingSwitch(context, Switch(value: value ?? false, onChanged: writable ? onSet : null)),
-      );
+      return Switch(value: value ?? false, onChanged: writable ? onSet : null);
     }
     if (isType('number') && value is num) {
       final unit = slot.unit;
@@ -101,7 +99,7 @@ class _Status extends StatelessWidget {
     if (slot.pending) {
       return Semantics(
         label: l.pending,
-        child: const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+        child: const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Hm.pending)),
       );
     }
     if (slot.failed) {

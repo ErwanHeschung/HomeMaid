@@ -12,7 +12,8 @@ import sys
 from PIL import Image, ImageDraw, ImageFont
 
 GROUND = (0x15, 0x17, 0x1B, 255)
-BLUE = (0x7F, 0xA8, 0xFF, 255)
+LAVENDER = (0xA6, 0x99, 0xDC, 255)
+LAVENDER_INK = (0x1E, 0x16, 0x38, 255)
 DENSITIES = {"mdpi": 1, "hdpi": 1.5, "xhdpi": 2, "xxhdpi": 3, "xxxhdpi": 4}
 # Adaptive icons are 108 dp; launcher masks keep at least the 66 dp circle in the middle.
 SAFE = 33 / 108
@@ -49,8 +50,8 @@ def foreground(logo, size, demo):
         pad_x, pad_y = size * 0.035, size * 0.016
         w, h = r - l + 2 * pad_x, b - t + 2 * pad_y
         x, y = (size - w) / 2, size / 2 + SAFE * size * 0.56
-        draw.rounded_rectangle((x, y, x + w, y + h), radius=h / 2, fill=BLUE)
-        draw.text((x + pad_x - l, y + pad_y - t), text, font=font, fill=GROUND)
+        draw.rounded_rectangle((x, y, x + w, y + h), radius=h / 2, fill=LAVENDER)
+        draw.text((x + pad_x - l, y + pad_y - t), text, font=font, fill=LAVENDER_INK)
     return canvas
 
 

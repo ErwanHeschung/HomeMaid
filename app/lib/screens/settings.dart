@@ -73,15 +73,18 @@ class SettingsScreen extends StatelessWidget {
             onChanged: (v) => connections.setRemote(speed: v),
           ),
         ),
-        Hm.settingSwitch(
-          context,
-          SwitchListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-            title: Text(l.invertScroll, style: theme.textTheme.bodyLarge),
-            value: connections.scrollSign < 0,
-            onChanged: (v) => connections.setRemote(scrollSign: v ? -1 : 1),
-          ),
+        SwitchListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+          title: Text(l.invertScroll, style: theme.textTheme.bodyLarge),
+          value: connections.scrollSign < 0,
+          onChanged: (v) => connections.setRemote(scrollSign: v ? -1 : 1),
         ),
+        const SizedBox(height: 40),
+        Column(children: [
+          const Logo(size: 44),
+          const SizedBox(height: 10),
+          Text('HomeMaid', style: theme.textTheme.titleMedium),
+        ]),
       ]),
     );
   }

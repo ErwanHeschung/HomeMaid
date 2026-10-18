@@ -147,14 +147,14 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
   - `usesCleartextTraffic` : `ws://` sur le réseau local, sans TLS (l'accès distant passe par Tailscale).
 - **Identité visuelle « Viewport »** : la maison comme une maquette CAO vivante. Contrat de direction dans `.impeccable/surfaces/`, contexte produit dans `PRODUCT.md`, système détaillé dans `DESIGN.md`.
   - **Grammaire d'état**, partout identique (viewport, lignes, panneau) :
-    - **ambre** = physiquement allumé, d'après l'état **observé** uniquement : un souhait en attente n'allume jamais rien ;
-    - **hachures et texte bleus** = commande en attente ;
+    - **lavande** (le milieu du dégradé du logo, couleur principale) = physiquement allumé, d'après l'état **observé** uniquement : un souhait en attente n'allume jamais rien ;
+    - **hachures et texte roses** (le rose du logo, couleur secondaire) = commande en attente, et rien d'autre ;
     - **fantôme ou contour** = hors ligne ;
     - **rouge** = échec ;
-    - le bleu sert aussi à l'interaction et aux interrupteurs qui n'alimentent rien (muet, réglages).
+    - la lavande sert aussi à tout le reste : HomeMaid (onglet actif, bouton principal), interaction, sélection, télécommande. Il n'y a ni bleu ni ambre dans l'app.
   - **Icône** : le logo (`app/tools/logo.png`, 1024 px, fond transparent) sur le fond graphite `#15171B` (`res/values/colors.xml`, aussi l'écran de lancement). La démo porte une étiquette « DÉMO ». Régénérer depuis `app/` : `uv run --with pillow python tools/icon.py tools/logo.png`.
   - **Thème** : `app/lib/theme.dart`. Fond graphite, police Barlow embarquée (`assets/fonts`, licence OFL), sombre uniquement (usage le soir, en intérieur).
-  - **Modèles 3D** : rendus studio pré-calculés, pas de 3D temps réel. `app/tools/render/render.py` (Blender 5.2.2 Cycles, dans `~/.local/opt`) modélise les archétypes génériques (barrettes de 2 à 6 prises, prise, lampe, écran, module). Il rend 24 vues de rotation, plus une couche de lumière par élément allumable, teintée ambre par l'app. `pack.sh` convertit en WebP, estompe les bords des ombres et inscrit la provenance.
+  - **Modèles 3D** : rendus studio pré-calculés, pas de 3D temps réel. `app/tools/render/render.py` (Blender 5.2.2 Cycles, dans `~/.local/opt`) modélise les archétypes génériques (barrettes de 2 à 6 prises, prise, lampe, écran, module). Il rend 24 vues de rotation, plus une couche de lumière par élément allumable, teintée en lavande par l'app. `pack.sh` convertit en WebP, estompe les bords des ombres et inscrit la provenance.
     - Commande, depuis `app/` : `~/.local/opt/blender-5.2.2-linux-x64/blender -b -P tools/render/render.py && IMPECCABLE=<chemin du script impeccable> ./tools/render/pack.sh`.
     - Les conventions de caméra (orthographique, inclinaison 0,62, `ORTHO_SCALE` 3,2) doivent rester identiques entre `render.py` et `lib/viewport/sprites.dart`.
     - Le modèle est choisi d'après les **capacités**, jamais la marque (`lib/viewport/models.dart`). L'utilisateur peut aussi le choisir dans l'app (`model` dans `[[entity]]`).

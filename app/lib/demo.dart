@@ -231,7 +231,7 @@ List<Entity> _home(bool fr) {
       'custom:temperature': _slot({'custom': 21.5}, meta: const {'read_only': true, 'unit': '°C', 'schema': {'type': 'number'}}),
     }),
     _entity('demo-fridge', t('Réfrigérateur', 'Fridge'), kitchen, {..._switch(true), 'power': _slot({'power': {'watts': 96.2}}, meta: _watts)}, model: 'fridge'),
-    // The entrance: security devices, sensors only (never amber).
+    // The entrance: security devices, sensors only (never pink).
     _entity('demo-lock', t('Serrure', 'Door lock'), entrance, {
       'custom:locked': _slot({'custom': true}, meta: const {'read_only': true, 'schema': {'type': 'boolean'}}),
     }, model: 'door_lock'),

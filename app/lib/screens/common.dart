@@ -21,9 +21,12 @@ void showError(BuildContext context, Object error) =>
 
 /// Nothing paired yet: an empty construction grid waiting for its first model.
 class EmptyState extends StatelessWidget {
-  const EmptyState({super.key, required this.title, required this.hint, required this.onPair});
+  const EmptyState({super.key, required this.title, required this.hint, required this.onPair, this.hero});
 
   final String title;
+
+  /// Shown instead of the empty room.
+  final Widget? hero;
   final String hint;
   final VoidCallback onPair;
 
@@ -37,10 +40,11 @@ class EmptyState extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
             child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-              SizedBox(
-                height: 220,
-                child: IgnorePointer(child: RoomViewport(kind: 'generic', entities: const [], selected: null, onSelect: (_) {})),
-              ),
+              hero ??
+                  SizedBox(
+                    height: 220,
+                    child: IgnorePointer(child: RoomViewport(kind: 'generic', entities: const [], selected: null, onSelect: (_) {})),
+                  ),
               const SizedBox(height: 24),
               Text(title, style: theme.textTheme.headlineSmall, textAlign: TextAlign.center),
               const SizedBox(height: 8),
@@ -61,6 +65,17 @@ class EmptyState extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The HomeMaid mark, [size] tall.
+class Logo extends StatelessWidget {
+  const Logo({super.key, required this.size});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) =>
+      Image.asset('assets/brand/logo.png', height: size, semanticLabel: 'HomeMaid', filterQuality: FilterQuality.medium);
 }
 
 class OfflineBanner extends StatelessWidget {

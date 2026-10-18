@@ -172,7 +172,7 @@ class _RemoteScreenState extends State<RemoteScreen> {
         icon: muted ? Icons.volume_off_outlined : Icons.volume_up_outlined,
         label: muted ? l.unmute : l.mute,
         size: 48,
-        // Mute powers nothing: selection blue when engaged, never amber.
+        // Mute engaged: a selected key, like any other.
         selected: muted,
         onPressed: on && agent.muted != null ? () => agent.setMuted(!muted) : null,
       ),
@@ -260,7 +260,7 @@ String? logoFor(String? icon, String name) {
 
 /// The PC's services (`[[agent.shortcut]]`), then its apps (`[agent.apps]`): round keys with their
 /// logo, in ink like every other key, or their initials. The service the playback drives is ringed
-/// in blue.
+/// in lavender.
 class _Launchers extends StatelessWidget {
   const _Launchers({required this.agent});
 
@@ -514,7 +514,7 @@ class _KeysState extends State<_Keys> with WidgetsBindingObserver {
 }
 
 /// A round key: hairline ring, the icon or text in ink. The primary one carries the selection
-/// blue; [selected] fills it lightly. Disabled keys fade to the dim line.
+/// lavender; [selected] fills it lightly. Disabled keys fade to the dim line.
 class _Round extends StatelessWidget {
   const _Round({
     this.icon,

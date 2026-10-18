@@ -49,11 +49,11 @@ void main() {
     expect(core.entities['demo-garage']!.caps['on_off']!.failed, isTrue);
   });
 
-  test('a pending wish never lights anything: amber is the reported state only', () {
+  test('a pending wish never lights anything: on is the reported state only', () {
     final console = DemoCore().entities['demo-strip-3']!;
     expect(console.caps['on_off']!.shown, isTrue, reason: 'the wish is shown');
     expect(onLevel(console), 0, reason: 'but the device still reports off');
-    expect(stateColor(console), Hm.select);
+    expect(stateColor(console), Hm.pending);
   });
 
   testWidgets('every sensor says its state, the TV that it is on', (tester) async {

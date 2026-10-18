@@ -1,5 +1,5 @@
 /// How an entity's state reads everywhere: the same fill grammar in the viewport, the rows and
-/// the sheet (solid = confirmed, blue hatch = pending, outline = offline, amber = physically on).
+/// the sheet (solid = confirmed, lavender hatch = pending, outline = offline, pink = physically on).
 library;
 
 import 'package:flutter/material.dart';
@@ -8,7 +8,7 @@ import '../l10n/app_localizations.dart';
 import '../model.dart';
 import '../theme.dart';
 
-/// 0..1: how much of the entity is physically on (brightness scales a lamp). Amber is the device's
+/// 0..1: how much of the entity is physically on (brightness scales a lamp). Pink is the device's
 /// reported state only: a pending wish never lights anything.
 double onLevel(Entity e) {
   if (!e.available) return 0;
@@ -26,11 +26,11 @@ double onLevel(Entity e) {
 
 bool isPending(Entity e) => e.caps.values.any((s) => s.pending);
 
-/// The color a summary is set in: amber when physically on, blue while a wish is pending.
+/// The color a summary is set in: lavender when physically on, pink while a wish is pending.
 Color stateColor(Entity e) {
   if (!e.available) return Hm.textDim;
   if (isFailed(e) || alarming(e)) return Hm.danger;
-  if (isPending(e)) return Hm.select;
+  if (isPending(e)) return Hm.pending;
   return onLevel(e) > 0 ? Hm.on : Hm.textDim;
 }
 
@@ -151,7 +151,7 @@ class _SwatchPainter extends CustomPainter {
       canvas.save();
       canvas.clipRect(rect);
       final hatch = Paint()
-        ..color = Hm.select
+        ..color = Hm.pending
         ..strokeWidth = 1.4;
       for (var x = -size.height; x < size.width; x += 4) {
         canvas.drawLine(Offset(x, size.height), Offset(x + size.height, 0), hatch);
@@ -190,8 +190,8 @@ class FlipText extends StatelessWidget {
       );
 }
 
-/// The power switch of a device. Amber only once the device reports it on: while a command is
-/// pending the track stays selection blue; offline, the switch dims (Material's 38 %).
+/// The power switch of a device. Lavender only once the device reports it on: while a command is
+/// pending the track is pink; offline, the switch dims (Material's 38 %).
 class PowerSwitch extends StatelessWidget {
   const PowerSwitch({super.key, required this.entity, required this.onChanged});
 
@@ -203,6 +203,6 @@ class PowerSwitch extends StatelessWidget {
     final slot = entity.caps['on_off'];
     final toggle = Switch(value: slot?.shown == true, onChanged: entity.available ? onChanged : null);
     if (!entity.available) return Opacity(opacity: 0.38, child: toggle);
-    return slot?.pending ?? false ? Hm.settingSwitch(context, toggle) : toggle;
+    return slot?.pending ?? false ? Hm.pendingSwitch(context, toggle) : toggle;
   }
 }

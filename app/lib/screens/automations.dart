@@ -53,7 +53,7 @@ class AutomationsScreen extends StatelessWidget {
   }
 }
 
-/// How the last run went, in the state grammar: amber acted, red failed, outline skipped,
+/// How the last run went, in the state grammar: pink acted, red failed, outline skipped,
 /// dim never ran.
 class _RunMark extends StatelessWidget {
   const _RunMark(this.run, {this.size = 14});
