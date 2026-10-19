@@ -193,16 +193,18 @@ async fn handle(app: &AppState, req: Request) -> Value {
                     .map(|status| json!(status))
                     .map_err(|e| (-32000, e))
             }),
-        "entity.update" => serde_json::from_value::<EntityOverride>(req.params)
-            .map_err(|e| (-32602, e.to_string()))
-            .and_then(|update| update_entity(app, update).map_err(|e| (-32000, e))),
+        "entity.update" => match serde_json::from_value::<EntityOverride>(req.params) {
+            Err(e) => Err((-32602, e.to_string())),
+            Ok(update) => blocking(app, move |app| update_entity(app, update)).await.map_err(|e| (-32000, e)),
+        },
         "rooms.list" => {
             let rooms = app.core.rooms.lock().unwrap();
             Ok(json!(rooms.iter().map(|(name, kind)| RoomConfig { name: name.clone(), kind: Some(kind.clone()) }).collect::<Vec<_>>()))
         }
-        "room.update" => serde_json::from_value::<RoomConfig>(req.params)
-            .map_err(|e| (-32602, e.to_string()))
-            .and_then(|room| update_room(app, room).map_err(|e| (-32000, e))),
+        "room.update" => match serde_json::from_value::<RoomConfig>(req.params) {
+            Err(e) => Err((-32602, e.to_string())),
+            Ok(room) => blocking(app, move |app| update_room(app, room)).await.map_err(|e| (-32000, e)),
+        },
         "entity.invoke" => match serde_json::from_value::<Invoke>(req.params) {
             Err(e) => Err((-32602, e.to_string())),
             Ok(p) => match app.core.plugins.get() {
@@ -230,6 +232,12 @@ async fn handle(app: &AppState, req: Request) -> Value {
         Ok(result) => json!({ "jsonrpc": "2.0", "id": req.id, "result": result }),
         Err((code, message)) => error(req.id, code, message),
     }
+}
+
+/// Runs file work (the config file) off the async threads.
+async fn blocking(app: &AppState, f: impl FnOnce(&AppState) -> Result<Value, String> + Send + 'static) -> Result<Value, String> {
+    let app = app.clone();
+    tokio::task::spawn_blocking(move || f(&app)).await.map_err(|e| e.to_string())?
 }
 
 /// Merges the given fields into the entity's metadata, saves it to the config file, then applies it.

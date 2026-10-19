@@ -118,7 +118,24 @@ jobs:
           flutter-version: 3.47.7
           channel: stable
           cache: true
+      # Repository secrets: ANDROID_KEYSTORE (the .jks in base64), ANDROID_KEYSTORE_PASSWORD,
+      # ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD. Without them, the runner's throwaway debug key:
+      # such an APK does not install over the previous one.
+      - name: Release key
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+        run: |
+          if [ -n "$KEYSTORE" ]; then
+            echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "HOMEMAID_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::no ANDROID_KEYSTORE secret: APKs signed with a throwaway debug key"
+          fi
       - name: Build (real and demo)
+        env:
+          HOMEMAID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          HOMEMAID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          HOMEMAID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           flutter build apk --release --flavor real
           flutter build apk --release --flavor demo --dart-define=HOMEMAID_DEMO=true

@@ -52,11 +52,6 @@ impl Selector {
             Selector::Or(a, b) => a.matches(e) || b.matches(e),
         }
     }
-
-    /// The matching entities, in a stable order.
-    pub fn select<'a>(&self, entities: impl IntoIterator<Item = &'a Entity>) -> Vec<Uuid> {
-        entities.into_iter().filter(|e| self.matches(e)).map(|e| e.id).collect()
-    }
 }
 
 impl fmt::Display for Selector {
@@ -241,7 +236,6 @@ mod tests {
         assert!(Selector::parse(r#"tag:"Night light" & model:lamp"#).unwrap().matches(&lamp));
         assert!(!Selector::parse("room:Cuisine | cap:volume").unwrap().matches(&lamp));
         assert!(!Selector::parse("!plugin:tplink").unwrap().matches(&lamp));
-        assert!(Selector::parse("room:Salon").unwrap().select([&lamp]).contains(&lamp.id));
     }
 
     #[test]

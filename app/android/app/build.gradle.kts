@@ -46,11 +46,24 @@ android {
         }
     }
 
+    // The release key comes from the environment (CI secrets, see .github/workflows/ci.yml).
+    // Without it, the machine's debug key, so `flutter run --release` works; but an APK signed
+    // with another key does not install over the previous one.
+    val keystore = System.getenv("HOMEMAID_KEYSTORE")
+    signingConfigs {
+        if (keystore != null) {
+            create("release") {
+                storeFile = file(keystore)
+                storePassword = System.getenv("HOMEMAID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("HOMEMAID_KEY_ALIAS")
+                keyPassword = System.getenv("HOMEMAID_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(if (keystore != null) "release" else "debug")
         }
     }
 }

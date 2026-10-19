@@ -31,6 +31,10 @@ const FAST_REFRESH_MS: u32 = 2_000;
 const SLOW_REFRESH_MS: u32 = 10_000;
 /// Refresh fast for a while after a command, to catch follow-up changes.
 const FAST_WINDOW: Duration = Duration::from_secs(10);
+/// An offline strip is asked again this often, not at every refresh: each try can block the
+/// plugin for seconds (connect and read timeouts), and commands to the other strips wait meanwhile.
+// ponytail: still one blocking try per period; concurrent requests need WASIp3 async (plugin-api v2).
+const OFFLINE_RETRY: Duration = Duration::from_secs(30);
 
 struct Live {
     klap: klap::Session,
@@ -44,6 +48,8 @@ struct Host {
     /// `device_id` of each outlet, as discovered.
     outlets: Vec<String>,
     online: bool,
+    /// When an offline strip is tried again.
+    retry_at: Instant,
 }
 
 struct Outlet {
@@ -108,6 +114,9 @@ impl Host {
 
     /// Reports every outlet; on failure the outlets go offline until the device answers again.
     fn report(&mut self, auth: &[u8; 32], terminal_uuid: &str) {
+        if !self.online && Instant::now() < self.retry_at {
+            return;
+        }
         match self.outlets(auth, terminal_uuid) {
             Ok(outlets) => {
                 if !self.online {
@@ -126,6 +135,7 @@ impl Host {
                     log(LogLevel::Warn, &format!("{} offline: {e}", self.addr));
                 }
                 self.online = false;
+                self.retry_at = Instant::now() + OFFLINE_RETRY;
                 self.session = None;
                 for id in &self.outlets {
                     set_available(id, false);
@@ -214,7 +224,7 @@ impl Plugin for Tplink {
             .split(',')
             .map(str::trim)
             .filter(|h| !h.is_empty())
-            .map(|h| Ok(Host { addr: parse_host(h)?, session: None, outlets: vec![], online: false }))
+            .map(|h| Ok(Host { addr: parse_host(h)?, session: None, outlets: vec![], online: false, retry_at: Instant::now() }))
             .collect::<Result<Vec<_>, String>>()?;
         let username = secret("username").ok_or("missing secret `username` in [tplink] of secrets.toml")?;
         let password = secret("password").ok_or("missing secret `password` in [tplink] of secrets.toml")?;

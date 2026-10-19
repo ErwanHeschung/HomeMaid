@@ -38,7 +38,7 @@ use windows::{
     },
     core::{HSTRING, w},
 };
-use wry::{WebViewBuilder, http::Response};
+use wry::{WebView, WebViewBuilder, http::Response};
 
 enum UserEvent {
     Show,
@@ -165,7 +165,7 @@ fn run(config: Option<PathBuf>, background: bool, dir: PathBuf, config_path: Pat
                     .map_err(|e| tracing::error!("no notification-area icon: {e}"))
                     .ok();
                 if !background {
-                    show(&window);
+                    show(&window, &webview, &server);
                 }
             }
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => window.set_visible(false),
@@ -174,8 +174,8 @@ fn run(config: Option<PathBuf>, background: bool, dir: PathBuf, config_path: Pat
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
                 ..
-            })) => show(&window),
-            Event::UserEvent(UserEvent::Menu(e)) if e.id == *open.id() => show(&window),
+            })) => show(&window, &webview, &server),
+            Event::UserEvent(UserEvent::Menu(e)) if e.id == *open.id() => show(&window, &webview, &server),
             Event::UserEvent(UserEvent::Menu(e)) if e.id == *quit.id() => server.stop(),
             Event::UserEvent(UserEvent::Ipc(message)) => {
                 let message: Value = serde_json::from_str(&message).unwrap_or_default();
@@ -187,6 +187,8 @@ fn run(config: Option<PathBuf>, background: bool, dir: PathBuf, config_path: Pat
                         s["qr"] = qr.clone();
                         s
                     }
+                    // The page polls; hidden (in the notification area, most of the time), nobody looks.
+                    "status" if !window.is_visible() => return,
                     "status" => status(),
                     "agent" => match server.set_agent(on) {
                         // A new [agent] section is read at start.
@@ -244,10 +246,12 @@ fn run(config: Option<PathBuf>, background: bool, dir: PathBuf, config_path: Pat
     })
 }
 
-fn show(window: &Window) {
+/// Shows the window, up to date at once: the status is not refreshed while it is hidden.
+fn show(window: &Window, webview: &WebView, server: &Handle) {
     window.set_visible(true);
     window.set_minimized(false);
     window.set_focus();
+    let _ = webview.evaluate_script(&format!("hm({})", status(server)));
 }
 
 fn tooltip(fr: bool, agent: bool) -> &'static str {

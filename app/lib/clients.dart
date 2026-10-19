@@ -56,6 +56,8 @@ class HostSocket {
     try {
       await ws.ready.timeout(const Duration(seconds: 5));
     } catch (e) {
+      // Not left half-open on either side: a late connection would linger, unused.
+      ws.sink.close().ignore();
       _lost(ws, LinkError.unreachable);
       return;
     }
