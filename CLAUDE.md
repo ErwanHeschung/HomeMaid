@@ -199,7 +199,7 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
 - Écrites dans `homemaid.toml` (`[[automation]]` avec `[[automation.trigger]]`, `[[automation.condition]]`, `[[automation.action]]`), exemples dans `homemaid.example.toml`. Le module est `core/crates/homemaid/src/automations.rs`.
 - **Vérifiées au chargement** : une faute (heure, jour, capacité, valeur, sélecteur, champ inconnu) empêche le core de démarrer, avec un message précis. Ce qui dépend des appareils découverts (sélecteur vide, action absente) est signalé comme « problème », sans bloquer.
 - **Déclencheurs** :
-  - `at` (heure locale, `days`), via le crate `jiff` ;
+  - `at` (heure locale, `days`), via le crate `jiff`. Un `at` manqué de plus de 5 min (PC en veille, hub arrêté) est sauté, pas rattrapé ;
   - `when` (un état **observé** franchit une valeur : `becomes`, `above`, `below`, `changes`). Seul le front compte, et un souhait ne déclenche jamais.
 - **Conditions** : `between` (passe minuit), `days`, `state` (`is`, `above`, `below`, `all`).
 - **Actions** : `set` (un état désiré, le réconciliateur fait le reste) ou `invoke` (une action ponctuelle).

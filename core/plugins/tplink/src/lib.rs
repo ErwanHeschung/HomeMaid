@@ -232,6 +232,7 @@ impl Plugin for Tplink {
     fn discover() -> Result<Vec<DiscoveredEntity>, String> {
         with_state(|state| {
             let mut entities = Vec::new();
+            let mut failed = 0;
             for host in &mut state.hosts {
                 let cache_key = format!("children:{}", host.addr);
                 let live = host.call(&state.auth, &state.terminal_uuid, "get_device_info", None).and_then(|info| {
@@ -246,9 +247,12 @@ impl Plugin for Tplink {
                     }
                     // Device off at startup: expose its last known outlets, they go online when it answers.
                     Err(e) => {
-                        let cached: Value = kv_get(&cache_key)
-                            .and_then(|c| serde_json::from_str(&c).ok())
-                            .ok_or_else(|| format!("{e} (and no cached outlets)"))?;
+                        // One strip unplugged must not hide the others.
+                        let Some(cached) = kv_get(&cache_key).and_then(|c| serde_json::from_str::<Value>(&c).ok()) else {
+                            log(LogLevel::Error, &format!("{e}, and no cached outlets: they show up at the next start once it answers"));
+                            failed += 1;
+                            continue;
+                        };
                         log(LogLevel::Warn, &format!("{e}; using cached outlets"));
                         let outlets = serde_json::from_value(cached["outlets"].clone()).map_err(|e| e.to_string())?;
                         (cached["device"].as_str().unwrap_or_default().to_string(), outlets)
@@ -256,6 +260,10 @@ impl Plugin for Tplink {
                 };
                 host.outlets = outlets.iter().map(|(id, _)| id.clone()).collect();
                 entities.extend(outlets.into_iter().map(|(id, name)| entity(id, name, device.clone())));
+            }
+            // None answered: fail, so the host restarts the plugin (and retries) with backoff.
+            if failed > 0 && failed == state.hosts.len() {
+                return Err("no P300 answered, and none has cached outlets".into());
             }
             Ok(entities)
         })

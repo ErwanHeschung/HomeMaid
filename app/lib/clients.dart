@@ -193,18 +193,20 @@ class CoreClient extends ChangeNotifier {
     try {
       await call('subscribe');
       final list = await call('entities.list') as List;
-      final rooms = await call('rooms.list').catchError((Object _) => <Object?>[]) as List;
-      roomKinds
-        ..clear()
-        ..addEntries(rooms.map((r) => MapEntry((r as Map)['name'] as String, r['kind'] as String)));
-      // An older core has no automations: an empty list.
-      await refreshAutomations().catchError((Object _) {});
+      // Applied at once: the changes notified from here on are newer than this list.
       entities
         ..clear()
         ..addEntries(list.map((json) {
           final entity = Entity.fromJson((json as Map).cast<String, dynamic>());
           return MapEntry(entity.id, entity);
         }));
+      notifyListeners();
+      final rooms = await call('rooms.list').catchError((Object _) => <Object?>[]) as List;
+      roomKinds
+        ..clear()
+        ..addEntries(rooms.map((r) => MapEntry((r as Map)['name'] as String, r['kind'] as String)));
+      // An older core has no automations: an empty list.
+      await refreshAutomations().catchError((Object _) {});
       notifyListeners();
     } catch (_) {
       // Lost again: the socket reconnects and resyncs.

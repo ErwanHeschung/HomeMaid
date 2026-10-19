@@ -6,6 +6,7 @@ use std::{
     future::Future,
     io,
     net::SocketAddr,
+    panic::AssertUnwindSafe,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
     thread,
@@ -26,6 +27,8 @@ pub fn init_logging(file: Option<&Path>) -> Result<(), String> {
         }
         None => tracing_subscriber::fmt::init(),
     }
+    // Into the log: the desktop exe has no console to print them to.
+    std::panic::set_hook(Box::new(|info| tracing::error!("{info}")));
     Ok(())
 }
 
@@ -279,10 +282,15 @@ impl Handle {
         thread::Builder::new()
             .name("server".into())
             .spawn(move || {
-                let result = tokio::runtime::Runtime::new().map_err(|e| e.to_string()).and_then(|runtime| {
+                // A panic is reported like any error, or the window would wait forever.
+                let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
                     runtime.block_on(serve(path, true, switch, async { drop(stop_rx.await) }, core_slot))
-                });
-                stopped(result);
+                }));
+                stopped(result.unwrap_or_else(|panic| {
+                    let what = panic.downcast_ref::<&str>().copied().or(panic.downcast_ref::<String>().map(String::as_str));
+                    Err(format!("internal error: {}", what.unwrap_or("panic")))
+                }));
             })
             .map_err(|e| e.to_string())?;
         Ok(Self {

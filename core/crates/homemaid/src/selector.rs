@@ -95,8 +95,8 @@ impl Parser<'_> {
     }
 
     fn skip_space(&mut self) {
-        while self.peek().is_some_and(char::is_whitespace) {
-            self.pos += 1;
+        while let Some(c) = self.peek().filter(|c| c.is_whitespace()) {
+            self.pos += c.len_utf8();
         }
     }
 
@@ -255,6 +255,7 @@ mod tests {
             ("room:Salon room:Cuisine", "expected `&`, `|`"),
             (r#"name:"Lampe"#, "unclosed"),
             ("id:nope", "not a UUID"),
+            ("room:Salon\u{a0}&\u{2009}", "expected a term"),
         ] {
             let err = Selector::parse(text).unwrap_err();
             assert!(err.contains(what) && err.contains("column"), "{text}: {err}");

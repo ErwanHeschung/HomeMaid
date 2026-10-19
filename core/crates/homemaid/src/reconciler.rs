@@ -118,8 +118,9 @@ impl Reconciler {
         if slot.desired.as_ref() == Some(&value) {
             slot.status = CommandStatus::Confirmed;
             slot.next_retry = None;
-        } else if !slot.meta.read_only && matches!(slot.status, CommandStatus::Idle | CommandStatus::Confirmed) {
-            // Changed outside the hub (physical button, vendor app): adopt it instead of fighting the user.
+        } else if !slot.meta.read_only && !matches!(slot.status, CommandStatus::Pending { .. }) {
+            // Changed outside the hub (physical button, vendor app): adopt it instead of fighting the
+            // user. A failed wish too, or it would come back as pending on the next reconnection.
             slot.desired = Some(value.clone());
             slot.status = CommandStatus::Confirmed;
         }
@@ -274,6 +275,13 @@ mod tests {
         rec.tick(t);
         assert!(commands(&mut rec).is_empty());
         assert!(matches!(status(&rec), CommandStatus::Failed { .. }));
+
+        // Then switched by hand: adopted, so a reconnection does not send the failed wish again.
+        rec.observe(LAMP, &CapKind::OnOff, CapValue::OnOff(false));
+        assert_eq!(status(&rec), CommandStatus::Confirmed);
+        rec.set_available(LAMP, false, t);
+        rec.set_available(LAMP, true, t);
+        assert!(commands(&mut rec).is_empty());
     }
 
     #[test]

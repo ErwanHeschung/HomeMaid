@@ -26,6 +26,8 @@ use crate::{
 const KEEP_RUNS: usize = 20;
 /// More runs than this in a minute is a loop (two automations answering each other): stop it.
 const MAX_RUNS_PER_MINUTE: usize = 10;
+/// An `at` trigger found due later than this (the PC was asleep at that time) is skipped, not run late.
+const GRACE: Duration = Duration::from_secs(5 * 60);
 
 // ------------------------------------------------------------------------------------- config
 
@@ -666,7 +668,51 @@ impl Automations {
     /// The engine: sleeps until the next `at`, wakes on observed changes. Runs forever.
     pub async fn drive(self: Arc<Self>, core: Arc<Core>) {
         let mut changes = core.changes.subscribe();
-        // Seed the observed values: a value already true at start is not an edge.
+        // A value already true at start is not an edge.
+        self.seed(&core);
+        let mut checked = Zoned::now();
+        loop {
+            let next = self.list.iter().filter(|a| a.enabled).filter_map(|a| a.next_time(&checked)).min();
+            // At most a minute: follows clock and time-zone changes. Already due: no wait.
+            let wait = next
+                .map(|n| Duration::try_from(n.duration_since(&Zoned::now())).unwrap_or(Duration::ZERO))
+                .unwrap_or(Duration::MAX)
+                .min(Duration::from_secs(60));
+            tokio::select! {
+                () = tokio::time::sleep(wait) => {
+                    let now = Zoned::now();
+                    for (i, a) in self.list.iter().enumerate().filter(|(_, a)| a.enabled) {
+                        let Some(due) = a.next_time(&checked).filter(|due| *due <= now) else { continue };
+                        let late = Duration::try_from(now.duration_since(&due)).unwrap_or(Duration::ZERO);
+                        if late > GRACE {
+                            tracing::warn!(automation = %a.id, "{} skipped: the hub was not running then", due.strftime("%H:%M"));
+                        } else {
+                            self.spawn_run(&core, i, due.strftime("%H:%M").to_string());
+                        }
+                    }
+                    checked = now;
+                }
+                event = changes.recv() => match event {
+                    Ok(Event::Slot(change)) => {
+                        for (i, trigger) in self.triggered_by(&core, &change) {
+                            self.spawn_run(&core, i, trigger);
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        // The edges in between are lost; start again from the current values, so
+                        // the next ones are seen right.
+                        tracing::warn!("automations missed {n} changes");
+                        self.seed(&core);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                },
+            }
+        }
+    }
+
+    /// Takes the observed values as they are now.
+    fn seed(&self, core: &Core) {
         core.with(|r| {
             let mut observed = self.observed.lock().unwrap();
             for e in r.entities.values() {
@@ -677,40 +723,16 @@ impl Automations {
                 }
             }
         });
-        let mut checked = Zoned::now();
-        loop {
-            let next = self.list.iter().filter(|a| a.enabled).filter_map(|a| a.next_time(&checked)).min();
-            // At most a minute: follows clock and time-zone changes.
-            let wait = next
-                .map(|n| n.duration_since(&Zoned::now()).unsigned_abs())
-                .unwrap_or(Duration::MAX)
-                .min(Duration::from_secs(60));
-            tokio::select! {
-                () = tokio::time::sleep(wait) => {
-                    let now = Zoned::now();
-                    for a in self.list.iter().filter(|a| a.enabled) {
-                        if let Some(due) = a.next_time(&checked).filter(|due| *due <= now) {
-                            let trigger = due.strftime("%H:%M").to_string();
-                            let run = self.execute(&core, a, trigger, &now).await;
-                            self.record(&core, &a.id, run);
-                        }
-                    }
-                    checked = now;
-                }
-                event = changes.recv() => match event {
-                    Ok(Event::Slot(change)) => {
-                        for (i, trigger) in self.triggered_by(&core, &change) {
-                            let a = &self.list[i];
-                            let run = self.execute(&core, a, trigger, &Zoned::now()).await;
-                            self.record(&core, &a.id, run);
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => tracing::warn!("automations missed {n} changes"),
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
-                },
-            }
-        }
+    }
+
+    /// Runs one aside: an action may wait for its plugin, and the engine keeps listening meanwhile.
+    fn spawn_run(self: &Arc<Self>, core: &Arc<Core>, i: usize, trigger: String) {
+        let (this, core) = (self.clone(), core.clone());
+        tokio::spawn(async move {
+            let a = &this.list[i];
+            let run = this.execute(&core, a, trigger, &Zoned::now()).await;
+            this.record(&core, &a.id, run);
+        });
     }
 }
 

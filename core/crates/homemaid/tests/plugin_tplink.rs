@@ -200,3 +200,15 @@ async fn silent_device_does_not_hang_the_plugin() {
     // Read timeout (5 s), discover fails, restart after 1 s, connects again.
     wait_for("a second connection", Duration::from_secs(15), || accepted.lock().unwrap().len() >= 2).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unplugged_strip_does_not_hide_the_others() {
+    let (_device, addr) = fake_p300().await;
+    let unplugged = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+    let hosts = format!("{unplugged},{addr}");
+    let (core, _data) = start(tplink(&hosts, PASSWORD));
+    wait_for("discovery of the strip that answers", Duration::from_secs(10), || {
+        core.with(|r| r.entities.len() == 3 && r.entities.values().all(|e| e.available))
+    })
+    .await;
+}

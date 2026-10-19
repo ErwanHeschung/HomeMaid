@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, fs, io, net::SocketAddr, path::Path, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fs, io,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::{Mutex, PoisonError},
+};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -112,7 +118,7 @@ pub struct PluginConfig {
 
 /// Relative paths in the file are resolved against the directory of the file.
 pub fn load(path: &Path) -> Result<Config, String> {
-    let text = read_text(path)?;
+    let text = read_text(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut config: Config = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     for (section, token) in [("core", config.core.as_ref().map(|c| &c.token)), ("agent", config.agent.as_ref().map(|a| &a.token))] {
         if let Some(Err(e)) = token.map(|t| check_token(t)) {
@@ -193,51 +199,63 @@ agent = "127.0.0.1:8124"
 pub fn set_agent_enabled(path: &Path, enabled: bool) -> Result<bool, String> {
     use toml_edit::{Item, Table, value};
 
-    let fail = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
-    let mut doc: toml_edit::DocumentMut = read_text(path)?.parse().map_err(|e| fail(&e))?;
-    let created = match doc.get_mut("agent").and_then(Item::as_table_mut) {
-        Some(agent) => {
+    let created = edit_toml(path, |doc| {
+        if let Some(agent) = doc.get_mut("agent").and_then(Item::as_table_mut) {
             agent["enabled"] = value(enabled);
-            false
+            return Ok(None);
         }
-        None if !enabled => return Ok(false),
-        None => {
-            let token = new_token();
-            let data_dir = doc.get("core").and_then(|c| c.get("data_dir")).and_then(Item::as_str).unwrap_or("data");
-            let secrets = path.parent().unwrap_or(Path::new(".")).join(data_dir).join("secrets.toml");
-            set_secret(&secrets, "pc", "token", &token)?;
-            let mut agent = Table::new();
-            agent["enabled"] = value(true);
-            agent["bind"] = value("0.0.0.0:8124");
-            agent["token"] = value(token);
-            doc["agent"] = Item::Table(agent);
-            true
+        if !enabled {
+            return Ok(None);
         }
-    };
-    crate::store::write_atomic(path, doc.to_string().as_bytes()).map_err(|e| fail(&e))?;
-    Ok(created)
+        let token = new_token();
+        let data_dir = doc.get("core").and_then(|c| c.get("data_dir")).and_then(Item::as_str).unwrap_or("data");
+        let secrets = path.parent().unwrap_or(Path::new(".")).join(data_dir).join("secrets.toml");
+        let mut agent = Table::new();
+        agent["enabled"] = value(true);
+        agent["bind"] = value("0.0.0.0:8124");
+        agent["token"] = value(&token);
+        doc["agent"] = Item::Table(agent);
+        Ok(Some((secrets, token)))
+    })?;
+    match created {
+        Some((secrets, token)) => set_secret(&secrets, "pc", "token", &token).map(|()| true),
+        None => Ok(false),
+    }
 }
 
 /// Sets `[section] key` in a secrets file (created with its folder if missing), keeping the rest.
 pub fn set_secret(path: &Path, section: &str, key: &str, secret: &str) -> Result<(), String> {
+    edit_toml(path, |doc| {
+        let table = doc.entry(section).or_insert(toml_edit::table()).as_table_mut().ok_or(format!("`{section}` is not a table"))?;
+        table[key] = toml_edit::value(secret);
+        Ok(())
+    })
+}
+
+/// Reads a TOML file (none is empty), lets `edit` change it, and writes it back with its comments
+/// and layout. One edit at a time in the process: the API, the desktop window and the first start
+/// all edit the same files, and each would otherwise lose the others' changes.
+fn edit_toml<R>(path: &Path, edit: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<R, String>) -> Result<R, String> {
+    static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+    let _guard = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
     let fail = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
-    let text = match fs::read_to_string(path) {
+    let text = match read_text(path) {
         Ok(text) => text,
         Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(fail(&e)),
     };
     let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e| fail(&e))?;
-    let table = doc.entry(section).or_insert(toml_edit::table()).as_table_mut().ok_or_else(|| fail(&format!("`{section}` is not a table")))?;
-    table[key] = toml_edit::value(secret);
+    let result = edit(&mut doc).map_err(|e| fail(&e))?;
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| fail(&e))?;
     }
-    crate::store::write_atomic(path, doc.to_string().as_bytes()).map_err(|e| fail(&e))
+    crate::store::write_atomic(path, doc.to_string().as_bytes()).map_err(|e| fail(&e))?;
+    Ok(result)
 }
 
 /// Without the UTF-8 BOM some Windows editors add, which TOML parsers reject.
-fn read_text(path: &Path) -> Result<String, String> {
-    let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+fn read_text(path: &Path) -> io::Result<String> {
+    let text = fs::read_to_string(path)?;
     Ok(text.strip_prefix('\u{feff}').map(str::to_string).unwrap_or(text))
 }
 
@@ -279,31 +297,31 @@ fn save_table(
     id: &str,
     fill: impl FnOnce(&mut dyn FnMut(&str, Option<toml_edit::Item>)),
 ) -> Result<(), String> {
-    use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
+    use toml_edit::{ArrayOfTables, Item, Table, value};
 
-    let fail = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
-    let mut doc: DocumentMut = read_text(path)?.parse().map_err(|e| fail(&e))?;
-    let tables = doc
-        .entry(array)
-        .or_insert(Item::ArrayOfTables(ArrayOfTables::new()))
-        .as_array_of_tables_mut()
-        .ok_or_else(|| fail(&format!("`{array}` must be an array of tables ([[{array}]])")))?;
-    let found = tables.iter().position(|t| t.get(key).and_then(Item::as_str) == Some(id));
-    let index = match found {
-        Some(index) => index,
-        None => {
-            let mut table = Table::new();
-            table[key] = value(id);
-            tables.push(table);
-            tables.len() - 1
-        }
-    };
-    let table = tables.get_mut(index).expect("index is in bounds");
-    fill(&mut |field, item| match item {
-        Some(item) => table[field] = item,
-        None => drop(table.remove(field)),
-    });
-    crate::store::write_atomic(path, doc.to_string().as_bytes()).map_err(|e| fail(&e))
+    edit_toml(path, |doc| {
+        let tables = doc
+            .entry(array)
+            .or_insert(Item::ArrayOfTables(ArrayOfTables::new()))
+            .as_array_of_tables_mut()
+            .ok_or(format!("`{array}` must be an array of tables ([[{array}]])"))?;
+        let found = tables.iter().position(|t| t.get(key).and_then(Item::as_str) == Some(id));
+        let index = match found {
+            Some(index) => index,
+            None => {
+                let mut table = Table::new();
+                table[key] = value(id);
+                tables.push(table);
+                tables.len() - 1
+            }
+        };
+        let table = tables.get_mut(index).expect("index is in bounds");
+        fill(&mut |field, item| match item {
+            Some(item) => table[field] = item,
+            None => drop(table.remove(field)),
+        });
+        Ok(())
+    })
 }
 
 #[cfg(test)]
@@ -369,6 +387,21 @@ mod tests {
         assert!(agent.enabled && fs::read_to_string(&path).unwrap().starts_with("# mine\n"));
         assert_eq!(load_secrets(&dir.join("data/secrets.toml")).unwrap()["pc"]["token"], agent.token);
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_edits_are_all_kept() {
+        let path = std::env::temp_dir().join(format!("homemaid-concurrent-test-{}.toml", std::process::id()));
+        fs::write(&path, "# rooms\n").unwrap();
+        std::thread::scope(|scope| {
+            for i in 0..8 {
+                let path = &path;
+                scope.spawn(move || save_room(path, &RoomConfig { name: format!("room {i}"), kind: Some("generic".into()) }).unwrap());
+            }
+        });
+        let rooms = load(&path).unwrap().rooms;
+        fs::remove_file(&path).unwrap();
+        assert_eq!(rooms.len(), 8, "{rooms:?}");
     }
 
     #[test]

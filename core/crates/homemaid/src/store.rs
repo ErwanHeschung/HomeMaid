@@ -1,29 +1,49 @@
 //! Persistent snapshot of the current state, so desired values survive a restart.
 
-use std::{collections::BTreeMap, fs, io, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs::{self, File},
+    io::{self, Write},
+    path::Path,
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 use uuid::Uuid;
 
 use crate::{config::EntityOverride, model::Entity};
 
+/// A snapshot that cannot be read back (cut short, an unknown format) is only a cache: it is set
+/// aside as `<name>.bad` and the hub starts without it rather than not at all.
 pub fn load(path: &Path) -> io::Result<BTreeMap<Uuid, Entity>> {
-    match fs::read(path) {
-        Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(BTreeMap::new()),
-        Err(e) => Err(e),
-    }
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(e) => return Err(e),
+    };
+    serde_json::from_slice(&bytes).or_else(|e| {
+        let mut bad = path.as_os_str().to_owned();
+        bad.push(".bad");
+        tracing::error!("{}: {e}; set aside as {}, starting without the saved state", path.display(), bad.display());
+        fs::rename(path, &bad)?;
+        Ok(BTreeMap::new())
+    })
 }
 
 pub fn save(path: &Path, entities: &BTreeMap<Uuid, Entity>) -> io::Result<()> {
     write_atomic(path, &serde_json::to_vec_pretty(entities)?)
 }
 
-/// Writes to a temporary file then renames it, so a crash never leaves a truncated file.
+/// Writes to a temporary file, flushed to disk, then renames it: a crash or a power loss leaves
+/// the old file or the new one, never a truncated one. Each write has its own temporary file.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    static NEXT: AtomicU32 = AtomicU32::new(0);
     let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    fs::write(&tmp, bytes)?;
-    fs::rename(tmp, path)
+    tmp.push(format!(".{}-{}.tmp", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    let written = File::create(&tmp).and_then(|mut file| {
+        file.write_all(bytes)?;
+        file.sync_all()
+    });
+    written.and_then(|()| fs::rename(&tmp, path)).inspect_err(|_| drop(fs::remove_file(&tmp)))
 }
 
 /// Entities stay unavailable until their plugin discovers them again.
@@ -80,5 +100,15 @@ mod tests {
         assert_eq!(slot.desired, Some(CapValue::OnOff(true)));
         assert_eq!(slot.status, CommandStatus::Pending { attempts: 2 });
         assert!(slot.next_retry.is_none(), "restored commands are resent right away");
+    }
+
+    #[test]
+    fn a_corrupt_snapshot_is_set_aside() {
+        let path = std::env::temp_dir().join(format!("homemaid-store-bad-{}.json", std::process::id()));
+        fs::write(&path, b"{\"trunc").unwrap();
+        assert!(load(&path).unwrap().is_empty());
+        let mut bad = path.as_os_str().to_owned();
+        bad.push(".bad");
+        assert!(!path.exists() && fs::remove_file(&bad).is_ok(), "kept aside for a look");
     }
 }

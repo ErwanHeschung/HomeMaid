@@ -103,18 +103,35 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
+/// Methods that wait for a plugin (an action: ms usually, 70 s at worst). They run aside so the
+/// notifications keep flowing; the others answer in order with them, so `entities.list` is never
+/// overtaken by an older change.
+const SLOW: [&str; 2] = ["entity.invoke", "automation.run"];
+
 async fn session(mut socket: WebSocket, app: AppState) {
     let mut changes = app.core.changes.subscribe();
     let mut subscribed = false;
+    let (replies, mut replied) = tokio::sync::mpsc::unbounded_channel();
     loop {
         let reply = tokio::select! {
             msg = socket.recv() => match msg {
-                // ponytail: one request at a time per client; an action waits for its plugin (ms
-                // usually, 70 s at worst). Spawn handlers if a slow plugin ever holds a client up.
-                Some(Ok(Message::Text(text))) => handle(&app, text.as_str(), &mut subscribed).await,
+                Some(Ok(Message::Text(text))) => match serde_json::from_str::<Request>(text.as_str()) {
+                    Err(e) => error(Value::Null, -32700, e.to_string()),
+                    Ok(req) if req.method == "subscribe" => {
+                        subscribed = true;
+                        json!({ "jsonrpc": "2.0", "id": req.id, "result": true })
+                    }
+                    Ok(req) if SLOW.contains(&req.method.as_str()) => {
+                        let (app, replies) = (app.clone(), replies.clone());
+                        tokio::spawn(async move { drop(replies.send(handle(&app, req).await)) });
+                        continue;
+                    }
+                    Ok(req) => handle(&app, req).await,
+                },
                 Some(Ok(_)) => continue,
                 _ => break,
             },
+            Some(reply) = replied.recv() => reply,
             change = changes.recv() => match change {
                 Ok(Event::Slot(change)) if subscribed => json!({ "jsonrpc": "2.0", "method": "state.changed", "params": change }),
                 Ok(Event::Entity(entity)) if subscribed => json!({ "jsonrpc": "2.0", "method": "entity.changed", "params": { "entity": entity } }),
@@ -123,9 +140,10 @@ async fn session(mut socket: WebSocket, app: AppState) {
                     json!({ "jsonrpc": "2.0", "method": "automation.ran", "params": { "id": id, "run": run } })
                 }
                 Ok(_) => continue,
+                // Changes were lost: closing makes the client reconnect and read everything again.
                 Err(RecvError::Lagged(n)) => {
-                    tracing::warn!("websocket client lagged, {n} changes dropped");
-                    continue;
+                    tracing::warn!("websocket client lagged, {n} changes dropped: closing it to resync");
+                    break;
                 }
                 Err(RecvError::Closed) => break,
             },
@@ -165,11 +183,7 @@ struct AutomationId {
     id: String,
 }
 
-async fn handle(app: &AppState, text: &str, subscribed: &mut bool) -> Value {
-    let req: Request = match serde_json::from_str(text) {
-        Ok(req) => req,
-        Err(e) => return error(Value::Null, -32700, e.to_string()),
-    };
+async fn handle(app: &AppState, req: Request) -> Value {
     let result = match req.method.as_str() {
         "entities.list" => Ok(app.core.with(|r| json!(r.entities.values().collect::<Vec<_>>()))),
         "entity.set_desired" => serde_json::from_value::<SetDesired>(req.params)
@@ -210,10 +224,6 @@ async fn handle(app: &AppState, text: &str, subscribed: &mut bool) -> Value {
             (Ok(_), None) => Err((-32000, "no automations".into())),
             (Ok(p), Some(a)) => a.run(&app.core, &p.id, "manual".into(), &jiff::Zoned::now()).await.map(|r| json!(r)).map_err(|e| (-32000, e)),
         },
-        "subscribe" => {
-            *subscribed = true;
-            Ok(json!(true))
-        }
         _ => Err((-32601, format!("unknown method `{}`", req.method))),
     };
     match result {
