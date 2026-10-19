@@ -20,6 +20,7 @@ async fn start_agent() -> (String, tokio::task::JoinHandle<()>) {
         token: "secret".into(),
         apps: BTreeMap::from([("notepad".to_string(), "notepad.exe".into())]),
         shortcuts: vec![],
+        discover_apps: false,
     };
     let (stopping, _) = tokio::sync::watch::channel(());
     let app = agent::router(&config, &stopping).unwrap();

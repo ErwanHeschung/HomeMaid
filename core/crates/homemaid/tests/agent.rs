@@ -21,6 +21,7 @@ async fn start_agent() -> (SocketAddr, watch::Sender<()>) {
         token: "secret".into(),
         apps: BTreeMap::from([("true".to_string(), PathBuf::from("true"))]),
         shortcuts: vec![],
+        discover_apps: false,
     };
     let (stopping, _) = watch::channel(());
     let app = agent::router(&config, &stopping).unwrap();

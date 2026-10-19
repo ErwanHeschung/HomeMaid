@@ -51,7 +51,7 @@ impl Desktop {
             }
             Request::Power { action } => return power(*action),
             // Handled by the desktop thread itself.
-            Request::Launch { .. } | Request::Open { .. } | Request::Control { .. } | Request::State => return Ok(()),
+            Request::Launch { .. } | Request::Open { .. } | Request::Control { .. } | Request::State | Request::ListApps => return Ok(()),
         };
         result.map_err(|e| e.to_string())
     }
@@ -112,6 +112,29 @@ unsafe fn audio_endpoint() -> windows::core::Result<IAudioEndpointVolume> {
         CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
         let devices: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
         devices.GetDefaultAudioEndpoint(eRender, eConsole)?.Activate(CLSCTX_ALL, None)
+    }
+}
+
+/// The Start menu's apps (`Get-StartApps`: programs, Store apps, games), by name.
+pub fn start_apps() -> std::collections::BTreeMap<String, String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    // UTF-8, or the console code page garbles accents ("Accès vocal").
+    let script = "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-StartApps | ConvertTo-Json -Compress";
+    match std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        Ok(out) if out.status.success() => super::parse_start_apps(&String::from_utf8_lossy(&out.stdout)),
+        Ok(out) => {
+            tracing::warn!("Get-StartApps failed: {}", String::from_utf8_lossy(&out.stderr));
+            Default::default()
+        }
+        Err(e) => {
+            tracing::warn!("cannot list the Start menu's apps: {e}");
+            Default::default()
+        }
     }
 }
 

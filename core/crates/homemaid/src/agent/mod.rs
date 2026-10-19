@@ -17,8 +17,9 @@ use std::{
     net::SocketAddr,
     path::PathBuf,
     process::Command,
-    sync::{Arc, mpsc},
+    sync::{Arc, RwLock, Weak, mpsc},
     thread,
+    time::Duration,
 };
 
 use axum::{
@@ -63,6 +64,8 @@ pub enum Request {
     Control { shortcut: String, action: String },
     Power { action: Power },
     State,
+    /// The apps found in the Start menu (`discover_apps`), by name.
+    ListApps,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -129,6 +132,12 @@ struct PcState {
 
 type Job = (Request, oneshot::Sender<Result<Value, String>>);
 
+/// Apps found on this PC, name to launch target (an AppID of the Start menu).
+type Discovered = Arc<RwLock<BTreeMap<String, String>>>;
+
+/// How often the Start menu is read again (apps installed meanwhile).
+const DISCOVERY_PERIOD: Duration = Duration::from_secs(600);
+
 #[derive(Clone)]
 struct Agent {
     jobs: mpsc::Sender<Job>,
@@ -155,14 +164,19 @@ pub fn router(config: &AgentConfig, stopping: &watch::Sender<()>) -> Result<Rout
     let apps = config.apps.clone();
     let shortcuts = shortcut_keys(&config.shortcuts)?;
     let opens = config.shortcuts.iter().map(|s| (s.name.clone(), s.open.clone())).collect();
+    let discovered = Discovered::default();
+    if config.discover_apps {
+        discover(Arc::downgrade(&discovered))?;
+    }
     thread::Builder::new()
         .name("desktop".into())
-        .spawn(move || desktop(rx, apps, opens, shortcuts))
+        .spawn(move || desktop(rx, apps, opens, shortcuts, discovered))
         .map_err(|e| e.to_string())?;
     let hello = json!({
         "type": "hello",
         "hostname": hostname(),
         "apps": config.apps.keys().collect::<Vec<_>>(),
+        "discover": config.discover_apps,
         "shortcuts": config.shortcuts.iter().map(|s| json!({
             "name": s.name,
             "icon": s.icon,
@@ -234,17 +248,83 @@ async fn remote(mut socket: WebSocket, mut agent: Agent) {
         let Some(Ok(message)) = message else { break };
         let Message::Text(text) = message else { continue };
         let reply = match serde_json::from_str::<Request>(text.as_str()) {
-            Ok(request) => match agent.run(request).await {
-                Ok(Value::Null) => continue,
-                Ok(state) => json!({ "type": "state", "state": state }),
-                Err(e) => json!({ "type": "error", "message": e }),
-            },
+            Ok(request) => {
+                // An answer says what it answers: `{"type": "apps", "apps": [...]}`, else the state.
+                let kind = if request == Request::ListApps { "apps" } else { "state" };
+                match agent.run(request).await {
+                    Ok(Value::Null) => continue,
+                    Ok(value) => json!({ "type": kind, kind: value }),
+                    Err(e) => json!({ "type": "error", "message": e }),
+                }
+            }
             Err(e) => json!({ "type": "error", "message": e.to_string() }),
         };
         if socket.send(Message::Text(reply.to_string().into())).await.is_err() {
             break;
         }
     }
+}
+
+/// Fills `discovered` from the Start menu now, then every [`DISCOVERY_PERIOD`], for as long as the
+/// agent that holds it runs.
+fn discover(discovered: Weak<RwLock<BTreeMap<String, String>>>) -> Result<(), String> {
+    thread::Builder::new()
+        .name("app-discovery".into())
+        .spawn(move || {
+            loop {
+                let apps = platform::start_apps();
+                let Some(discovered) = discovered.upgrade() else { return };
+                tracing::info!("{} apps found in the Start menu", apps.len());
+                *discovered.write().unwrap() = apps;
+                drop(discovered);
+                thread::sleep(DISCOVERY_PERIOD);
+            }
+        })
+        .map(drop)
+        .map_err(|e| e.to_string())
+}
+
+/// `Get-StartApps | ConvertTo-Json` (an object for one app, an array otherwise) as name to AppID,
+/// without what is not an app to open from a sofa: uninstallers, read-mes, help, web links.
+pub fn parse_start_apps(json: &str) -> BTreeMap<String, String> {
+    const NOT_APPS: [&str; 12] =
+        ["uninstall", "désinstall", "desinstall", "readme", "read me", "lisez-moi", "help", "aide", "documentation", "manual", "manuel", "website"];
+    let parsed: Value = serde_json::from_str(json.trim()).unwrap_or(Value::Null);
+    let entries = match parsed {
+        Value::Array(entries) => entries,
+        Value::Null => vec![],
+        one => vec![one],
+    };
+    let mut apps = BTreeMap::new();
+    for entry in entries {
+        let (Some(name), Some(id)) = (entry["Name"].as_str(), entry["AppID"].as_str()) else { continue };
+        let words = name.to_lowercase();
+        let junk = NOT_APPS.iter().any(|w| words.split(|c: char| !c.is_alphanumeric() && c != '-').any(|word| word.starts_with(w)) || words.contains(w));
+        if !junk && !name.trim().is_empty() {
+            apps.entry(name.trim().to_string()).or_insert_with(|| id.to_string());
+        }
+    }
+    apps
+}
+
+/// What `launch` starts for `app`: a written app (a program, or an app of the Start menu once
+/// pinned: `shell:AppsFolder\<AppID>`), else one found in the Start menu.
+fn launch_target(app: &str, apps: &BTreeMap<String, PathBuf>, discovered: &BTreeMap<String, String>) -> Option<String> {
+    apps.get(app)
+        .map(|path| path.to_string_lossy().into_owned())
+        .or_else(|| discovered.get(app).map(|id| format!("shell:AppsFolder\\{id}")))
+}
+
+/// An app of the Start menu opens through the shell, as from the Start menu; a program runs.
+fn launch(target: &str) -> Result<(), String> {
+    let mut command = if target.starts_with("shell:AppsFolder\\") {
+        let mut c = Command::new("explorer.exe");
+        c.arg(target);
+        c
+    } else {
+        Command::new(target)
+    };
+    command.spawn().map(drop).map_err(|e| format!("cannot launch {target}: {e}"))
 }
 
 async fn api(State(agent): State<Agent>, headers: HeaderMap, Json(request): Json<Request>) -> Response {
@@ -356,6 +436,7 @@ fn desktop(
     apps: BTreeMap<String, PathBuf>,
     opens: HashMap<String, String>,
     shortcuts: HashMap<(String, String), Combo>,
+    discovered: Discovered,
 ) {
     let mut desktop = match platform::Desktop::new() {
         Ok(desktop) => desktop,
@@ -380,7 +461,8 @@ fn desktop(
                     cpu: system.global_cpu_usage(),
                     memory: (system.used_memory() as f64 * 100.0 / system.total_memory().max(1) as f64) as f32,
                     active_window: desktop.active_window(),
-                    apps: apps.keys().cloned().collect(),
+                    // The automation editor offers them all.
+                    apps: apps.keys().chain(discovered.read().unwrap().keys()).cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect(),
                     shortcuts: {
                         let mut names: Vec<String> = opens.keys().cloned().collect();
                         names.sort();
@@ -389,13 +471,11 @@ fn desktop(
                 };
                 Ok(json!(state))
             }
-            Request::Launch { app } => match apps.get(&app) {
-                Some(path) => Command::new(path)
-                    .spawn()
-                    .map(|_| Value::Null)
-                    .map_err(|e| format!("cannot launch {}: {e}", path.display())),
+            Request::Launch { app } => match launch_target(&app, &apps, &discovered.read().unwrap()) {
+                Some(target) => launch(&target).map(|()| Value::Null),
                 None => Err(format!("app `{app}` is not in [agent.apps]")),
             },
+            Request::ListApps => Ok(json!(discovered.read().unwrap().keys().collect::<Vec<_>>())),
             Request::Open { shortcut } => match opens.get(&shortcut) {
                 Some(target) => open(target).map(|()| Value::Null),
                 None => Err(format!("no shortcut `{shortcut}` in [[agent.shortcut]]")),
@@ -458,6 +538,25 @@ mod tests {
 
         let typo = Shortcut { keys: BTreeMap::from([("skip".into(), "s".into())]), ..netflix };
         assert!(shortcut_keys(&[typo]).is_err(), "unknown actions fail at startup");
+    }
+
+    #[test]
+    fn start_menu_apps_are_parsed_without_the_junk() {
+        let json = r#"[{"Name":"Accès vocal","AppID":"{1AC1}\\voiceaccess.exe"},
+            {"Name":"Steam","AppID":"Valve.Steam"},{"Name":"Steam","AppID":"duplicate"},
+            {"Name":"Uninstall Steam","AppID":"x"},{"Name":"Désinstaller Foo","AppID":"x"},
+            {"Name":"Foo Help","AppID":"x"},{"Name":"Aide de Foo","AppID":"x"},{"Name":"Lisez-moi","AppID":"x"},
+            {"Name":"Assistance rapide","AppID":"QuickAssist!App"},{"Name":"Apex Legends","AppID":"steam://rungameid/1172470"}]"#;
+        let apps = parse_start_apps(json);
+        assert_eq!(apps.keys().collect::<Vec<_>>(), ["Accès vocal", "Apex Legends", "Assistance rapide", "Steam"]);
+        assert_eq!(apps["Steam"], "Valve.Steam", "the first of two");
+        assert_eq!(parse_start_apps(r#"{"Name":"Only","AppID":"one"}"#).len(), 1, "one app is an object");
+        assert!(parse_start_apps("").is_empty());
+
+        let written = BTreeMap::from([("notepad".to_string(), PathBuf::from("notepad.exe"))]);
+        assert_eq!(launch_target("notepad", &written, &apps).as_deref(), Some("notepad.exe"));
+        assert_eq!(launch_target("Steam", &written, &apps).as_deref(), Some("shell:AppsFolder\\Valve.Steam"));
+        assert_eq!(launch_target("rm", &written, &apps), None);
     }
 
     #[test]

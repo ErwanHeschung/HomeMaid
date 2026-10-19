@@ -14,6 +14,12 @@ pub fn recorded() -> Vec<Request> {
     RECORDED.lock().unwrap().clone()
 }
 
+/// No app discovery here yet.
+// ponytail: Linux could read the `.desktop` files of /usr/share/applications when a Linux PC needs it.
+pub fn start_apps() -> std::collections::BTreeMap<String, String> {
+    Default::default()
+}
+
 pub struct Desktop {
     volume: u8,
     muted: bool,

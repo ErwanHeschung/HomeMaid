@@ -56,9 +56,13 @@ pub struct AgentConfig {
     pub bind: SocketAddr,
     /// Shared with the clients: the phone and the `pc` plugin.
     pub token: String,
-    /// The only programs the remote can launch, by name. Bare names are looked up in PATH.
+    /// The only programs the remote can launch, by name. Bare names are looked up in PATH; an
+    /// app pinned from the phone is `shell:AppsFolder\<AppID>`.
     #[serde(default)]
     pub apps: BTreeMap<String, PathBuf>,
+    /// Opt-in: the apps of the Start menu can be launched too (and pinned from the phone).
+    #[serde(default)]
+    pub discover_apps: bool,
     /// Services the remote opens and drives (a streaming site, a player): nothing about them is
     /// built in, the presets live in the config.
     #[serde(default, rename = "shortcut")]
