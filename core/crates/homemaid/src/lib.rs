@@ -72,8 +72,12 @@ impl Core {
                     let _ = self.commands.send(c);
                 }
                 Output::Changed(change) => {
+                    // A sensor (read-only) has nothing to keep: no desired state, and its value is
+                    // read again at start. Saving it would rewrite the snapshot every few seconds.
+                    if !change.slot.meta.read_only {
+                        self.dirty.notify_one();
+                    }
                     let _ = self.changes.send(Event::Slot(change));
-                    self.dirty.notify_one();
                 }
                 Output::Entity(entity) => {
                     let _ = self.changes.send(Event::Entity(entity));
@@ -82,5 +86,39 @@ impl Core {
             }
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+    use model::{CapKind, CapMeta, CapSlot, CapValue};
+
+    #[tokio::test]
+    async fn sensor_readings_do_not_rewrite_the_snapshot() {
+        let id = Uuid::from_u128(3);
+        let sensor = CapSlot { meta: CapMeta { read_only: true, ..Default::default() }, ..Default::default() };
+        let entity = Entity {
+            id,
+            name: "plug".into(),
+            room: None,
+            tags: vec![],
+            available: true,
+            plugin: "mock".into(),
+            local_id: "plug".into(),
+            device: None,
+            model: None,
+            actions: vec![],
+            caps: BTreeMap::from([(CapKind::Power, sensor), (CapKind::OnOff, CapSlot::default())]),
+        };
+        let core = Core::new(Reconciler::new(BTreeMap::from([(id, entity)])), mpsc::unbounded_channel().0);
+        let dirty = async || tokio::time::timeout(Duration::from_millis(10), core.dirty.notified()).await.is_ok();
+
+        core.with(|r| r.observe(id, &CapKind::Power, CapValue::Power { watts: 4.2 }));
+        assert!(!dirty().await);
+        core.with(|r| r.observe(id, &CapKind::OnOff, CapValue::OnOff(true)));
+        assert!(dirty().await, "a switch pressed by hand becomes the desired state: saved");
     }
 }

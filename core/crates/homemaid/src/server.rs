@@ -207,7 +207,7 @@ async fn start_core(
     tokio::spawn(async move {
         loop {
             saver.dirty.notified().await;
-            // At most one write per 5 s: sensors change every few seconds. A clean stop saves anyway.
+            // At most one write per 5 s. A clean stop saves anyway.
             tokio::time::sleep(Duration::from_secs(5)).await;
             save(&saver, &path);
         }
@@ -227,7 +227,11 @@ async fn start_core(
 }
 
 fn save(core: &Core, path: &Path) {
-    let entities = core.with(|r| r.entities.clone());
+    let mut entities = core.with(|r| r.entities.clone());
+    // Sensors are read again at start; and a window title has no business on disk.
+    for slot in entities.values_mut().flat_map(|e| e.caps.values_mut()).filter(|s| s.meta.read_only) {
+        slot.observed = None;
+    }
     if let Err(e) = store::save(path, &entities) {
         tracing::error!("cannot save {}: {e}", path.display());
     }
