@@ -110,7 +110,7 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
   - **plugin-api 1.1** (additif, package WIT `@1.1.0`) : **actions ponctuelles**. Un plugin qui exporte le monde `plugin-with-actions` (`list-actions`, `invoke`) déclare des actions par entité (`play_pause`, `lock`…, paramètres en schéma JSON). Ce ne sont pas des états : le réconciliateur ne les renvoie jamais.
     - SDK : trait `Actions` et `export_with_actions!`. L'hôte détecte l'export `invoke` ; un plugin 1.0 se charge toujours (fixture `tests/fixtures/mock-plugin-api-1.0.wasm`).
     - API : `entity.invoke { id, action, params? }`.
-  - **Sandbox** : pas de fichiers, d'env ni de DNS ; sockets vers le réseau local uniquement ; 64 MiB de mémoire ; 60 s max par appel (temps réel, attente réseau comprise : ça attrape les plugins emballés, les timeouts réseau sont gérés par le plugin) ; redémarrage après crash avec un délai de 1 s à 60 s.
+  - **Sandbox** : pas de fichiers, d'env ni de DNS ; sockets vers le réseau local uniquement, **sans loopback** (le hub, l'agent et leurs pages `/pair` y écoutent) sauf permission `loopback` accordée dans la config (le plugin `pc` quand l'agent est sur le même PC) ; 64 MiB de mémoire, deux mémoires au plus ; KV de 1 MiB au plus, écrit une fois par appel ; 60 lignes de log par minute ; 60 s max par appel (temps réel, attente réseau comprise : ça attrape les plugins emballés, les timeouts réseau sont gérés par le plugin) ; redémarrage après crash avec un délai de 1 s à 60 s.
 - SDK Rust pour écrire un plugin, plus un **repo template** (`cargo generate`) donnant un plugin fonctionnel en quelques minutes.
 
 ### Registre de plugins
@@ -126,7 +126,7 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
   - fonctions : souris, clavier, média, volume/muet (Core Audio), capteurs (`sysinfo`), fenêtre active, lancement des seules applis de `[agent.apps]` ;
   - le code Windows est dans `agent/windows.rs`. Ailleurs, `agent/fallback.rs` journalise et enregistre les requêtes (tests) ;
   - accès au bureau par un thread unique ;
-  - routes : `/ws` (canal direct, token), `/api` (plugin `pc`, Bearer), `/remote` (page web de test, en attendant l'app) ;
+  - routes : `/ws` (canal direct, token), `/api` (plugin `pc`, Bearer), `/remote` (page web de test, en attendant l'app), `/pair` et `/hello` comme le core. Couper l'agent ferme aussi les sessions ouvertes ;
   - alimentation : verrouillage, veille et extinction (`{"type":"power","action":"lock|sleep|shutdown"}`), derrière un bouton rouge de la télécommande ; l'extinction demande confirmation ;
   - **services** (`[[agent.shortcut]]`, façon VorTraum) : nom, logo (`app/assets/logos`, Simple Icons, CC0), ce qui s'ouvre (une URL va au navigateur par défaut, sinon un programme), et les raccourcis clavier du lecteur (`restart`, `next_episode`, `skip_intro`… ; lecture, −5 s et +5 s ont Espace et les flèches par défaut). Aucune marque dans le code : les préréglages Netflix, YouTube, Spotify, Twitch et Crunchyroll sont dans `homemaid.example.toml` ;
   - pas encore fait : Wake-on-LAN.
@@ -149,8 +149,8 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
 - Implémenté (étape 5) dans `app/` (Android, `dev.homemaid.homemaid`) :
   - **choix** : pas de `flutter_rust_bridge` (le protocole est réécrit en Dart, `lib/clients.dart`), état via `ChangeNotifier` + `ListenableBuilder`, sans librairie de state management, et thème sombre sobre en attendant la passe de design « Tesla » ;
   - écrans : Maison (pièces, puis un widget par capacité, `lib/widgets/capability.dart`), PC (télécommande ; gestes dans `lib/trackpad.dart`, en Dart pur testé), Réglages ;
-  - **appairage** : sur le PC, `http://localhost:8123/pair` (maison) et `http://localhost:8124/pair` (PC) affichent un QR `homemaid://pair?kind&id&host&port&token`, servi en loopback seulement. L'app le scanne, et la connexion est gardée dans `flutter_secure_storage` ;
-  - **découverte** : le core et l'agent s'annoncent en mDNS (`_homemaid-core._tcp`, `_homemaid-agent._tcp`, TXT `id` = hostname, UDP 5353). Après deux échecs de connexion, l'app y cherche la nouvelle IP ;
+  - **appairage** : sur le PC, `http://localhost:8123/pair` (maison) et `http://localhost:8124/pair` (PC) affichent un QR `homemaid://pair?kind&id&host&port&token`, servi en loopback seulement (adresse du client et en-tête `Host`, contre le DNS rebinding). Les tokens de moins de 16 caractères et ceux de l'exemple sont refusés. L'app le scanne, et la connexion est gardée dans `flutter_secure_storage` ;
+  - **découverte** : le core et l'agent s'annoncent en mDNS (`_homemaid-core._tcp`, `_homemaid-agent._tcp`, TXT `id` = hostname, UDP 5353). Après deux échecs de connexion, l'app y cherche la nouvelle IP, et ne la garde que si l'hôte prouve connaître le token sans que l'app l'envoie (`/hello?nonce=` répond HMAC-SHA256(token, `homemaid-host:` + nonce)) ;
   - **API ajoutée** : notification `entity.changed`, et `entity.update { id, name?, room?, tags?, model? }`, réécrit dans `homemaid.toml` via `toml_edit` en gardant les commentaires. Puis `rooms.list` et `room.update { name, kind }`, avec la notification `room.changed` ;
   - `usesCleartextTraffic` : `ws://` sur le réseau local, sans TLS (l'accès distant passe par Tailscale).
 - **Identité visuelle « Viewport »** : la maison comme une maquette CAO vivante. Contrat de direction dans `.impeccable/surfaces/`, contexte produit dans `PRODUCT.md`, système détaillé dans `DESIGN.md`.

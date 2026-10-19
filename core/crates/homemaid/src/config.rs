@@ -114,12 +114,10 @@ pub struct PluginConfig {
 pub fn load(path: &Path) -> Result<Config, String> {
     let text = read_text(path)?;
     let mut config: Config = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    let empty_token = |section| Err(format!("{}: {section}.token must not be empty", path.display()));
-    if config.core.as_ref().is_some_and(|c| c.token.is_empty()) {
-        return empty_token("core");
-    }
-    if config.agent.as_ref().is_some_and(|a| a.token.is_empty()) {
-        return empty_token("agent");
+    for (section, token) in [("core", config.core.as_ref().map(|c| &c.token)), ("agent", config.agent.as_ref().map(|a| &a.token))] {
+        if let Some(Err(e)) = token.map(|t| check_token(t)) {
+            return Err(format!("{}: {section}.token {e}", path.display()));
+        }
     }
     let dir = path.parent().unwrap_or(Path::new("."));
     if let Some(core) = &mut config.core {
@@ -129,6 +127,17 @@ pub fn load(path: &Path) -> Result<Config, String> {
         plugin.path = dir.join(&plugin.path);
     }
     Ok(config)
+}
+
+/// A token guards the home, or the PC's keyboard, from the whole LAN.
+fn check_token(token: &str) -> Result<(), &'static str> {
+    if token.starts_with("change-me") {
+        Err("is the example's placeholder: replace it with a long random string")
+    } else if token.chars().count() < 16 {
+        Err("is too short: use at least 16 random characters")
+    } else {
+        Ok(())
+    }
 }
 
 fn yes() -> bool {
@@ -172,7 +181,8 @@ const FIRST_PC: &str = r#"
 [[plugin]]
 id = "pc"
 path = "plugins/pc_plugin.wasm"
-permissions = ["local-network"]
+# loopback: the agent runs on this PC.
+permissions = ["local-network", "loopback"]
 [plugin.settings]
 agent = "127.0.0.1:8124"
 "#;
@@ -306,7 +316,7 @@ mod tests {
         let id = Uuid::from_u128(9);
         fs::write(
             &path,
-            "\u{feff}# my config\n[core] # inline comment\nbind = \"0.0.0.0:8123\"\ndata_dir = \"data\"\ntoken = \"t\"\n",
+            "\u{feff}# my config\n[core] # inline comment\nbind = \"0.0.0.0:8123\"\ndata_dir = \"data\"\ntoken = \"0123456789abcdef\"\n",
         )
         .unwrap();
 
@@ -328,7 +338,7 @@ mod tests {
     #[test]
     fn switching_the_agent_keeps_the_file_and_defaults_to_on() {
         let path = std::env::temp_dir().join(format!("homemaid-agent-test-{}.toml", std::process::id()));
-        fs::write(&path, "# pc\n[agent] # here\nbind = \"0.0.0.0:8124\"\ntoken = \"t\"\n").unwrap();
+        fs::write(&path, "# pc\n[agent] # here\nbind = \"0.0.0.0:8124\"\ntoken = \"0123456789abcdef\"\n").unwrap();
         assert!(load(&path).unwrap().agent.unwrap().enabled);
         set_agent_enabled(&path, false).unwrap();
         let text = fs::read_to_string(&path).unwrap();
@@ -352,13 +362,23 @@ mod tests {
         assert_eq!(secrets["pc"]["token"], agent.token, "the pc plugin can talk to the agent");
 
         // A config without [agent]: switching PC control on adds it, with its secret.
-        fs::write(&path, "# mine\n[core]\nbind = \"0.0.0.0:8123\"\ndata_dir = \"data\"\ntoken = \"t\"\n").unwrap();
+        fs::write(&path, "# mine\n[core]\nbind = \"0.0.0.0:8123\"\ndata_dir = \"data\"\ntoken = \"0123456789abcdef\"\n").unwrap();
         assert_eq!(set_agent_enabled(&path, false), Ok(false));
         assert_eq!(set_agent_enabled(&path, true), Ok(true));
         let agent = load(&path).unwrap().agent.unwrap();
         assert!(agent.enabled && fs::read_to_string(&path).unwrap().starts_with("# mine\n"));
         assert_eq!(load_secrets(&dir.join("data/secrets.toml")).unwrap()["pc"]["token"], agent.token);
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn weak_tokens_are_refused() {
+        let path = std::env::temp_dir().join(format!("homemaid-token-test-{}.toml", std::process::id()));
+        for (token, ok) in [("change-me-too", false), ("short", false), ("", false), ("0123456789abcdef", true)] {
+            fs::write(&path, format!("[agent]\nbind = \"0.0.0.0:8124\"\ntoken = \"{token}\"\n")).unwrap();
+            assert_eq!(load(&path).is_ok(), ok, "{token:?}");
+        }
+        fs::remove_file(&path).unwrap();
     }
 
     #[test]

@@ -7,7 +7,8 @@
 //! `automation.run { id }`, `subscribe` (then `state.changed { id, cap, slot }`,
 //! `entity.changed { entity }`, `room.changed { name, kind }` and `automation.ran { id, run }`
 //! notifications).
-//! `/pair` serves the pairing QR code to the PC itself.
+//! `/pair` serves the pairing QR code to the PC itself; `/hello?nonce=` proves this host knows
+//! the token (see [`pairing::proof`]).
 
 use std::{collections::HashMap, net::SocketAddr, path::Path, sync::Arc, time::Instant};
 
@@ -48,19 +49,32 @@ pub fn router(core: Arc<Core>, config: &config::CoreConfig, config_path: &Path) 
         .route("/health", get(|| async { "ok" }))
         .route("/ws", get(ws))
         .route("/pair", get(pair))
+        .route("/hello", get(prove))
         .with_state(AppState { core, token: config.token.as_str().into(), config_path: config_path.into(), pair_page: pair_page.into() })
 }
 
 /// Also used by the agent.
-pub(crate) async fn pair_response(peer: SocketAddr, page: &str) -> Response {
-    if !pairing::is_local_peer(peer) {
+pub(crate) fn pair_response(peer: SocketAddr, headers: &HeaderMap, page: &str) -> Response {
+    if !pairing::is_local_request(peer, headers) {
         return (StatusCode::FORBIDDEN, "open this page on the PC itself: http://localhost:<port>/pair").into_response();
     }
     Html(page.to_string()).into_response()
 }
 
-async fn pair(State(app): State<AppState>, ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
-    pair_response(peer, &app.pair_page).await
+/// Also used by the agent.
+pub(crate) fn hello_response(query: &HashMap<String, String>, token: &str) -> Response {
+    match query.get("nonce").filter(|n| (16..=128).contains(&n.len())) {
+        Some(nonce) => pairing::proof(token, nonce).into_response(),
+        None => (StatusCode::BAD_REQUEST, "nonce: 16 to 128 characters").into_response(),
+    }
+}
+
+async fn pair(State(app): State<AppState>, ConnectInfo(peer): ConnectInfo<SocketAddr>, headers: HeaderMap) -> Response {
+    pair_response(peer, &headers, &app.pair_page)
+}
+
+async fn prove(State(app): State<AppState>, Query(query): Query<HashMap<String, String>>) -> Response {
+    hello_response(&query, &app.token)
 }
 
 async fn ws(

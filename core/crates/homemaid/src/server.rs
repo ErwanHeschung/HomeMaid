@@ -2,8 +2,9 @@
 //! ([`run`]); the desktop client drives them through a [`Handle`], and knows nothing else of them.
 
 use std::{
-    fs::File,
+    fs::{self, File},
     future::Future,
+    io,
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
@@ -20,16 +21,48 @@ use crate::{Core, agent, api, automations::Automations, config, pairing, plugins
 pub fn init_logging(file: Option<&Path>) -> Result<(), String> {
     match file {
         Some(path) => {
-            let file = File::options()
-                .create(true)
-                .append(true)
-                .open(path)
-                .map_err(|e| format!("{}: {e}", path.display()))?;
+            let file = LogFile::open(path.into()).map_err(|e| format!("{}: {e}", path.display()))?;
             tracing_subscriber::fmt().with_writer(Mutex::new(file)).with_ansi(false).init();
         }
         None => tracing_subscriber::fmt::init(),
     }
     Ok(())
+}
+
+/// Past this size the log is moved to `<name>.old` (replacing the previous one) and starts over.
+const LOG_SIZE: u64 = 10 << 20;
+
+/// An appended log file that never grows past twice [`LOG_SIZE`] on disk.
+struct LogFile {
+    path: PathBuf,
+    file: File,
+    size: u64,
+}
+
+impl LogFile {
+    fn open(path: PathBuf) -> io::Result<Self> {
+        let file = File::options().create(true).append(true).open(&path)?;
+        let size = file.metadata()?.len();
+        Ok(Self { path, file, size })
+    }
+}
+
+impl io::Write for LogFile {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.size > LOG_SIZE {
+            let mut old = self.path.clone().into_os_string();
+            old.push(".old");
+            fs::rename(&self.path, old)?;
+            *self = Self::open(self.path.clone())?;
+        }
+        let n = self.file.write(buf)?;
+        self.size += n as u64;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
 }
 
 /// The agent switch of `--agent`: always on.

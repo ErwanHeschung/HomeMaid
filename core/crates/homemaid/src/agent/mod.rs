@@ -33,10 +33,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 
 use crate::{
-    api::{authorized, pair_response},
+    api::{authorized, hello_response, pair_response},
     config::{AgentConfig, Shortcut},
     pairing::{self, hostname},
 };
@@ -132,6 +132,9 @@ struct Agent {
     token: Arc<str>,
     hello: Arc<str>,
     pair_page: Arc<str>,
+    /// Changes (sender dropped) when the agent stops: live remote sessions end with it, or a
+    /// phone would keep the PC after "PC control" is switched off.
+    stopped: watch::Receiver<()>,
 }
 
 impl Agent {
@@ -142,8 +145,9 @@ impl Agent {
     }
 }
 
-/// Starts the desktop thread and returns the agent's routes.
-pub fn router(config: &AgentConfig) -> Result<Router, String> {
+/// Starts the desktop thread and returns the agent's routes. Remote sessions end when `stopping`
+/// is dropped.
+pub fn router(config: &AgentConfig, stopping: &watch::Sender<()>) -> Result<Router, String> {
     let (jobs, rx) = mpsc::channel();
     let apps = config.apps.clone();
     let shortcuts = shortcut_keys(&config.shortcuts)?;
@@ -167,29 +171,39 @@ pub fn router(config: &AgentConfig) -> Result<Router, String> {
         token: config.token.as_str().into(),
         hello: hello.to_string().into(),
         pair_page: pairing::page("agent", config.bind, &config.token).into(),
+        stopped: stopping.subscribe(),
     };
     Ok(Router::new()
         .route("/remote", get(|| async { Html(include_str!("remote.html")) }))
         .route("/pair", get(pair))
+        .route("/hello", get(prove))
         .route("/ws", get(ws))
         .route("/api", post(api))
         .with_state(agent))
 }
 
 pub async fn run(config: AgentConfig, shutdown: impl Future<Output = ()> + Send + 'static) -> Result<(), String> {
-    let app = router(&config)?;
+    let (stopping, _) = watch::channel(());
+    let app = router(&config, &stopping)?;
     let listener = tokio::net::TcpListener::bind(config.bind).await.map_err(|e| format!("{}: {e}", config.bind))?;
     let port = config.bind.port();
     tracing::info!("agent listening on {}; to pair the app, open http://localhost:{port}/pair on this PC", config.bind);
     let _announcement = pairing::announce("agent", port);
     axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(shutdown)
+        .with_graceful_shutdown(async move {
+            shutdown.await;
+            drop(stopping);
+        })
         .await
         .map_err(|e| e.to_string())
 }
 
-async fn pair(State(agent): State<Agent>, ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
-    pair_response(peer, &agent.pair_page).await
+async fn pair(State(agent): State<Agent>, ConnectInfo(peer): ConnectInfo<SocketAddr>, headers: HeaderMap) -> Response {
+    pair_response(peer, &headers, &agent.pair_page)
+}
+
+async fn prove(State(agent): State<Agent>, Query(query): Query<HashMap<String, String>>) -> Response {
+    hello_response(&query, &agent.token)
 }
 
 async fn ws(
@@ -204,12 +218,17 @@ async fn ws(
     upgrade.on_upgrade(move |socket| remote(socket, agent))
 }
 
-/// Fire-and-forget: only state answers and errors are sent back.
-async fn remote(mut socket: WebSocket, agent: Agent) {
+/// Fire-and-forget: only state answers and errors are sent back. Ends when the agent stops.
+async fn remote(mut socket: WebSocket, mut agent: Agent) {
     if socket.send(Message::Text(agent.hello.as_ref().into())).await.is_err() {
         return;
     }
-    while let Some(Ok(message)) = socket.recv().await {
+    loop {
+        let message = tokio::select! {
+            message = socket.recv() => message,
+            _ = agent.stopped.changed() => break,
+        };
+        let Some(Ok(message)) = message else { break };
         let Message::Text(text) = message else { continue };
         let reply = match serde_json::from_str::<Request>(text.as_str()) {
             Ok(request) => match agent.run(request).await {

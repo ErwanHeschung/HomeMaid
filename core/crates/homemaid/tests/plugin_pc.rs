@@ -15,17 +15,21 @@ use homemaid::{
 
 async fn start_agent() -> (String, tokio::task::JoinHandle<()>) {
     let config = AgentConfig { enabled: true, bind: "127.0.0.1:0".parse().unwrap(), token: "secret".into(), apps: BTreeMap::new(), shortcuts: vec![] };
-    let app = agent::router(&config).unwrap();
+    let (stopping, _) = tokio::sync::watch::channel(());
+    let app = agent::router(&config, &stopping).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap().to_string();
-    (addr, tokio::spawn(async move { axum::serve(listener, app).await.unwrap() }))
+    (addr, tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+        drop(stopping);
+    }))
 }
 
 fn pc<'a>(agent: &'a str, token: &'a str) -> Plugin<'a> {
     Plugin {
         id: "pc",
         package: "pc-plugin",
-        permissions: &["local-network"],
+        permissions: &["local-network", "loopback"],
         settings: Box::leak(Box::new([("agent", agent)])),
         secrets: Box::leak(Box::new([("token", token)])),
     }
@@ -69,4 +73,12 @@ async fn wrong_token_is_refused() {
     let (core, _data) = start(pc(&addr, "wrong"));
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert!(core.with(|r| r.entities.is_empty()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_on_this_pc_needs_the_loopback_permission() {
+    let (addr, _server) = start_agent().await;
+    let (core, _data) = start(Plugin { permissions: &["local-network"], ..pc(&addr, "secret") });
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(core.with(|r| r.entities.is_empty()), "loopback is not part of local-network");
 }

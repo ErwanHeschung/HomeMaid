@@ -3,6 +3,7 @@
 bind = "0.0.0.0:8123"
 data_dir = "data"
 # Clients authenticate with `Authorization: Bearer <token>` or `/ws?token=<token>`.
+# Replace both tokens with long random strings (16 characters at least): the placeholders are refused.
 token = "change-me"
 # Plugin secrets go in <data_dir>/secrets.toml, one table per plugin id, never in this file.
 
@@ -54,7 +55,7 @@ keys = { restart = "0", next_episode = "shift+n", skip_intro = "s" }
 # [[plugin]]
 # id = "pc"
 # path = "target/wasm32-wasip2/debug/pc_plugin.wasm"
-# permissions = ["local-network"]
+# permissions = ["local-network", "loopback"]   # loopback: only when the agent runs on this PC
 #
 # [plugin.settings]
 # agent = "127.0.0.1:8124"
@@ -63,7 +64,9 @@ keys = { restart = "0", next_episode = "shift+n", skip_intro = "s" }
 [[plugin]]
 id = "mock"
 path = "target/wasm32-wasip2/debug/mock_plugin.wasm"
-# Granted permissions; a plugin asking for more is refused.
+# Granted permissions; a plugin asking for more is refused. `local-network` excludes this PC
+# (loopback), where the hub and the agent listen: grant `loopback` too only to a plugin whose
+# device runs on this PC.
 permissions = ["local-network"]
 
 [plugin.settings]

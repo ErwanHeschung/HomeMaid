@@ -134,7 +134,8 @@ fn tplink<'a>(hosts: &'a str, password: &'a str) -> Plugin<'a> {
     Plugin {
         id: "tplink",
         package: "tplink-plugin",
-        permissions: &["local-network"],
+        // The fake P300 listens on loopback.
+        permissions: &["local-network", "loopback"],
         settings: Box::leak(Box::new([("hosts", hosts)])),
         secrets: Box::leak(Box::new([("username", USER), ("password", password)])),
     }

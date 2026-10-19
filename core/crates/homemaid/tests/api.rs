@@ -11,7 +11,7 @@ use homemaid::{Core, api, config, model::entity_uuid};
 use serde_json::{Value, json};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-const CONFIG: &str = "# kept\n[core]\nbind = \"127.0.0.1:0\"\ndata_dir = \"data\"\ntoken = \"t\"\n";
+const CONFIG: &str = "# kept\n[core]\nbind = \"127.0.0.1:0\"\ndata_dir = \"data\"\ntoken = \"0123456789abcdef\"\n";
 
 async fn serve(core: Arc<Core>, config_path: &std::path::Path) -> SocketAddr {
     let config = config::load(config_path).unwrap().core.unwrap();
@@ -33,7 +33,7 @@ async fn update_is_saved_and_notified() {
     std::fs::write(&config_path, CONFIG).unwrap();
     let addr = serve(core.clone(), &config_path).await;
 
-    let (mut ws, _) = connect_async(format!("ws://{addr}/ws?token=t")).await.unwrap();
+    let (mut ws, _) = connect_async(format!("ws://{addr}/ws?token=0123456789abcdef")).await.unwrap();
     let mut call = async |id: u32, method: &str, params: Value| {
         let request = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
         ws.send(Message::Text(request.to_string().into())).await.unwrap();
@@ -98,10 +98,20 @@ async fn pair_page_is_served_to_the_pc_itself() {
     let config_path = data.0.join("homemaid.toml");
     std::fs::write(&config_path, CONFIG).unwrap();
     let addr = serve(core, &config_path).await;
-    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    stream.write_all(b"GET /pair HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").await.unwrap();
-    let mut page = String::new();
-    stream.read_to_string(&mut page).await.unwrap();
+    let get = async |path: &str, host: &str| {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream.write_all(format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+        let mut page = String::new();
+        stream.read_to_string(&mut page).await.unwrap();
+        page
+    };
+    let page = get("/pair", "localhost:8123").await;
     assert!(page.starts_with("HTTP/1.1 200") && page.contains("<svg"), "{page}");
+    let rebound = get("/pair", "evil.example:8123").await;
+    assert!(rebound.starts_with("HTTP/1.1 403"), "a page rebound to 127.0.0.1 gets nothing: {rebound}");
+
+    let nonce = "00112233445566778899aabbccddeeff";
+    let hello = get(&format!("/hello?nonce={nonce}"), "x").await;
+    assert!(hello.ends_with(&homemaid::pairing::proof("0123456789abcdef", nonce)), "{hello}");
 }

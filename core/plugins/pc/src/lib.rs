@@ -1,6 +1,7 @@
 //! A PC running the HomeMaid agent, as an entity: volume, mute and sensors (CPU, RAM, active window).
 //!
-//! Settings: `agent` = `ip:port` of the agent (`127.0.0.1:8124` on the same PC). Secret: `token`
+//! Settings: `agent` = `ip:port` of the agent (`127.0.0.1:8124` on the same PC, which needs the
+//! `loopback` permission besides `local-network`). Secret: `token`
 //! (the agent's `agent.token`). One-shot actions (plugin-api 1.1): media keys, lock, sleep,
 //! shutdown, opening a configured shortcut or app; they are not states, so they are actions,
 //! for automations and the app. The remote itself talks to the agent directly, for latency.
@@ -31,7 +32,13 @@ fn with_state<R>(f: impl FnOnce(&mut State) -> Result<R, String>) -> Result<R, S
 fn call(state: &State, request: Value) -> Result<Value, String> {
     let auth = format!("Bearer {}", state.token);
     let headers = [("Authorization", auth.as_str()), ("Content-Type", "application/json")];
-    let response = http::post(state.agent, "/api", request.to_string().as_bytes(), &headers)?;
+    let response = http::post(state.agent, "/api", request.to_string().as_bytes(), &headers).map_err(|e| {
+        if state.agent.ip().is_loopback() && e.contains("Permission denied") {
+            format!("{e}: the agent is on this PC, grant `loopback` to the pc plugin (its permissions in homemaid.toml)")
+        } else {
+            e
+        }
+    })?;
     match response.status {
         200 => serde_json::from_slice(&response.body).map_err(|e| format!("agent: invalid JSON: {e}")),
         401 => Err("agent refused the token: `token` in [pc] of secrets.toml must be the agent's agent.token".into()),

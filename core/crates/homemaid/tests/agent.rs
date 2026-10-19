@@ -10,9 +10,11 @@ use homemaid::{
     config::AgentConfig,
 };
 use serde_json::{Value, json};
+use tokio::sync::watch;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-async fn start_agent() -> SocketAddr {
+/// Keep the sender: dropping it stops the remote sessions.
+async fn start_agent() -> (SocketAddr, watch::Sender<()>) {
     let config = AgentConfig {
         enabled: true,
         bind: "127.0.0.1:0".parse().unwrap(),
@@ -20,16 +22,17 @@ async fn start_agent() -> SocketAddr {
         apps: BTreeMap::from([("true".to_string(), PathBuf::from("true"))]),
         shortcuts: vec![],
     };
-    let app = agent::router(&config).unwrap();
+    let (stopping, _) = watch::channel(());
+    let app = agent::router(&config, &stopping).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    addr
+    (addr, stopping)
 }
 
 #[tokio::test]
 async fn remote_channel_drives_the_desktop() {
-    let addr = start_agent().await;
+    let (addr, _stopping) = start_agent().await;
     assert!(connect_async(format!("ws://{addr}/ws")).await.is_err(), "no token, no remote");
 
     let (mut ws, _) = connect_async(format!("ws://{addr}/ws?token=secret")).await.unwrap();
@@ -77,11 +80,21 @@ async fn remote_channel_drives_the_desktop() {
 
 #[tokio::test]
 async fn test_page_is_served() {
-    let addr = start_agent().await;
+    let (addr, _stopping) = start_agent().await;
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     stream.write_all(b"GET /remote HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").await.unwrap();
     let mut page = String::new();
     stream.read_to_string(&mut page).await.unwrap();
     assert!(page.starts_with("HTTP/1.1 200") && page.contains("Trackpad"));
+}
+
+#[tokio::test]
+async fn switching_the_agent_off_ends_live_sessions() {
+    let (addr, stopping) = start_agent().await;
+    let (mut ws, _) = connect_async(format!("ws://{addr}/ws?token=secret")).await.unwrap();
+    assert!(matches!(ws.next().await, Some(Ok(Message::Text(_)))), "hello");
+    drop(stopping);
+    let end = tokio::time::timeout(std::time::Duration::from_secs(5), ws.next()).await.expect("the session must end");
+    assert!(!matches!(end, Some(Ok(Message::Text(_)))), "{end:?}");
 }

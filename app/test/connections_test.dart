@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:homemaid/connections.dart';
+import 'package:homemaid/discovery.dart';
 
 void main() {
   test('reads the QR code of /pair', () {
@@ -17,5 +18,10 @@ void main() {
     ]) {
       expect(Connection.fromPairUri(raw), isNull, reason: raw);
     }
+  });
+
+  test('host proof matches the core (pairing::proof)', () {
+    expect(proof('0123456789abcdef', '00112233445566778899aabbccddeeff'),
+        '4d455cb7b8ad9dbd6c9d2d70fee442eeef37a6fc0e6a94581aa403599cc8b1c8');
   });
 }

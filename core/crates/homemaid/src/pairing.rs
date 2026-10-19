@@ -2,11 +2,14 @@
 //! - `/pair` shows a QR code with `homemaid://pair?kind&id&host&port&token`, on loopback only
 //!   since it holds the token: open it on the PC itself;
 //! - an mDNS announcement (`_homemaid-<kind>._tcp`, TXT `id`) lets the app find the host again
-//!   when its IP changes.
+//!   when its IP changes. Anyone can announce that name, so before sending the token to a new
+//!   address the app checks it knows the token: `/hello?nonce=` answers with [`proof`].
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 
+use axum::http::{HeaderMap, header};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
+use sha2::{Digest, Sha256};
 
 pub fn hostname() -> String {
     sysinfo::System::host_name().unwrap_or_else(|| "homemaid".into())
@@ -36,11 +39,37 @@ fn encode(s: &str) -> String {
         .collect()
 }
 
-pub fn is_local_peer(peer: SocketAddr) -> bool {
-    peer.ip().to_canonical().is_loopback()
+/// A request from the PC itself, to the PC itself. The `Host` check stops DNS rebinding: a web
+/// page whose domain resolves to 127.0.0.1 is local by its address, not by its name.
+pub fn is_local_request(peer: SocketAddr, headers: &HeaderMap) -> bool {
+    let host = headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("");
+    let name = match host.rsplit_once(':') {
+        Some((name, port)) if !port.contains(']') => name,
+        _ => host,
+    };
+    peer.ip().to_canonical().is_loopback() && matches!(name.to_ascii_lowercase().as_str(), "localhost" | "127.0.0.1" | "[::1]")
 }
 
-/// The `/pair` page. It holds the token: serve it only to [`is_local_peer`].
+/// Proves the host knows `token` without revealing it: HMAC-SHA256(token, "homemaid-host:" +
+/// nonce), in hex.
+pub fn proof(token: &str, nonce: &str) -> String {
+    hmac_sha256(token.as_bytes(), format!("homemaid-host:{nonce}").as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// RFC 2104.
+fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+    let mut block = [0u8; 64];
+    if key.len() > block.len() {
+        block[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        block[..key.len()].copy_from_slice(key);
+    }
+    let pad = |byte: u8| block.map(|k| k ^ byte);
+    let inner = Sha256::new().chain_update(pad(0x36)).chain_update(message).finalize();
+    Sha256::new().chain_update(pad(0x5c)).chain_update(inner).finalize().into()
+}
+
+/// The `/pair` page. It holds the token: serve it only to [`is_local_request`].
 pub fn page(kind: &str, bind: SocketAddr, token: &str) -> String {
     let qr = qr_svg(kind, bind, token);
     let what = if kind == "core" { "la maison" } else { "ce PC" };
@@ -122,10 +151,28 @@ mod tests {
 
     #[test]
     fn pair_page_is_for_the_pc_itself() {
-        assert!(is_local_peer("127.0.0.1:5000".parse().unwrap()));
-        assert!(is_local_peer("[::1]:5000".parse().unwrap()));
-        assert!(is_local_peer("[::ffff:127.0.0.1]:5000".parse().unwrap()));
-        assert!(!is_local_peer("192.168.1.20:5000".parse().unwrap()));
+        let host = |h: &str| HeaderMap::from_iter([(header::HOST, h.parse().unwrap())]);
+        let local = |peer: &str, h: &str| is_local_request(peer.parse().unwrap(), &host(h));
+        assert!(local("127.0.0.1:5000", "localhost:8123"));
+        assert!(local("[::1]:5000", "[::1]:8123"));
+        assert!(local("[::ffff:127.0.0.1]:5000", "127.0.0.1"));
+        assert!(!local("192.168.1.20:5000", "localhost:8123"), "from the LAN");
+        assert!(!local("127.0.0.1:5000", "evil.example:8123"), "DNS rebinding");
+        assert!(!is_local_request("127.0.0.1:5000".parse().unwrap(), &HeaderMap::new()));
+    }
+
+    #[test]
+    fn proof_is_rfc_hmac_sha256() {
+        // RFC 4231, test case 2.
+        assert_eq!(
+            hmac_sha256(b"Jefe", b"what do ya want for nothing?").iter().map(|b| format!("{b:02x}")).collect::<String>(),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+        // The same value in app/test/connections_test.dart: the app checks it.
+        assert_eq!(
+            proof("0123456789abcdef", "00112233445566778899aabbccddeeff"),
+            "4d455cb7b8ad9dbd6c9d2d70fee442eeef37a6fc0e6a94581aa403599cc8b1c8"
+        );
     }
 
     #[test]

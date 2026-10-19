@@ -78,7 +78,15 @@ enum Job {
 
 const API_MAJOR: &str = "1.";
 const LOCAL_NETWORK: &str = "local-network";
+/// Granted in the config only (`permissions`), for a plugin whose device runs on this PC (`pc`):
+/// the core, the agent and their pairing pages listen on loopback.
+const LOOPBACK: &str = "loopback";
 const MEMORY_LIMIT: usize = 64 << 20;
+/// Total size of a plugin's KV store (keys and values).
+const KV_LIMIT: usize = 1 << 20;
+/// Log lines a plugin may write per minute; more are counted and dropped.
+const LOG_LIMIT: u32 = 60;
+const LOG_LINE: usize = 1000;
 const EPOCH_TICK: Duration = Duration::from_millis(100);
 /// Budget of one call, in epoch ticks (about 60 s). Epochs advance in wall-clock time, including
 /// time blocked in socket calls, so it must leave room for slow devices; it only catches runaway plugins.
@@ -239,6 +247,7 @@ impl Runner {
         call!(&plugin, call_init(&mut store, &settings))?.map_err(|e| wasmtime::Error::msg(format!("init: {e}")))?;
         store.set_epoch_deadline(CALL_BUDGET);
         let discovered = call!(&plugin, call_discover(&mut store))?.map_err(|e| wasmtime::Error::msg(format!("discover: {e}")))?;
+        store.data_mut().save_kv();
         let mut actions: HashMap<String, Vec<ActionDecl>> = HashMap::new();
         if let Instance::Actions(p) = &plugin {
             store.set_epoch_deadline(CALL_BUDGET);
@@ -286,6 +295,7 @@ impl Runner {
                     if let Err(e) = &result {
                         tracing::warn!(plugin = %self.cfg.id, %local_id, %name, "action failed: {e}");
                     }
+                    store.data_mut().save_kv();
                     let _ = reply.send(result);
                     // An action may change states (pause, lock): read them back.
                     next_refresh = Instant::now();
@@ -297,10 +307,13 @@ impl Runner {
                 }
                 Err(RecvTimeoutError::Disconnected) => return Ok(Exit::Stopped),
             }
+            // Once per call, not per kv-set: a plugin writing in a loop rewrites the file once.
+            store.data_mut().save_kv();
         }
     }
 
     fn store(&self, network: Arc<AtomicBool>) -> wasmtime::Result<Store<HostState>> {
+        let loopback = self.cfg.permissions.iter().any(|p| p == LOOPBACK);
         // No preopened dirs, env or args: the plugin only sees what the host interface gives it.
         let wasi = WasiCtx::builder()
             .inherit_stderr()
@@ -308,7 +321,8 @@ impl Runner {
             .allow_udp(true)
             .allow_ip_name_lookup(false)
             .socket_addr_check(move |addr, usage| {
-                let ok = network.load(Ordering::Relaxed) && is_local(addr.ip(), usage);
+                let ip = addr.ip();
+                let ok = network.load(Ordering::Relaxed) && is_local(ip, usage) && (loopback || !ip.to_canonical().is_loopback());
                 Box::pin(async move { ok })
             })
             .build();
@@ -322,9 +336,18 @@ impl Runner {
             core: self.core.clone(),
             wasi,
             table: ResourceTable::new(),
-            limits: StoreLimitsBuilder::new().memory_size(MEMORY_LIMIT).build(),
+            // The memory limit is per linear memory: cap their number too (and instances, tables).
+            limits: StoreLimitsBuilder::new()
+                .memory_size(MEMORY_LIMIT)
+                .memories(2)
+                .instances(64)
+                .tables(64)
+                .table_elements(100_000)
+                .build(),
             kv,
+            kv_dirty: false,
             kv_path: self.kv_path.clone(),
+            logs: (Instant::now(), 0),
             secrets: self.secrets.clone(),
         };
         let mut store = Store::new(&self.engine, state);
@@ -429,8 +452,48 @@ struct HostState {
     table: ResourceTable,
     limits: StoreLimits,
     kv: BTreeMap<String, String>,
+    kv_dirty: bool,
     kv_path: PathBuf,
     secrets: BTreeMap<String, String>,
+    /// Start of the current minute, and lines logged in it.
+    logs: (Instant, u32),
+}
+
+impl HostState {
+    fn save_kv(&mut self) {
+        if !std::mem::take(&mut self.kv_dirty) {
+            return;
+        }
+        let saved = serde_json::to_vec(&self.kv).map_err(io::Error::from).and_then(|b| store::write_atomic(&self.kv_path, &b));
+        if let Err(e) = saved {
+            tracing::error!(plugin = %self.plugin, "cannot save {}: {e}", self.kv_path.display());
+        }
+    }
+
+    /// Lets through [`LOG_LIMIT`] lines a minute, and says how many were dropped.
+    fn may_log(&mut self) -> bool {
+        let (start, count) = &mut self.logs;
+        if start.elapsed() >= Duration::from_secs(60) {
+            if *count > LOG_LIMIT {
+                tracing::warn!(plugin = %self.plugin, "{} log lines dropped (more than {LOG_LIMIT} a minute)", *count - LOG_LIMIT);
+            }
+            *start = Instant::now();
+            *count = 0;
+        }
+        *count += 1;
+        *count <= LOG_LIMIT
+    }
+}
+
+/// What a plugin stored before trapping is kept too.
+impl Drop for HostState {
+    fn drop(&mut self) {
+        self.save_kv();
+    }
+}
+
+fn kv_size(kv: &BTreeMap<String, String>) -> usize {
+    kv.iter().map(|(k, v)| k.len() + v.len()).sum()
 }
 
 impl WasiView for HostState {
@@ -444,7 +507,14 @@ impl types::Host for HostState {}
 impl wit_actions::homemaid::plugin::action_types::Host for HostState {}
 
 impl host::Host for HostState {
-    fn log(&mut self, level: types::LogLevel, message: String) {
+    fn log(&mut self, level: types::LogLevel, mut message: String) {
+        if !self.may_log() {
+            return;
+        }
+        if message.len() > LOG_LINE {
+            message.truncate(message.floor_char_boundary(LOG_LINE));
+            message.push('…');
+        }
         let plugin = &self.plugin;
         match level {
             types::LogLevel::Trace => tracing::trace!(%plugin, "{message}"),
@@ -478,11 +548,13 @@ impl host::Host for HostState {
     }
 
     fn kv_set(&mut self, key: String, value: String) {
-        self.kv.insert(key, value);
-        let saved = serde_json::to_vec(&self.kv).map_err(io::Error::from).and_then(|b| store::write_atomic(&self.kv_path, &b));
-        if let Err(e) = saved {
-            tracing::error!(plugin = %self.plugin, "cannot save {}: {e}", self.kv_path.display());
+        let old = self.kv.get(&key).map_or(0, |v| key.len() + v.len());
+        if kv_size(&self.kv) - old + key.len() + value.len() > KV_LIMIT {
+            tracing::error!(plugin = %self.plugin, "kv-set `{key}` refused: the store would exceed {KV_LIMIT} bytes");
+            return;
         }
+        self.kv.insert(key, value);
+        self.kv_dirty = true;
     }
 
     fn secret(&mut self, name: String) -> Option<String> {
@@ -504,6 +576,7 @@ mod tests {
             assert!(!is_local(ip(public), SocketAddrUse::UdpSend), "{public} should be refused");
         }
         assert!(is_local(ip("0.0.0.0"), SocketAddrUse::UdpBind));
+        assert!(ip("::ffff:127.0.0.1").to_canonical().is_loopback(), "mapped loopback needs `loopback` too");
         assert!(!is_local(ip("0.0.0.0"), SocketAddrUse::TcpConnect));
     }
 }
