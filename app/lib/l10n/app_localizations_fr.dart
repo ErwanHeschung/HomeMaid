@@ -631,4 +631,126 @@ class AppLocalizationsFr extends AppLocalizations {
   String nextAt(String when) {
     return 'Prochaine : $when';
   }
+
+  @override
+  String get newAutomation => 'Nouvelle automatisation';
+
+  @override
+  String get editAutomation => 'Modifier l\'automatisation';
+
+  @override
+  String get automationEnabled => 'Active';
+
+  @override
+  String get addTrigger => 'Ajouter un déclencheur';
+
+  @override
+  String get addCondition => 'Ajouter une condition';
+
+  @override
+  String get addAction => 'Ajouter une action';
+
+  @override
+  String get kindMoment => 'Moment';
+
+  @override
+  String get kindDevice => 'Appareil';
+
+  @override
+  String get timeClock => 'Heure';
+
+  @override
+  String get timeSunrise => 'Lever';
+
+  @override
+  String get timeSunset => 'Coucher';
+
+  @override
+  String get kindTimeRange => 'Plage horaire';
+
+  @override
+  String get kindDays => 'Jours';
+
+  @override
+  String get kindState => 'État';
+
+  @override
+  String get rangeFrom => 'De';
+
+  @override
+  String get rangeTo => 'À';
+
+  @override
+  String get kindSet => 'Régler';
+
+  @override
+  String get kindInvoke => 'Lancer';
+
+  @override
+  String get where => 'Où';
+
+  @override
+  String get wholeHome => 'Toute la maison';
+
+  @override
+  String get what => 'Quoi';
+
+  @override
+  String get testBecomes => 'devient';
+
+  @override
+  String get testAbove => 'dépasse';
+
+  @override
+  String get testBelow => 'passe sous';
+
+  @override
+  String get testChanges => 'change';
+
+  @override
+  String get testIs => 'est';
+
+  @override
+  String get testOver => 'au-dessus';
+
+  @override
+  String get testUnder => 'en dessous';
+
+  @override
+  String get allMustPass => 'Tous les appareils';
+
+  @override
+  String get valueLabel => 'Valeur';
+
+  @override
+  String appliesTo(String devices) {
+    return 'Concerne : $devices';
+  }
+
+  @override
+  String get matchesNothing => 'Aucun appareil ne correspond pour l\'instant';
+
+  @override
+  String get advancedSelector => 'Sélecteur (avancé)';
+
+  @override
+  String get deleteAutomation => 'Supprimer';
+
+  @override
+  String deleteAutomationConfirm(String name) {
+    return 'Supprimer « $name » ?';
+  }
+
+  @override
+  String get deleteAutomationBody =>
+      'Elle est retirée de homemaid.toml et ne se déclenchera plus.';
+
+  @override
+  String get removeItem => 'Retirer';
+
+  @override
+  String get actionToRun => 'Action';
+
+  @override
+  String get noActionHere => 'Aucun appareil ici n\'a d\'action';
 }

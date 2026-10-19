@@ -104,7 +104,14 @@ abstract final class Hm {
       labelLarge: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, letterSpacing: 0.2),
       labelMedium: const TextStyle(fontFamily: condensed, fontSize: 13, fontWeight: FontWeight.w500, letterSpacing: 0.2),
       labelSmall: const TextStyle(fontFamily: condensed, fontSize: 12, fontWeight: FontWeight.w500, letterSpacing: 0.3),
-    ).apply(bodyColor: text, displayColor: text);
+    )
+        // The styles above are new TextStyles: without this they lose Barlow for the platform
+        // font. The condensed labels keep their own family.
+        .apply(fontFamily: family, bodyColor: text, displayColor: text)
+        .copyWith(
+          labelMedium: const TextStyle(fontFamily: condensed, fontSize: 13, fontWeight: FontWeight.w500, letterSpacing: 0.2, color: text),
+          labelSmall: const TextStyle(fontFamily: condensed, fontSize: 12, fontWeight: FontWeight.w500, letterSpacing: 0.3, color: text),
+        );
 
     final shape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(radius));
     final hairline = RoundedRectangleBorder(
@@ -185,6 +192,34 @@ abstract final class Hm {
         ),
         hintStyle: type.bodyMedium!.copyWith(color: textDim),
         labelStyle: type.bodyMedium!.copyWith(color: textDim),
+      ),
+      // Choices are interaction: lavender when picked, never the secondary (pink means pending).
+      segmentedButtonTheme: SegmentedButtonThemeData(
+        style: ButtonStyle(
+          shape: WidgetStatePropertyAll(shape),
+          side: const WidgetStatePropertyAll(BorderSide(color: lineStrong)),
+          minimumSize: const WidgetStatePropertyAll(Size(48, 44)),
+          padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 6)),
+          textStyle: WidgetStatePropertyAll(type.titleSmall),
+          backgroundColor: WidgetStateProperty.resolveWith(
+            (s) => s.contains(WidgetState.selected) ? select.withValues(alpha: 0.16) : Colors.transparent,
+          ),
+          foregroundColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? select : textDim),
+        ),
+      ),
+      chipTheme: ChipThemeData(
+        backgroundColor: Colors.transparent,
+        selectedColor: select.withValues(alpha: 0.16),
+        showCheckmark: false,
+        shape: shape,
+        side: WidgetStateBorderSide.resolveWith((s) => BorderSide(color: s.contains(WidgetState.selected) ? select : lineStrong)),
+        labelStyle: type.titleSmall!.copyWith(color: text),
+      ),
+      appBarTheme: AppBarTheme(
+        backgroundColor: ground,
+        surfaceTintColor: Colors.transparent,
+        scrolledUnderElevation: 0,
+        titleTextStyle: type.titleLarge,
       ),
       bottomSheetTheme: const BottomSheetThemeData(
         backgroundColor: panel,

@@ -283,7 +283,10 @@ All state reads go through `app/lib/widgets/state.dart`: `onLevel`, `isPending`,
 `Gallery` in `home.dart`: 76px Ground tiles of the actual renders (`base_22` for models, `view_3` for rooms), hairline border, 2px lavender when chosen, Label Small caption; an "Automatic" tile first names what it resolves to.
 
 ### Buttons and inputs
-Material 3 themed in `theme.dart`: filled (Lavender, 48px min height), outlined (Hairline Strong side, Ink text), text (lavender), destructive filled (Fault Red, only in the shutdown confirmation). Inputs are filled Panel with a Hairline border that becomes 1.5px Selection Lavender on focus.
+Material 3 themed in `theme.dart`: filled (Lavender, 48px min height), outlined (Hairline Strong side, Ink text), text (lavender), destructive filled (Fault Red, only in the shutdown and delete-automation confirmations). Inputs are filled Panel with a Hairline border that becomes 1.5px Selection Lavender on focus. Choices (segmented buttons, day chips) are hairline boxes with the 6px radius, Ink Dim when off and Selection Lavender text on a 16% lavender fill when picked: never the theme's secondary, which is the pending pink.
+
+### Automation editor
+`AutomationEditor` in `automation_editor.dart`, a full-screen page: name field and an "Active" switch, then "Quand", "Seulement si", "Alors" (Title Small dim headers) each a column of cards (Hairline border, 6px radius, no fill) headed by a segmented kind and a close key, with a lavender text "+ Ajouter…" under each section. Targets read "Où" (a room or "Toute la maison") and "Quoi" (a capability), then the devices matched now in Ink Dim, or red when none. A bottom bar with a top hairline holds "Essayer" (outlined) and "Enregistrer" (filled); the core's refusal shows above them in red. Time points are a segmented Heure / Lever / Coucher with a time button or an offset slider worded live ("30 min avant le coucher du soleil").
 
 ### Round keys (remote)
 `_Round` in `remote.dart`: hairline ring in Hairline Strong, icon at 42% of the key in Ink; primary (play) and selected (keyboard open, mute engaged, active service) take Selection Lavender with a 12% fill; the power key is Fault Red; disabled keys fade to Hairline ring and dim ink. Launchers are 56px keys with an ink logo (24px) or a condensed monogram, captioned in Label Small.

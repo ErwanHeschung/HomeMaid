@@ -155,6 +155,7 @@ class DemoCore extends CoreClient {
       device: e.device,
       model: model == null ? e.model : (model.isEmpty ? null : model),
       caps: e.caps,
+      actions: e.actions,
     );
     notifyListeners();
   }
@@ -168,9 +169,9 @@ Map<String, dynamic> _slot(Object? observed, {Object? desired, String state = 'c
     };
 
 Entity _entity(String id, String name, String? room, Map<String, Map<String, dynamic>> caps,
-        {String? device, bool available = true, String? model, List<String> actions = const []}) =>
+        {String? device, bool available = true, String? model, String plugin = 'demo', List<String> actions = const []}) =>
     Entity.fromJson({
-      'id': id, 'name': name, 'room': room, 'available': available, 'plugin': 'demo', 'device': device, 'model': model,
+      'id': id, 'name': name, 'room': room, 'available': available, 'plugin': plugin, 'device': device, 'model': model,
       'caps': caps, 'actions': [for (final a in actions) {'name': a}],
     });
 
@@ -217,7 +218,7 @@ List<Entity> _home(bool fr) {
       'custom:cpu': _slot({'custom': 23.4}, meta: const {'read_only': true, 'unit': '%', 'schema': {'type': 'number'}}),
       'custom:memory': _slot({'custom': 61.0}, meta: const {'read_only': true, 'unit': '%', 'schema': {'type': 'number'}}),
       'custom:active_window': _slot({'custom': 'Visual Studio Code'}, meta: const {'read_only': true, 'schema': {'type': ['string', 'null']}}),
-    }, actions: const ['play_pause', 'previous', 'next', 'lock', 'sleep', 'shutdown']),
+    }, plugin: 'pc', actions: const ['play_pause', 'previous', 'next', 'lock', 'sleep', 'shutdown']),
     _entity('demo-ac', t('Climatiseur', 'Air conditioner'), office, _switch(false), model: 'air_conditioner'),
     _entity('demo-thermostat', t('Thermostat', 'Thermostat'), office, {
       'custom:temperature': _slot({'custom': 20.5}, meta: const {'read_only': true, 'unit': '°C', 'schema': {'type': 'number'}}),

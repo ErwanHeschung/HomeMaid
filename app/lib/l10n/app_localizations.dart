@@ -1165,6 +1165,240 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Next: {when}'**
   String nextAt(String when);
+
+  /// No description provided for @newAutomation.
+  ///
+  /// In en, this message translates to:
+  /// **'New automation'**
+  String get newAutomation;
+
+  /// No description provided for @editAutomation.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit automation'**
+  String get editAutomation;
+
+  /// No description provided for @automationEnabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Enabled'**
+  String get automationEnabled;
+
+  /// No description provided for @addTrigger.
+  ///
+  /// In en, this message translates to:
+  /// **'Add a trigger'**
+  String get addTrigger;
+
+  /// No description provided for @addCondition.
+  ///
+  /// In en, this message translates to:
+  /// **'Add a condition'**
+  String get addCondition;
+
+  /// No description provided for @addAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Add an action'**
+  String get addAction;
+
+  /// No description provided for @kindMoment.
+  ///
+  /// In en, this message translates to:
+  /// **'Time'**
+  String get kindMoment;
+
+  /// No description provided for @kindDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Device'**
+  String get kindDevice;
+
+  /// No description provided for @timeClock.
+  ///
+  /// In en, this message translates to:
+  /// **'Clock'**
+  String get timeClock;
+
+  /// No description provided for @timeSunrise.
+  ///
+  /// In en, this message translates to:
+  /// **'Sunrise'**
+  String get timeSunrise;
+
+  /// No description provided for @timeSunset.
+  ///
+  /// In en, this message translates to:
+  /// **'Sunset'**
+  String get timeSunset;
+
+  /// No description provided for @kindTimeRange.
+  ///
+  /// In en, this message translates to:
+  /// **'Time range'**
+  String get kindTimeRange;
+
+  /// No description provided for @kindDays.
+  ///
+  /// In en, this message translates to:
+  /// **'Days'**
+  String get kindDays;
+
+  /// No description provided for @kindState.
+  ///
+  /// In en, this message translates to:
+  /// **'State'**
+  String get kindState;
+
+  /// No description provided for @rangeFrom.
+  ///
+  /// In en, this message translates to:
+  /// **'From'**
+  String get rangeFrom;
+
+  /// No description provided for @rangeTo.
+  ///
+  /// In en, this message translates to:
+  /// **'To'**
+  String get rangeTo;
+
+  /// No description provided for @kindSet.
+  ///
+  /// In en, this message translates to:
+  /// **'Set'**
+  String get kindSet;
+
+  /// No description provided for @kindInvoke.
+  ///
+  /// In en, this message translates to:
+  /// **'Run'**
+  String get kindInvoke;
+
+  /// No description provided for @where.
+  ///
+  /// In en, this message translates to:
+  /// **'Where'**
+  String get where;
+
+  /// No description provided for @wholeHome.
+  ///
+  /// In en, this message translates to:
+  /// **'Whole home'**
+  String get wholeHome;
+
+  /// No description provided for @what.
+  ///
+  /// In en, this message translates to:
+  /// **'What'**
+  String get what;
+
+  /// No description provided for @testBecomes.
+  ///
+  /// In en, this message translates to:
+  /// **'becomes'**
+  String get testBecomes;
+
+  /// No description provided for @testAbove.
+  ///
+  /// In en, this message translates to:
+  /// **'goes above'**
+  String get testAbove;
+
+  /// No description provided for @testBelow.
+  ///
+  /// In en, this message translates to:
+  /// **'goes below'**
+  String get testBelow;
+
+  /// No description provided for @testChanges.
+  ///
+  /// In en, this message translates to:
+  /// **'changes'**
+  String get testChanges;
+
+  /// No description provided for @testIs.
+  ///
+  /// In en, this message translates to:
+  /// **'is'**
+  String get testIs;
+
+  /// No description provided for @testOver.
+  ///
+  /// In en, this message translates to:
+  /// **'above'**
+  String get testOver;
+
+  /// No description provided for @testUnder.
+  ///
+  /// In en, this message translates to:
+  /// **'below'**
+  String get testUnder;
+
+  /// No description provided for @allMustPass.
+  ///
+  /// In en, this message translates to:
+  /// **'All devices'**
+  String get allMustPass;
+
+  /// No description provided for @valueLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Value'**
+  String get valueLabel;
+
+  /// No description provided for @appliesTo.
+  ///
+  /// In en, this message translates to:
+  /// **'Applies to: {devices}'**
+  String appliesTo(String devices);
+
+  /// No description provided for @matchesNothing.
+  ///
+  /// In en, this message translates to:
+  /// **'No device matches for now'**
+  String get matchesNothing;
+
+  /// No description provided for @advancedSelector.
+  ///
+  /// In en, this message translates to:
+  /// **'Selector (advanced)'**
+  String get advancedSelector;
+
+  /// No description provided for @deleteAutomation.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get deleteAutomation;
+
+  /// No description provided for @deleteAutomationConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete “{name}”?'**
+  String deleteAutomationConfirm(String name);
+
+  /// No description provided for @deleteAutomationBody.
+  ///
+  /// In en, this message translates to:
+  /// **'It is removed from homemaid.toml and will not run again.'**
+  String get deleteAutomationBody;
+
+  /// No description provided for @removeItem.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get removeItem;
+
+  /// No description provided for @actionToRun.
+  ///
+  /// In en, this message translates to:
+  /// **'Action'**
+  String get actionToRun;
+
+  /// No description provided for @noActionHere.
+  ///
+  /// In en, this message translates to:
+  /// **'No device here has actions'**
+  String get noActionHere;
 }
 
 class _AppLocalizationsDelegate

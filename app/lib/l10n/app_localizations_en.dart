@@ -631,4 +631,126 @@ class AppLocalizationsEn extends AppLocalizations {
   String nextAt(String when) {
     return 'Next: $when';
   }
+
+  @override
+  String get newAutomation => 'New automation';
+
+  @override
+  String get editAutomation => 'Edit automation';
+
+  @override
+  String get automationEnabled => 'Enabled';
+
+  @override
+  String get addTrigger => 'Add a trigger';
+
+  @override
+  String get addCondition => 'Add a condition';
+
+  @override
+  String get addAction => 'Add an action';
+
+  @override
+  String get kindMoment => 'Time';
+
+  @override
+  String get kindDevice => 'Device';
+
+  @override
+  String get timeClock => 'Clock';
+
+  @override
+  String get timeSunrise => 'Sunrise';
+
+  @override
+  String get timeSunset => 'Sunset';
+
+  @override
+  String get kindTimeRange => 'Time range';
+
+  @override
+  String get kindDays => 'Days';
+
+  @override
+  String get kindState => 'State';
+
+  @override
+  String get rangeFrom => 'From';
+
+  @override
+  String get rangeTo => 'To';
+
+  @override
+  String get kindSet => 'Set';
+
+  @override
+  String get kindInvoke => 'Run';
+
+  @override
+  String get where => 'Where';
+
+  @override
+  String get wholeHome => 'Whole home';
+
+  @override
+  String get what => 'What';
+
+  @override
+  String get testBecomes => 'becomes';
+
+  @override
+  String get testAbove => 'goes above';
+
+  @override
+  String get testBelow => 'goes below';
+
+  @override
+  String get testChanges => 'changes';
+
+  @override
+  String get testIs => 'is';
+
+  @override
+  String get testOver => 'above';
+
+  @override
+  String get testUnder => 'below';
+
+  @override
+  String get allMustPass => 'All devices';
+
+  @override
+  String get valueLabel => 'Value';
+
+  @override
+  String appliesTo(String devices) {
+    return 'Applies to: $devices';
+  }
+
+  @override
+  String get matchesNothing => 'No device matches for now';
+
+  @override
+  String get advancedSelector => 'Selector (advanced)';
+
+  @override
+  String get deleteAutomation => 'Delete';
+
+  @override
+  String deleteAutomationConfirm(String name) {
+    return 'Delete “$name”?';
+  }
+
+  @override
+  String get deleteAutomationBody =>
+      'It is removed from homemaid.toml and will not run again.';
+
+  @override
+  String get removeItem => 'Remove';
+
+  @override
+  String get actionToRun => 'Action';
+
+  @override
+  String get noActionHere => 'No device here has actions';
 }

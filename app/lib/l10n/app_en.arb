@@ -450,5 +450,58 @@
         "type": "String"
       }
     }
-  }
+  },
+  "newAutomation": "New automation",
+  "editAutomation": "Edit automation",
+  "automationEnabled": "Enabled",
+  "addTrigger": "Add a trigger",
+  "addCondition": "Add a condition",
+  "addAction": "Add an action",
+  "kindMoment": "Time",
+  "kindDevice": "Device",
+  "timeClock": "Clock",
+  "timeSunrise": "Sunrise",
+  "timeSunset": "Sunset",
+  "kindTimeRange": "Time range",
+  "kindDays": "Days",
+  "kindState": "State",
+  "rangeFrom": "From",
+  "rangeTo": "To",
+  "kindSet": "Set",
+  "kindInvoke": "Run",
+  "where": "Where",
+  "wholeHome": "Whole home",
+  "what": "What",
+  "testBecomes": "becomes",
+  "testAbove": "goes above",
+  "testBelow": "goes below",
+  "testChanges": "changes",
+  "testIs": "is",
+  "testOver": "above",
+  "testUnder": "below",
+  "allMustPass": "All devices",
+  "valueLabel": "Value",
+  "appliesTo": "Applies to: {devices}",
+  "@appliesTo": {
+    "placeholders": {
+      "devices": {
+        "type": "String"
+      }
+    }
+  },
+  "matchesNothing": "No device matches for now",
+  "advancedSelector": "Selector (advanced)",
+  "deleteAutomation": "Delete",
+  "deleteAutomationConfirm": "Delete “{name}”?",
+  "@deleteAutomationConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "deleteAutomationBody": "It is removed from homemaid.toml and will not run again.",
+  "removeItem": "Remove",
+  "actionToRun": "Action",
+  "noActionHere": "No device here has actions"
 }

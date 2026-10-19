@@ -7,10 +7,12 @@ import '../model.dart';
 import '../theme.dart';
 import '../widgets/model_names.dart';
 import '../widgets/state.dart';
+import 'automation_editor.dart';
 import 'common.dart';
 
-/// The core's automations, read-only: they are written in homemaid.toml. Each row says when it
-/// runs and how its last run went; its sheet puts it into words, tries it (dry run) or runs it.
+/// The core's automations (from homemaid.toml). Each row says when it runs and how its last run
+/// went, with its on/off switch; its sheet puts it into words, tries it (dry run), runs it, or
+/// opens it in the editor; "+" makes a new one.
 class AutomationsScreen extends StatelessWidget {
   const AutomationsScreen({super.key, required this.core, required this.onPair});
 
@@ -29,8 +31,15 @@ class AutomationsScreen extends StatelessWidget {
         final list = core.automations;
         return ListView(padding: const EdgeInsets.only(bottom: 16), children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
-            child: Text(l.navAutomations, style: theme.textTheme.displaySmall),
+            padding: const EdgeInsets.fromLTRB(20, 20, 8, 4),
+            child: Row(children: [
+              Expanded(child: Text(l.navAutomations, style: theme.textTheme.displaySmall)),
+              IconButton(
+                icon: const Icon(Icons.add),
+                tooltip: l.newAutomation,
+                onPressed: core.connected ? () => editAutomation(context, core) : null,
+              ),
+            ]),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
@@ -126,6 +135,16 @@ class _AutomationRow extends StatelessWidget {
               const SizedBox(width: 12),
               Text(status, style: theme.textTheme.labelSmall?.copyWith(color: Hm.textDim, fontFeatures: Hm.tabular)),
             ],
+            const SizedBox(width: 4),
+            Switch(
+              value: a.config['enabled'] != false,
+              onChanged: (on) {
+                final config = {...a.config}..remove('enabled');
+                core.saveAutomation({...config, if (!on) 'enabled': false}).catchError((Object e) {
+                  if (context.mounted) showError(context, e);
+                });
+              },
+            ),
           ]),
         ),
       ),
@@ -190,8 +209,18 @@ class _AutomationSheetState extends State<AutomationSheet> {
               padding: const EdgeInsets.only(bottom: 16),
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
-                  child: Text(a.name, style: theme.textTheme.headlineSmall),
+                  padding: const EdgeInsets.fromLTRB(20, 0, 8, 4),
+                  child: Row(children: [
+                    Expanded(child: Text(a.name, style: theme.textTheme.headlineSmall)),
+                    IconButton(
+                      icon: const Icon(Icons.edit_outlined),
+                      tooltip: l.editAutomation,
+                      onPressed: () async {
+                        // Deleted from the editor: nothing left to show here.
+                        if (await editAutomation(context, core, a) && context.mounted) Navigator.pop(context);
+                      },
+                    ),
+                  ]),
                 ),
                 for (final p in a.problems) line(p, color: Hm.danger),
                 SectionHeader(l.sectionWhen),
@@ -211,7 +240,7 @@ class _AutomationSheetState extends State<AutomationSheet> {
                     Expanded(child: FilledButton(onPressed: _busy || !a.enabled ? null : _run, child: Text(l.runNow))),
                   ]),
                 ),
-                if (_dry != null) _DryRunView(dry: _dry!, core: core),
+                if (_dry != null) DryRunView(dry: _dry!, core: core),
                 SectionHeader(l.sectionRuns),
                 if (a.runs.isEmpty) line(l.neverRan, color: Hm.textDim),
                 for (final run in a.runs) _RunRow(run: run),
@@ -222,8 +251,8 @@ class _AutomationSheetState extends State<AutomationSheet> {
       );
 }
 
-class _DryRunView extends StatelessWidget {
-  const _DryRunView({required this.dry, required this.core});
+class DryRunView extends StatelessWidget {
+  const DryRunView({super.key, required this.dry, required this.core});
 
   final DryRun dry;
   final CoreClient core;
@@ -355,7 +384,7 @@ String targetText(BuildContext context, String select) {
   return parts.isEmpty ? select : parts.join(' · ');
 }
 
-String _value(BuildContext context, String cap, Object? value) {
+String valueText(BuildContext context, String cap, Object? value) {
   final l = AppLocalizations.of(context);
   return switch ((cap, value)) {
     ('on_off', true) => l.stateOn,
@@ -399,9 +428,9 @@ String triggerText(BuildContext context, CoreClient core, Map<String, dynamic> t
   final (target, cap) = (targetText(context, when['select'] as String), when['cap'] as String);
   final test = _test(when);
   final label = capLabel(context, cap);
-  if (test['becomes'] ?? test['is'] case final Object value) return l.whenIs(target, label, _value(context, cap, value));
-  if (test['above'] case final num x) return l.whenAbove(target, label, _value(context, cap, x));
-  if (test['below'] case final num x) return l.whenBelow(target, label, _value(context, cap, x));
+  if (test['becomes'] ?? test['is'] case final Object value) return l.whenIs(target, label, valueText(context, cap, value));
+  if (test['above'] case final num x) return l.whenAbove(target, label, valueText(context, cap, x));
+  if (test['below'] case final num x) return l.whenBelow(target, label, valueText(context, cap, x));
   return l.whenChanges(target, label);
 }
 
@@ -416,10 +445,10 @@ String conditionText(BuildContext context, CoreClient core, Map<String, dynamic>
   final test = _test(state);
   final label = capLabel(context, cap);
   final text = test.containsKey('is')
-      ? l.ifIs(target, label, _value(context, cap, test['is']))
+      ? l.ifIs(target, label, valueText(context, cap, test['is']))
       : test['above'] is num
-          ? l.ifAbove(target, label, _value(context, cap, test['above']))
-          : l.ifBelow(target, label, _value(context, cap, test['below']));
+          ? l.ifAbove(target, label, valueText(context, cap, test['above']))
+          : l.ifBelow(target, label, valueText(context, cap, test['below']));
   return state['all'] == true ? l.ifAll(text) : text;
 }
 
@@ -427,7 +456,7 @@ String actionText(BuildContext context, CoreClient core, Map<String, dynamic> a)
   final l = AppLocalizations.of(context);
   if (a['set'] case final Map set) {
     final cap = set['cap'] as String;
-    return l.doSet(targetText(context, set['select'] as String), capLabel(context, cap), _value(context, cap, set['value']));
+    return l.doSet(targetText(context, set['select'] as String), capLabel(context, cap), valueText(context, cap, set['value']));
   }
   final invoke = (a['invoke'] as Map).cast<String, dynamic>();
   return l.doInvoke(actionLabel(context, invoke['action'] as String), targetText(context, invoke['select'] as String));
