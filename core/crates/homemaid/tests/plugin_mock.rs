@@ -4,7 +4,7 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use common::{Plugin, start, start_wasm, wait_for};
+use common::{start_with, Plugin, start, start_wasm, wait_for};
 use homemaid::model::{CapKind, CapValue, CommandStatus, entity_uuid};
 
 fn mock(permissions: &'static [&'static str], settings: &'static [(&'static str, &'static str)]) -> Plugin<'static> {
@@ -56,4 +56,42 @@ async fn a_plugin_built_for_api_1_0_still_runs() {
     assert!(core.with(|r| r.entities[&lamp].actions.is_empty()));
     let plugins = core.plugins.get().unwrap();
     assert!(plugins.invoke(&core, lamp, "blink", serde_json::json!({})).await.is_err(), "no actions in 1.0");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_api_1_2_device_is_handed_its_schedules() {
+    #[derive(serde::Deserialize)]
+    struct File {
+        automation: Vec<homemaid::automations::AutomationConfig>,
+    }
+    let file: File = toml::from_str(r#"
+        [[automation]]
+        id = "dusk"
+        [[automation.trigger]]
+        at = "sunset-15"
+        days = ["mon", "fri"]
+        [[automation.action]]
+        set = { select = "plugin:mock", cap = "on_off", value = true }
+
+        [[automation]]
+        id = "ranged"
+        [[automation.trigger]]
+        at = "07:30"
+        [[automation.condition]]
+        between = ["07:00", "08:00"]
+        [[automation.action]]
+        set = { select = "plugin:mock", cap = "on_off", value = false }
+    "#).unwrap();
+    let paris = homemaid::automations::Location { latitude: 48.86, longitude: 2.35 };
+    let automations = homemaid::automations::Automations::new(&file.automation, Some(paris)).unwrap();
+    let (core, data) = start_with(mock(&["local-network"], &[]), automations);
+    let lamp = entity_uuid("mock", "lamp");
+    wait_for("discovery", Duration::from_secs(10), || core.with(|r| r.entities.get(&lamp).is_some_and(|e| e.available))).await;
+
+    let kv = std::fs::read_to_string(data.0.join("plugins/mock.kv.json")).unwrap();
+    let kv: std::collections::BTreeMap<String, String> = serde_json::from_str(&kv).unwrap();
+    assert_eq!(kv["schedules:lamp"], r#"dusk on_off={"on_off":true} Sunset(-15) 0b0010001"#, "only what needs no hub");
+    let list = core.automations.get().unwrap().list(&core, &jiff::Zoned::now());
+    assert_eq!(list[0]["delegated"], serde_json::json!(["Mock lamp"]));
+    assert_eq!(list[1]["delegated"], serde_json::json!([]));
 }

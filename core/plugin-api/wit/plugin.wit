@@ -1,4 +1,4 @@
-package homemaid:plugin@1.1.0;
+package homemaid:plugin@1.2.0;
 
 /// Capability kinds and values cross the boundary as strings (kind: "on_off", value and meta: JSON),
 /// so new capabilities do not break v1. The Rust SDK exposes them typed.
@@ -53,6 +53,32 @@ interface action-types {
     }
 }
 
+/// plugin-api 1.2: schedules a device runs on its own, so they keep working while the hub is off
+/// (a power strip that still switches at sunset with the PC asleep). The core hands over the
+/// simple ones and keeps running them itself too: both set the same state.
+interface schedule-types {
+    /// When in the day, in the device's own time zone.
+    variant time-of-day {
+        /// Minutes after midnight.
+        clock(u16),
+        /// Minutes after sunrise (negative: before), the sunrise the device computes itself.
+        sunrise(s16),
+        /// Minutes after sunset (negative: before).
+        sunset(s16),
+    }
+
+    record schedule {
+        /// The automation it comes from.
+        id: string,
+        kind: string,
+        /// CapValue as JSON.
+        value: string,
+        at: time-of-day,
+        /// Days of the week, Monday = bit 0.
+        days: u8,
+    }
+}
+
 world plugin {
     use types.{entity, manifest};
     import host;
@@ -77,4 +103,15 @@ world plugin-with-actions {
     /// Does the action now; params is JSON (`{}` when it takes none). Success means sent, not
     /// confirmed: an action has no state to confirm.
     export invoke: func(local-id: string, name: string, params: string) -> result<_, string>;
+}
+
+/// A plugin whose devices run schedules themselves: everything a 1.1 plugin does, plus that.
+world plugin-with-schedules {
+    include plugin-with-actions;
+    use schedule-types.{schedule};
+
+    /// Replaces every schedule the core handed to this entity before (an empty list removes them).
+    /// Never touches the device's other rules (made in the vendor app). Ok: accepted, applied now
+    /// or as soon as the device answers. Err: not supported; the core runs them alone.
+    export set-schedules: func(local-id: string, schedules: list<schedule>) -> result<_, string>;
 }

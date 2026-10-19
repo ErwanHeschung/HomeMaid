@@ -1,5 +1,6 @@
 //! Plugin host (plugin-api 1.x): each WASM plugin runs sandboxed in its own thread. A plugin that
-//! exports `invoke` (plugin-api 1.1) also offers one-shot actions.
+//! exports `invoke` (plugin-api 1.1) also offers one-shot actions; one that exports
+//! `set-schedules` (1.2) is handed the schedules its devices can run themselves.
 //!
 //! Commands are applied as soon as they arrive, then the plugin is refreshed to read the new state
 //! back; in between, it is refreshed at the interval it asks for. A plugin that traps is marked offline and restarted with backoff.
@@ -27,6 +28,7 @@ use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView, sockets::SocketAddrUse};
 
 use crate::{
     Core,
+    automations::{Schedule, ScheduleTime},
     config::PluginConfig,
     model::{ActionDecl, CapKind, CapMeta, CapSlot, CapValue, Entity, entity_uuid},
     reconciler::Command,
@@ -53,12 +55,27 @@ use wit::{
     Plugin,
     homemaid::plugin::{host, types},
 };
-use wit_actions::PluginWithActions;
+/// The 1.2 world: the same again, plus schedules.
+mod wit_schedules {
+    wasmtime::component::bindgen!({
+        path: "../../plugin-api/wit",
+        world: "plugin-with-schedules",
+        with: {
+            "homemaid:plugin/types": super::wit::homemaid::plugin::types,
+            "homemaid:plugin/host": super::wit::homemaid::plugin::host,
+            "homemaid:plugin/action-types": super::wit_actions::homemaid::plugin::action_types,
+        },
+    });
+}
 
-/// A running plugin, with or without actions; the calls they share go through [`call!`].
+use wit_actions::PluginWithActions;
+use wit_schedules::{PluginWithSchedules, homemaid::plugin::schedule_types};
+
+/// A running plugin of any 1.x world; the calls they share go through [`call!`].
 enum Instance {
     Plain(Plugin),
     Actions(PluginWithActions),
+    Schedules(PluginWithSchedules),
 }
 
 macro_rules! call {
@@ -66,6 +83,7 @@ macro_rules! call {
         match $instance {
             Instance::Plain(p) => p.$method($($arg),*),
             Instance::Actions(p) => p.$method($($arg),*),
+            Instance::Schedules(p) => p.$method($($arg),*),
         }
     };
 }
@@ -225,10 +243,12 @@ impl Runner {
         let mut store = self.store(network.clone())?;
         let mut linker = Linker::new(&self.engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
-        // The 1.1 linker is a superset: it also satisfies 1.0 plugins.
-        PluginWithActions::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)?;
-        let has_actions = component.component_type().exports(&self.engine).any(|(name, _)| name == "invoke");
-        let plugin = if has_actions {
+        // The 1.2 linker is a superset: it also satisfies 1.0 and 1.1 plugins.
+        PluginWithSchedules::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)?;
+        let exports = |export: &str| component.component_type().exports(&self.engine).any(|(name, _)| name == export);
+        let plugin = if exports("set-schedules") {
+            Instance::Schedules(PluginWithSchedules::instantiate(&mut store, component, &linker)?)
+        } else if exports("invoke") {
             Instance::Actions(PluginWithActions::instantiate(&mut store, component, &linker)?)
         } else {
             Instance::Plain(Plugin::instantiate(&mut store, component, &linker)?)
@@ -249,18 +269,21 @@ impl Runner {
         let discovered = call!(&plugin, call_discover(&mut store))?.map_err(|e| wasmtime::Error::msg(format!("discover: {e}")))?;
         store.data_mut().save_kv();
         let mut actions: HashMap<String, Vec<ActionDecl>> = HashMap::new();
-        if let Instance::Actions(p) = &plugin {
-            store.set_epoch_deadline(CALL_BUDGET);
-            for a in p.call_list_actions(&mut store)? {
-                let params = match a.params.as_deref().map(serde_json::from_str).transpose() {
-                    Ok(params) => params,
-                    Err(e) => {
-                        tracing::warn!(plugin = %self.cfg.id, "{}: action `{}` ignored, invalid params schema: {e}", a.local_id, a.name);
-                        continue;
-                    }
-                };
-                actions.entry(a.local_id).or_default().push(ActionDecl { name: a.name, params });
-            }
+        store.set_epoch_deadline(CALL_BUDGET);
+        let declared = match &plugin {
+            Instance::Plain(_) => vec![],
+            Instance::Actions(p) => p.call_list_actions(&mut store)?,
+            Instance::Schedules(p) => p.call_list_actions(&mut store)?,
+        };
+        for a in declared {
+            let params = match a.params.as_deref().map(serde_json::from_str).transpose() {
+                Ok(params) => params,
+                Err(e) => {
+                    tracing::warn!(plugin = %self.cfg.id, "{}: action `{}` ignored, invalid params schema: {e}", a.local_id, a.name);
+                    continue;
+                }
+            };
+            actions.entry(a.local_id).or_default().push(ActionDecl { name: a.name, params });
         }
         let entities: Vec<Entity> =
             discovered.into_iter().map(|e| {
@@ -268,6 +291,9 @@ impl Runner {
                 self.to_entity(e, mine)
             }).collect();
         tracing::info!(plugin = %self.cfg.id, version = %manifest.version, "started with {} entities", entities.len());
+        if let Instance::Schedules(p) = &plugin {
+            self.hand_schedules(p, &mut store, &entities)?;
+        }
         let now = Instant::now();
         self.core.with(|r| entities.into_iter().for_each(|e| r.upsert(e, now)));
         *delay = MIN_RESTART;
@@ -287,6 +313,10 @@ impl Runner {
                 Ok(Job::Invoke { local_id, name, params, reply }) => {
                     let result = match &plugin {
                         Instance::Actions(p) => {
+                            store.set_epoch_deadline(CALL_BUDGET);
+                            p.call_invoke(&mut store, &local_id, &name, &params)?
+                        }
+                        Instance::Schedules(p) => {
                             store.set_epoch_deadline(CALL_BUDGET);
                             p.call_invoke(&mut store, &local_id, &name, &params)?
                         }
@@ -310,6 +340,28 @@ impl Runner {
             // Once per call, not per kv-set: a plugin writing in a loop rewrites the file once.
             store.data_mut().save_kv();
         }
+    }
+
+    /// Gives each entity the schedules its device can run alone (none clears the old ones), so
+    /// they keep happening while the hub is off. Selectors are resolved now, at start.
+    fn hand_schedules(&self, plugin: &PluginWithSchedules, store: &mut Store<HostState>, entities: &[Entity]) -> wasmtime::Result<()> {
+        let Some(automations) = self.core.automations.get() else { return Ok(()) };
+        for entity in entities {
+            let schedules = automations.schedules_for(entity);
+            let wit: Vec<schedule_types::Schedule> = schedules.iter().map(to_wit).collect();
+            store.set_epoch_deadline(CALL_BUDGET);
+            let result = plugin.call_set_schedules(&mut *store, &entity.local_id, &wit)?;
+            match &result {
+                Ok(()) if !schedules.is_empty() => {
+                    tracing::info!(plugin = %self.cfg.id, "{}: {} schedules run on the device too", entity.name, schedules.len());
+                }
+                Ok(()) => {}
+                Err(e) => tracing::warn!(plugin = %self.cfg.id, "{}: schedules stay on the hub only: {e}", entity.name),
+            }
+            automations.set_delegated(entity.id, &schedules, result.is_ok());
+        }
+        store.data_mut().save_kv();
+        Ok(())
     }
 
     fn store(&self, network: Arc<AtomicBool>) -> wasmtime::Result<Store<HostState>> {
@@ -402,6 +454,20 @@ impl Runner {
                 r.set_available(id, false, now);
             }
         });
+    }
+}
+
+fn to_wit(s: &Schedule) -> schedule_types::Schedule {
+    schedule_types::Schedule {
+        id: s.automation.clone(),
+        kind: s.cap.to_string(),
+        value: serde_json::to_string(&s.value).expect("CapValue always serializes"),
+        at: match s.at {
+            ScheduleTime::Clock(m) => schedule_types::TimeOfDay::Clock(m),
+            ScheduleTime::Sunrise(o) => schedule_types::TimeOfDay::Sunrise(o),
+            ScheduleTime::Sunset(o) => schedule_types::TimeOfDay::Sunset(o),
+        },
+        days: s.days,
     }
 }
 
@@ -505,6 +571,8 @@ impl WasiView for HostState {
 impl types::Host for HostState {}
 
 impl wit_actions::homemaid::plugin::action_types::Host for HostState {}
+
+impl schedule_types::Host for HostState {}
 
 impl host::Host for HostState {
     fn log(&mut self, level: types::LogLevel, mut message: String) {

@@ -1,12 +1,15 @@
 //! Mock plugin for integration tests: one lamp that confirms every command instantly.
 //!
 //! Setting `crash_once = "true"` makes the first refresh panic, once (remembered in the KV store),
-//! to test crash recovery. Its action `blink { times }` is recorded in the KV store (`blinked`).
+//! to test crash recovery. Its action `blink { times }` is recorded in the KV store (`blinked`),
+//! and so are the schedules it is handed (`schedules:<local id>`, as `<id> <kind>=<value> <at>
+//! <days>` lines; plugin-api 1.2).
 
 use std::{collections::BTreeMap, sync::Mutex};
 
 use homemaid_plugin::{
-    ActionDecl, Actions, CapKind, CapMeta, CapValue, DiscoveredEntity, LOCAL_NETWORK, Manifest, Plugin, report_state,
+    ActionDecl, Actions, CapKind, CapMeta, CapValue, DiscoveredEntity, LOCAL_NETWORK, Manifest, Plugin, Schedule, Schedules,
+    report_state,
 };
 
 static SETTINGS: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
@@ -70,4 +73,15 @@ impl Actions for Mock {
     }
 }
 
-homemaid_plugin::export_with_actions!(Mock with_types_in homemaid_plugin::bindings_actions);
+impl Schedules for Mock {
+    fn set_schedules(local_id: &str, schedules: Vec<Schedule>) -> Result<(), String> {
+        let lines: Vec<String> = schedules
+            .iter()
+            .map(|s| format!("{} {}={} {:?} {:#09b}", s.id, s.kind, serde_json::to_string(&s.value).unwrap_or_default(), s.at, s.days))
+            .collect();
+        homemaid_plugin::kv_set(&format!("schedules:{local_id}"), &lines.join("\n"));
+        Ok(())
+    }
+}
+
+homemaid_plugin::export_with_schedules!(Mock with_types_in homemaid_plugin::bindings_schedules);

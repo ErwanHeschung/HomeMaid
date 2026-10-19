@@ -6,7 +6,7 @@
 //! happen without doing it. Each automation keeps its last runs in memory.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{BTreeSet, HashMap, VecDeque},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -239,6 +239,38 @@ impl TimeOf {
             }
         }
     }
+}
+
+impl TimeOf {
+    fn schedule_time(&self) -> ScheduleTime {
+        match *self {
+            TimeOf::Clock(t) => ScheduleTime::Clock(t.hour() as u16 * 60 + t.minute() as u16),
+            TimeOf::Sun(Sun::Rise, offset, _) => ScheduleTime::Sunrise(offset),
+            TimeOf::Sun(Sun::Set, offset, _) => ScheduleTime::Sunset(offset),
+        }
+    }
+}
+
+/// A schedule a device can run on its own, so it still happens while the hub is off: one `at`
+/// trigger of an automation that needs nothing but the time, and one of its `set` actions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Schedule {
+    /// The automation it comes from.
+    pub automation: String,
+    pub cap: CapKind,
+    pub value: CapValue,
+    pub at: ScheduleTime,
+    /// Monday = bit 0.
+    pub days: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ScheduleTime {
+    /// Minutes after midnight.
+    Clock(u16),
+    /// Minutes after sunrise (negative: before).
+    Sunrise(i16),
+    Sunset(i16),
 }
 
 impl std::fmt::Display for TimeOf {
@@ -536,6 +568,8 @@ pub struct Automations {
     history: Mutex<HashMap<String, History>>,
     /// Last observed value per entity and capability, to see edges.
     observed: Mutex<HashMap<(Uuid, CapKind), CapValue>>,
+    /// The devices that run an automation themselves too, by automation.
+    delegated: Mutex<HashMap<String, BTreeSet<Uuid>>>,
 }
 
 impl Automations {
@@ -548,7 +582,56 @@ impl Automations {
             }
             list.push(Automation::compile(c, location)?);
         }
-        Ok(Self { list, history: Mutex::default(), observed: Mutex::default() })
+        Ok(Self { list, history: Mutex::default(), observed: Mutex::default(), delegated: Mutex::default() })
+    }
+
+    /// What the device of `entity` can run itself, from the automations simple enough for it:
+    /// every trigger an `at`, no condition but days (a device cannot check a state or a time
+    /// range). Only `set` actions go; the core runs the whole automation anyway.
+    pub fn schedules_for(&self, entity: &Entity) -> Vec<Schedule> {
+        let mut out = vec![];
+        for a in self.list.iter().filter(|a| a.enabled) {
+            let mut days = Days::ALL.0;
+            for c in &a.conditions {
+                days &= match c {
+                    Condition::Days(d) => d.0,
+                    Condition::Between(..) | Condition::State(_) => 0,
+                };
+            }
+            let times: Option<Vec<(ScheduleTime, u8)>> = a
+                .triggers
+                .iter()
+                .map(|t| match t {
+                    Trigger::At { time, days: d } => Some((time.schedule_time(), d.0 & days)),
+                    Trigger::When(_) => None,
+                })
+                .collect();
+            let Some(times) = times else { continue };
+            for action in &a.actions {
+                let Action::Set { target, cap, value } = action else { continue };
+                let writable = entity.caps.get(cap).is_some_and(|slot| !slot.meta.read_only);
+                if !writable || !target.select.matches(entity) {
+                    continue;
+                }
+                for &(at, days) in times.iter().filter(|(_, days)| *days != 0) {
+                    out.push(Schedule { automation: a.id.clone(), cap: cap.clone(), value: value.clone(), at, days });
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether the device of `entity` took `schedules` (it replaced what it had from the core).
+    pub fn set_delegated(&self, entity: Uuid, schedules: &[Schedule], ok: bool) {
+        let mut delegated = self.delegated.lock().unwrap();
+        for entities in delegated.values_mut() {
+            entities.remove(&entity);
+        }
+        if ok {
+            for s in schedules {
+                delegated.entry(s.automation.clone()).or_default().insert(entity);
+            }
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -567,7 +650,11 @@ impl Automations {
             .iter()
             .map(|a| {
                 let h = history.get(&a.id);
-                let mut problems = core.with(|r| problems(a, r.entities.values()));
+                let (mut problems, delegated) = core.with(|r| {
+                    let on_devices = self.delegated.lock().unwrap().get(&a.id).cloned().unwrap_or_default();
+                    let names: Vec<String> = on_devices.iter().filter_map(|id| r.entities.get(id).map(|e| e.name.clone())).collect();
+                    (problems(a, r.entities.values()), names)
+                });
                 if let Some(stopped) = h.and_then(|h| h.stopped.clone()) {
                     problems.insert(0, stopped);
                 }
@@ -580,6 +667,8 @@ impl Automations {
                     "actions": a.actions.iter().map(describe_action).collect::<Vec<_>>(),
                     "next_run": a.enabled.then(|| a.next_time(now)).flatten().map(|z| z.timestamp().to_string()),
                     "problems": problems,
+                    // These devices run it themselves too: it still happens while the hub is off.
+                    "delegated": delegated,
                     "runs": h.map(|h| h.runs.iter().rev().cloned().collect::<Vec<_>>()).unwrap_or_default(),
                 })
             })
@@ -1042,6 +1131,59 @@ days = ["monday"]"#, ok_action), "unknown day"),
         // No sunset at the North Cape in June: never, without panicking.
         let north = Location { latitude: 71.17, longitude: 25.78 };
         assert!(TimeOf::parse("sunset", Some(north)).unwrap().on(paris("2026-06-21T00:00").date(), &TimeZone::UTC).is_none());
+    }
+
+    #[test]
+    fn only_automations_a_device_can_run_alone_are_handed_over() {
+        let automations = config(r#"
+            [[automation]]
+            id = "dusk"
+            [[automation.trigger]]
+            at = "sunset-15"
+            days = ["mon", "tue", "wed"]
+            [[automation.condition]]
+            days = ["tue", "wed", "thu"]
+            [[automation.action]]
+            set = { select = "room:Salon", cap = "on_off", value = true }
+            [[automation.action]]
+            invoke = { select = "room:Salon", action = "blink" }
+            [[automation.action]]
+            set = { select = "room:Cuisine", cap = "on_off", value = true }
+
+            [[automation]]
+            id = "morning"
+            [[automation.trigger]]
+            at = "07:30"
+            [[automation.action]]
+            set = { select = "room:Salon", cap = "brightness", value = 40 }
+
+            [[automation]]
+            id = "ranged"
+            [[automation.trigger]]
+            at = "07:30"
+            [[automation.condition]]
+            between = ["07:00", "08:00"]
+            [[automation.action]]
+            set = { select = "room:Salon", cap = "on_off", value = false }
+
+            [[automation]]
+            id = "edge"
+            [[automation.trigger]]
+            when = { select = "room:Salon", cap = "on_off", becomes = true }
+            [[automation.action]]
+            set = { select = "room:Salon", cap = "brightness", value = 10 }
+        "#).unwrap();
+        let schedules = automations.schedules_for(&lamp(false));
+        assert_eq!(schedules, [
+            Schedule { automation: "dusk".into(), cap: CapKind::OnOff, value: CapValue::OnOff(true), at: ScheduleTime::Sunset(-15), days: 0b110 },
+            Schedule { automation: "morning".into(), cap: CapKind::Brightness, value: CapValue::Brightness(40), at: ScheduleTime::Clock(450), days: 0x7f },
+        ], "a range or a state needs the hub; another room is not this device");
+
+        let id = lamp(false).id;
+        automations.set_delegated(id, &schedules, true);
+        automations.set_delegated(id, &schedules[1..], true);
+        let delegated = automations.delegated.lock().unwrap().clone();
+        assert!(delegated["morning"].contains(&id) && !delegated["dusk"].contains(&id), "replaced, not added");
     }
 
     #[test]

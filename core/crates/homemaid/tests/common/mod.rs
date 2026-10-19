@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use homemaid::{Core, config::PluginConfig, plugins::Plugins, reconciler::Reconciler};
+use homemaid::{Core, automations::Automations, config::PluginConfig, plugins::Plugins, reconciler::Reconciler};
 use tokio::sync::mpsc;
 
 fn build_plugin(package: &str) -> PathBuf {
@@ -41,10 +41,24 @@ pub fn start(plugin: Plugin) -> (Arc<Core>, TempDir) {
 
 /// Same with an already built `.wasm` (an older plugin-api, for compatibility tests).
 pub fn start_wasm(plugin: Plugin, path: PathBuf) -> (Arc<Core>, TempDir) {
+    start_on(plugin, path, None)
+}
+
+/// Same with automations loaded first, as the core does (their schedules go to the devices).
+#[allow(dead_code)] // Not every test binary uses it.
+pub fn start_with(plugin: Plugin, automations: Automations) -> (Arc<Core>, TempDir) {
+    let path = build_plugin(plugin.package);
+    start_on(plugin, path, Some(automations))
+}
+
+fn start_on(plugin: Plugin, path: PathBuf, automations: Option<Automations>) -> (Arc<Core>, TempDir) {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let data = TempDir::new();
     let (commands, mut command_rx) = mpsc::unbounded_channel();
     let core = Arc::new(Core::new(Reconciler::new(BTreeMap::new()), commands));
+    if let Some(automations) = automations {
+        let _ = core.automations.set(Arc::new(automations));
+    }
     let pairs = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
     let config = PluginConfig {
         id: plugin.id.into(),
