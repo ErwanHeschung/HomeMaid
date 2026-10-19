@@ -17,7 +17,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
-use common::{Plugin, start, wait_for};
+use common::{Plugin, start, start_with, wait_for};
 use homemaid::model::{CapKind, CapValue, CommandStatus, entity_uuid};
 use serde_json::{Value, json};
 use tplink_plugin::klap;
@@ -36,6 +36,9 @@ struct Device {
     handshake2: u32,
     /// Next request is answered 403, as when the device expired the session.
     reject_next: bool,
+    /// Schedule rules by outlet, as the Tapo app keeps them.
+    rules: HashMap<String, Vec<Value>>,
+    next_rule: u32,
 }
 
 type Shared = Arc<Mutex<Device>>;
@@ -107,10 +110,38 @@ async fn request(
         }
         "control_child" => {
             let params = &request["params"];
-            assert_eq!(params["requestData"]["method"], "set_device_info");
-            let index = OUTLETS.iter().position(|(id, _)| params["device_id"] == *id).unwrap();
-            device.on[index] = params["requestData"]["params"]["device_on"].as_bool().unwrap();
-            json!({ "responseData": { "error_code": 0 } })
+            let outlet = params["device_id"].as_str().unwrap().to_string();
+            let inner = &params["requestData"]["params"];
+            let result = match params["requestData"]["method"].as_str().unwrap() {
+                "set_device_info" => {
+                    let index = OUTLETS.iter().position(|(id, _)| outlet == *id).unwrap();
+                    device.on[index] = inner["device_on"].as_bool().unwrap();
+                    json!({})
+                }
+                // Pages of 2, to exercise paging.
+                "get_schedule_rules" => {
+                    let rules = device.rules.get(&outlet).cloned().unwrap_or_default();
+                    let start = inner["start_index"].as_u64().unwrap() as usize;
+                    json!({ "rule_list": rules.iter().skip(start).take(2).collect::<Vec<_>>(), "start_index": start, "sum": rules.len() })
+                }
+                "add_schedule_rule" => {
+                    for field in ["enable", "mode", "week_day", "s_type", "s_min", "time_offset", "e_type", "e_action", "desired_states", "year"] {
+                        assert!(inner.get(field).is_some(), "rule without {field}: {inner}");
+                    }
+                    device.next_rule += 1;
+                    let mut rule = inner.clone();
+                    rule["id"] = json!(format!("S{}", device.next_rule));
+                    device.rules.entry(outlet).or_default().push(rule);
+                    json!({})
+                }
+                "remove_schedule_rules" => {
+                    let gone: Vec<Value> = inner["rule_list"].as_array().unwrap().iter().map(|r| r["id"].clone()).collect();
+                    device.rules.entry(outlet).or_default().retain(|r| !gone.contains(&r["id"]));
+                    json!({})
+                }
+                method => panic!("unexpected child method {method}"),
+            };
+            json!({ "responseData": { "error_code": 0, "result": result } })
         }
         method => panic!("unexpected method {method}"),
     };
@@ -211,4 +242,49 @@ async fn an_unplugged_strip_does_not_hide_the_others() {
         core.with(|r| r.entities.len() == 3 && r.entities.values().all(|e| e.available))
     })
     .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn schedules_become_rules_on_the_strip_next_to_the_users() {
+    let (device, addr) = fake_p300().await;
+    // A rule made in the Tapo app, and one this plugin added at an earlier start.
+    let theirs = json!({ "id": "APP1", "s_type": "normal", "s_min": 600 });
+    device.lock().unwrap().rules.insert("CHILD1".into(), vec![theirs.clone(), json!({ "id": "OLD", "s_type": "normal" })]);
+    #[derive(serde::Deserialize)]
+    struct File {
+        automation: Vec<homemaid::automations::AutomationConfig>,
+    }
+    let file: File = toml::from_str(r#"
+        [[automation]]
+        id = "dusk"
+        [[automation.trigger]]
+        at = "sunset-15"
+        days = ["mon", "fri"]
+        [[automation.action]]
+        set = { select = 'name:"Lampe"', cap = "on_off", value = true }
+        [[automation.trigger]]
+        at = "07:30"
+    "#).unwrap();
+    let paris = homemaid::automations::Location { latitude: 48.86, longitude: 2.35 };
+    let automations = homemaid::automations::Automations::new(&file.automation, Some(paris)).unwrap();
+    let hosts = addr.to_string();
+    let (core, data) = start_with(tplink(&hosts, PASSWORD), automations);
+    // As if the plugin had added "OLD" before; written while the plugin still compiles (seconds).
+    let kv = data.0.join("plugins/tplink.kv.json");
+    std::fs::write(&kv, json!({ "schedules:CHILD1": json!({ "want": [], "ids": ["OLD"], "synced": false }).to_string() }).to_string()).unwrap();
+
+    let lamp = entity_uuid("tplink", "CHILD1");
+    wait_for("discovery", Duration::from_secs(10), || core.with(|r| r.entities.get(&lamp).is_some_and(|e| e.available))).await;
+    let rules = device.lock().unwrap().rules["CHILD1"].clone();
+    assert_eq!(rules.len(), 3, "the app's rule, plus two: {rules:?}");
+    assert_eq!(rules[0], theirs, "the app's rule is left alone; the plugin's old one is replaced");
+    let dusk = &rules[1];
+    assert_eq!((dusk["s_type"].as_str(), dusk["time_offset"].as_i64()), (Some("sunset"), Some(-15)));
+    assert_eq!(dusk["week_day"], 0b010_0010, "monday and friday, sunday = bit 0");
+    assert_eq!(dusk["desired_states"]["on"], true);
+    assert_eq!((rules[2]["s_type"].as_str(), rules[2]["s_min"].as_i64()), (Some("normal"), Some(450)));
+    assert!(device.lock().unwrap().rules.get("CHILD2").is_none_or(Vec::is_empty), "not this outlet's automation");
+
+    let list = core.automations.get().unwrap().list(&core, &jiff::Zoned::now());
+    assert_eq!(list[0]["delegated"], json!(["Lampe"]));
 }

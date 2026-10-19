@@ -252,7 +252,7 @@ and the config grants: no files, no internet, the local network at most.
 - [x] PC agent and remote, PC client with notification-area icon
 - [x] Flutter app with the 3D home, the design system and a demo mode
 - [x] Typed automations with dry run, one-shot actions (plugin API 1.1)
-- [ ] Sunrise/sunset triggers, schedules pushed to the devices that support them (P300)
+- [x] Sunrise/sunset triggers, schedules pushed to the devices that support them (P300, still to check on a real strip)
 - [ ] Plugin registry on GitHub, with signed plugins
 - [ ] History with downsampling
 - [ ] App fallback mode when the hub is unreachable

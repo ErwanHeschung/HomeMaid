@@ -138,8 +138,8 @@ pub struct Schedule {
 /// Plugins whose devices run schedules themselves (plugin-api 1.2).
 pub trait Schedules: Actions {
     /// Replaces every schedule handed over before for this entity (empty: remove them all).
-    /// Never touch the device's other rules. Ok once accepted, even if the device is unreachable
-    /// now (apply them when it answers); Err if they cannot run on it.
+    /// Never touch the device's other rules. Ok only once the device holds them; Err otherwise
+    /// (unsupported, unreachable: you may still apply them when it answers).
     fn set_schedules(local_id: &str, schedules: Vec<Schedule>) -> Result<(), String>;
 }
 

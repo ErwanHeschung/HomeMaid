@@ -111,7 +111,7 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
     - SDK : trait `Actions` et `export_with_actions!`. L'hôte détecte l'export `invoke` ; un plugin 1.0 se charge toujours (fixture `tests/fixtures/mock-plugin-api-1.0.wasm`).
     - API : `entity.invoke { id, action, params? }`.
   - **plugin-api 1.2** (additif, package WIT `@1.2.0`) : **plannings confiés aux appareils**, pour qu'ils continuent hub éteint. Un plugin qui exporte le monde `plugin-with-schedules` (celui de 1.1, plus `set-schedules(local-id, list<schedule>)`) reçoit, pour chaque entité au démarrage, les plannings que son appareil peut tenir seul. `schedule` = automatisation, capacité, valeur, `time-of-day` (`clock(minutes)`, `sunrise(décalage)`, `sunset(décalage)`), jours (lundi = bit 0).
-    - Contrat : la liste remplace ce que le core avait confié avant (vide = tout retirer) ; le plugin ne touche jamais les règles faites dans l'app du fabricant ; `Ok` = accepté, appliqué maintenant ou dès que l'appareil répond ; `Err` = non supporté, le core les tient seul.
+    - Contrat : la liste remplace ce que le core avait confié avant (vide = tout retirer) ; le plugin ne touche jamais les règles faites dans l'app du fabricant ; `Ok` = l'appareil les tient (l'app l'affiche) ; `Err` = non (non supporté, injoignable) : le plugin peut les poser plus tard, le core les exécute de toute façon.
     - Le core (`Automations::schedules_for`) ne confie que les automatisations dont tous les déclencheurs sont des `at` (heure ou soleil) et dont les seules conditions sont des jours, et seulement leurs actions `set`. Il continue de les exécuter lui-même : les deux mettent le même état. `automations.list` donne `delegated` (les appareils qui les tiennent aussi).
     - Les sélecteurs sont résolus au démarrage du plugin. SDK : trait `Schedules` et `export_with_schedules!`. Un plugin 1.0 ou 1.1 se charge toujours.
   - **Sandbox** : pas de fichiers, d'env ni de DNS ; sockets vers le réseau local uniquement, **sans loopback** (le hub, l'agent et leurs pages `/pair` y écoutent) sauf permission `loopback` accordée dans la config (le plugin `pc` quand l'agent est sur le même PC) ; 64 MiB de mémoire, deux mémoires au plus ; KV de 1 MiB au plus, écrit une fois par appel ; 60 lignes de log par minute ; 60 s max par appel (temps réel, attente réseau comprise : ça attrape les plugins emballés, les timeouts réseau sont gérés par le plugin) ; redémarrage après crash avec un délai de 1 s à 60 s.
@@ -199,7 +199,7 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
 - **Ampoules connectées** : modèle à préciser.
 - **PC** : via l'agent PC.
 
-### Automatisations (étape 6, phase A)
+### Automatisations (étape 6)
 - Écrites dans `homemaid.toml` (`[[automation]]` avec `[[automation.trigger]]`, `[[automation.condition]]`, `[[automation.action]]`), exemples dans `homemaid.example.toml`. Le module est `core/crates/homemaid/src/automations.rs`.
 - **Vérifiées au chargement** : une faute (heure, jour, capacité, valeur, sélecteur, champ inconnu) empêche le core de démarrer, avec un message précis. Ce qui dépend des appareils découverts (sélecteur vide, action absente) est signalé comme « problème », sans bloquer.
 - **Déclencheurs** :
@@ -214,7 +214,7 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
 - **Garde-fou** : plus de 10 exécutions par minute arrêtent l'automatisation jusqu'au redémarrage (une boucle entre deux automatisations).
 - Les modifier demande de **redémarrer le core** (pas de rechargement à chaud).
 - **App** : onglet Scénarios, en lecture seule (phrases, prochaine exécution, journal, Essayer et Lancer). Les actions apparaissent aussi en touches dans le panneau d'un appareil. Une automatisation confiée à des appareils l'indique (« Continue même hub éteint, sur : … »).
-- **Phase B, à faire** : lever et coucher du soleil, délégation des plannings au P300.
+- **Phase B, faite** : soleil, et plannings confiés aux appareils (plugin-api 1.2). Le plugin `tplink` les pose en règles de planning sur chaque prise de la P300 (`control_child` + `add_schedule_rule`, format du crate `tapo`, mesuré sur P110). Il ne retire que ses propres règles (ids dans son KV), réessaie quand la multiprise revient, et la P300 calcule lever et coucher d'après la localisation et le fuseau réglés dans l'app Tapo. **Non vérifié sur une vraie P300** : lancer `cargo run -p tplink-plugin --example probe` (voir l'exemple) et ajuster si besoin.
 
 ## Roadmap MVP
 
@@ -223,7 +223,7 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
 3. **Plugin TP-Link** (P300), qui sert aussi de plugin de référence et d'exemple.
 4. **Agent PC** (Windows) + écran télécommande dans l'app. Mode combiné `--core --agent`, et service Windows.
 5. **App Flutter** : liste par pièce, contrôle des capacités de base.
-6. **Automatisations** typées + dry-run, avec **délégation des plannings** aux appareils qui le supportent. *(Phase A faite : automatisations, sélecteurs, dry-run, actions ponctuelles. Phase B : soleil, délégation au P300.)*
+6. **Automatisations** typées + dry-run, avec **délégation des plannings** aux appareils qui le supportent. *(Faite : automatisations, sélecteurs, dry-run, actions ponctuelles, soleil, plannings confiés aux appareils ; reste à vérifier sur la P300 réelle.)*
 7. **Registre de plugins** (index GitHub, vérification de signature).
 8. Historique avec downsampling.
 9. (Plus tard) Mode dégradé de l'app sans core, et migration vers un host dédié.

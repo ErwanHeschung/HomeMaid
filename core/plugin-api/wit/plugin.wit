@@ -111,7 +111,8 @@ world plugin-with-schedules {
     use schedule-types.{schedule};
 
     /// Replaces every schedule the core handed to this entity before (an empty list removes them).
-    /// Never touches the device's other rules (made in the vendor app). Ok: accepted, applied now
-    /// or as soon as the device answers. Err: not supported; the core runs them alone.
+    /// Never touches the device's other rules (made in the vendor app). Ok: the device holds them,
+    /// the app says they run without the hub. Err: it does not (not supported, unreachable); the
+    /// plugin may still apply them later, the core runs them anyway.
     export set-schedules: func(local-id: string, schedules: list<schedule>) -> result<_, string>;
 }

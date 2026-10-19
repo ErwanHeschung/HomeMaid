@@ -77,6 +77,8 @@ permissions = ["local-network"]
 # crash_once = "true"
 
 # TP-Link Tapo P300: cargo build -p tplink-plugin --target wasm32-wasip2
+# Simple automations on its outlets (`at` triggers, days only) also become schedules on the strip,
+# which keeps switching with the hub off; set its location and time zone in the Tapo app.
 # Needs "Third-Party Compatibility" in the Tapo app (Me > Third-Party Services) and, in
 # <data_dir>/secrets.toml, the TP-Link account:
 #   [tplink]

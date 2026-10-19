@@ -3,6 +3,13 @@
 //! Settings: `hosts` = comma-separated IPs (`ip` or `ip:port`). Secrets: `username`, `password`
 //! (TP-Link account). Requires "Third-Party Compatibility" in the Tapo app (Me > Third-Party
 //! Services), otherwise recent firmwares speak TPAP, which is not supported.
+//!
+//! Schedules (plugin-api 1.2): the outlets' `on_off` schedules handed over by the core become
+//! schedule rules on the strip, which then switches with the hub off. It computes sunrise and
+//! sunset from the location and time zone set in the Tapo app. Only the rules this plugin added
+//! are ever replaced (ids in the KV store, `schedules:<outlet>`); those made in the app stay.
+// ponytail: the rule format comes from the tapo crate, measured on a P110, and per-outlet rules
+// through control_child are unverified on a real P300 (examples/probe.rs checks it).
 
 pub mod klap;
 
@@ -15,8 +22,8 @@ use std::{
 
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use homemaid_plugin::{
-    CapKind, http, CapMeta, CapValue, DiscoveredEntity, LOCAL_NETWORK, LogLevel, Manifest, Plugin, kv_get, kv_set, log,
-    report_state, secret, set_available,
+    ActionDecl, Actions, CapKind, http, CapMeta, CapValue, DiscoveredEntity, LOCAL_NETWORK, LogLevel, Manifest, Plugin,
+    Schedule, Schedules, TimeOfDay, kv_get, kv_set, log, report_state, secret, set_available,
 };
 use serde_json::{Value, json};
 
@@ -112,6 +119,79 @@ impl Host {
         Ok(parse_outlets(&result))
     }
 
+    /// A request to one outlet, through the strip.
+    fn child(&mut self, auth: &[u8; 32], terminal_uuid: &str, outlet: &str, method: &str, params: Option<Value>) -> Result<Value, String> {
+        let mut request = json!({ "method": method });
+        if let Some(params) = params {
+            request["params"] = params;
+        }
+        let mut result = self.call(auth, terminal_uuid, "control_child", Some(json!({ "device_id": outlet, "requestData": request })))?;
+        let mut response = result["responseData"].take();
+        check(&response, method)?;
+        Ok(response["result"].take())
+    }
+
+    /// The ids of an outlet's schedule rules, every page.
+    fn rule_ids(&mut self, auth: &[u8; 32], terminal_uuid: &str, outlet: &str) -> Result<Vec<String>, String> {
+        let mut ids = vec![];
+        loop {
+            let page = self.child(auth, terminal_uuid, outlet, "get_schedule_rules", Some(json!({ "start_index": ids.len() })))?;
+            let rules = page["rule_list"].as_array().cloned().unwrap_or_default();
+            ids.extend(rules.iter().filter_map(|r| r["id"].as_str().map(String::from)));
+            if rules.is_empty() || ids.len() as u64 >= page["sum"].as_u64().unwrap_or(0) {
+                return Ok(ids);
+            }
+        }
+    }
+
+    /// Puts an outlet's wished rules on the strip, in place of the ones this plugin added before.
+    fn sync_schedules(&mut self, auth: &[u8; 32], terminal_uuid: &str, outlet: &str) -> Result<(), String> {
+        let mut entry = schedules_entry(outlet);
+        if entry["synced"] == true {
+            return Ok(());
+        }
+        let existing = self.rule_ids(auth, terminal_uuid, outlet)?;
+        let ours: Vec<Value> = entry["ids"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|id| id.as_str().is_some_and(|id| existing.iter().any(|e| e == id)))
+            .map(|id| json!({ "id": id }))
+            .collect();
+        if !ours.is_empty() {
+            self.child(auth, terminal_uuid, outlet, "remove_schedule_rules", Some(json!({ "remove_all": false, "rule_list": ours })))?;
+        }
+        // The new ids are read back, not taken from add_schedule_rule's answer (undocumented).
+        let before = self.rule_ids(auth, terminal_uuid, outlet)?;
+        let added = entry["want"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .try_for_each(|rule| self.child(auth, terminal_uuid, outlet, "add_schedule_rule", Some(rule)).map(drop));
+        // Read back after a failure too, so the next try removes what did get in.
+        let after = self.rule_ids(auth, terminal_uuid, outlet);
+        if let Ok(after) = &after {
+            entry["ids"] = json!(after.iter().filter(|id| !before.contains(id)).collect::<Vec<_>>());
+        }
+        let done = added.and(after.map(drop));
+        entry["synced"] = json!(done.is_ok());
+        kv_set(&schedules_key(outlet), &entry.to_string());
+        done
+    }
+
+    /// After a strip comes back: the schedules it missed while unreachable.
+    fn retry_schedules(&mut self, auth: &[u8; 32], terminal_uuid: &str) {
+        for outlet in self.outlets.clone() {
+            if schedules_entry(&outlet)["synced"] == false {
+                match self.sync_schedules(auth, terminal_uuid, &outlet) {
+                    Ok(()) => log(LogLevel::Info, &format!("{outlet}: its schedules are on the strip now")),
+                    Err(e) => log(LogLevel::Warn, &format!("{outlet}: schedules not on the strip: {e}")),
+                }
+            }
+        }
+    }
+
     /// Reports every outlet; on failure the outlets go offline until the device answers again.
     fn report(&mut self, auth: &[u8; 32], terminal_uuid: &str) {
         if !self.online && Instant::now() < self.retry_at {
@@ -119,7 +199,8 @@ impl Host {
         }
         match self.outlets(auth, terminal_uuid) {
             Ok(outlets) => {
-                if !self.online {
+                let back = !self.online;
+                if back {
                     log(LogLevel::Info, &format!("{} online", self.addr));
                 }
                 self.online = true;
@@ -128,6 +209,9 @@ impl Host {
                     if let Some(on) = outlet.on {
                         report_state(&outlet.id, &CapKind::OnOff, &CapValue::OnOff(on));
                     }
+                }
+                if back {
+                    self.retry_schedules(auth, terminal_uuid);
                 }
             }
             Err(e) => {
@@ -169,6 +253,43 @@ fn handshake(addr: SocketAddr, auth: &[u8; 32]) -> Result<Live, String> {
         cookie,
         expires: Instant::now() + Duration::from_secs(timeout).saturating_sub(SESSION_MARGIN),
     })
+}
+
+fn schedules_key(outlet: &str) -> String {
+    format!("schedules:{outlet}")
+}
+
+/// What the core handed over for an outlet (`want`, as strip rules), the ids of the rules this
+/// plugin added (`ids`), and whether the strip holds `want` (`synced`). Nothing yet: in sync.
+fn schedules_entry(outlet: &str) -> Value {
+    kv_get(&schedules_key(outlet))
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| json!({ "want": [], "ids": [], "synced": true }))
+}
+
+/// A schedule as a strip rule, in the shape of the Tapo app's (as the tapo crate sends it).
+fn rule(schedule: &Schedule) -> Result<Value, String> {
+    let (CapKind::OnOff, CapValue::OnOff(on)) = (&schedule.kind, &schedule.value) else {
+        return Err(format!("only on_off runs on the strip, not {}", schedule.kind));
+    };
+    let (s_type, s_min, time_offset) = match schedule.at {
+        TimeOfDay::Clock(minutes) => ("normal", minutes, 0),
+        TimeOfDay::Sunrise(offset) => ("sunrise", 0, offset),
+        TimeOfDay::Sunset(offset) => ("sunset", 0, offset),
+    };
+    Ok(json!({
+        "enable": true, "mode": "repeat", "week_day": sunday_first(schedule.days),
+        "s_type": s_type, "s_min": s_min, "time_offset": time_offset,
+        "e_type": "normal", "e_min": 0, "e_action": "none",
+        "desired_states": { "on": on },
+        // Required, and ignored by the device.
+        "year": 1970, "month": 1, "day": 1,
+    }))
+}
+
+/// Days from Monday = bit 0 (the core's) to Sunday = bit 0 (the strip's).
+fn sunday_first(monday_first: u8) -> u8 {
+    ((monday_first << 1) | (monday_first >> 6)) & 0x7f
 }
 
 fn check(reply: &Value, method: &str) -> Result<(), String> {
@@ -312,7 +433,38 @@ impl Plugin for Tplink {
     }
 }
 
-homemaid_plugin::export!(Tplink with_types_in homemaid_plugin::bindings);
+impl Actions for Tplink {
+    fn actions() -> Vec<ActionDecl> {
+        vec![]
+    }
+
+    fn invoke(_: &str, name: &str, _: Value) -> Result<(), String> {
+        Err(format!("no action `{name}`"))
+    }
+}
+
+impl Schedules for Tplink {
+    fn set_schedules(local_id: &str, schedules: Vec<Schedule>) -> Result<(), String> {
+        let want = json!(schedules.iter().map(rule).collect::<Result<Vec<_>, _>>()?);
+        with_state(|state| {
+            let State { auth, terminal_uuid, hosts, .. } = state;
+            let host = hosts
+                .iter_mut()
+                .find(|h| h.outlets.iter().any(|o| o == local_id))
+                .ok_or_else(|| format!("unknown outlet {local_id}"))?;
+            let mut entry = schedules_entry(local_id);
+            if entry["want"] != want {
+                entry["want"] = want;
+                entry["synced"] = json!(false);
+                kv_set(&schedules_key(local_id), &entry.to_string());
+            }
+            // Ok only once the strip holds them: the app then says they run without the hub.
+            host.sync_schedules(auth, terminal_uuid, local_id).map_err(|e| format!("{e} (tried again when the strip answers)"))
+        })
+    }
+}
+
+homemaid_plugin::export_with_schedules!(Tplink with_types_in homemaid_plugin::bindings_schedules);
 
 #[cfg(test)]
 mod tests {
@@ -330,6 +482,17 @@ mod tests {
         assert_eq!(outlets.len(), 2, "children without device_id are skipped");
         assert_eq!((outlets[0].id.as_str(), outlets[0].name.as_str(), outlets[0].on), ("A", "Lampe", Some(true)));
         assert_eq!(outlets[1].name, "P300 prise 2");
+    }
+
+    #[test]
+    fn days_move_from_monday_first_to_sunday_first() {
+        assert_eq!(sunday_first(0b000_0001), 0b000_0010, "monday");
+        assert_eq!(sunday_first(0b100_0000), 0b000_0001, "sunday");
+        assert_eq!(sunday_first(0x7f), 0x7f);
+        let dusk = Schedule { id: "dusk".into(), kind: CapKind::OnOff, value: CapValue::OnOff(true), at: TimeOfDay::Sunset(-15), days: 0b001_0001 };
+        let rule = rule(&dusk).unwrap();
+        assert_eq!((rule["s_type"].as_str(), rule["time_offset"].as_i64(), rule["week_day"].as_u64()), (Some("sunset"), Some(-15), Some(0b010_0010)));
+        assert!(super::rule(&Schedule { kind: CapKind::Brightness, value: CapValue::Brightness(5), ..dusk }).is_err());
     }
 
     #[test]
