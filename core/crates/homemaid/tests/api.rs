@@ -88,8 +88,21 @@ async fn update_is_saved_and_notified() {
     assert_eq!(reply["result"]["actions"][0]["targets"][0]["name"], "Lampe", "{reply}");
     let (reply, seen) = call(8, "automation.run", json!({ "id": "dim" })).await;
     assert_eq!(reply["result"]["results"][0]["outcome"], "pending", "{reply}");
-    let (_, more) = call(9, "entities.list", json!(null)).await;
-    assert!(seen.iter().chain(&more).any(|m| m["method"] == "automation.ran"), "notified");
+    // automation.run answers aside (it may wait for a plugin): its notification can come before
+    // or after the reply.
+    let ran = |m: &Value| m["method"] == "automation.ran";
+    let notified = seen.iter().any(ran)
+        || tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(Ok(Message::Text(text))) = ws.next().await {
+                if ran(&serde_json::from_str(&text).unwrap()) {
+                    return true;
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false);
+    assert!(notified, "notified");
 }
 
 #[tokio::test(flavor = "multi_thread")]
