@@ -1399,6 +1399,72 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No device here has actions'**
   String get noActionHere;
+
+  /// No description provided for @homeLocation.
+  ///
+  /// In en, this message translates to:
+  /// **'Home location'**
+  String get homeLocation;
+
+  /// No description provided for @locationUnset.
+  ///
+  /// In en, this message translates to:
+  /// **'Not set: needed for sunrise and sunset'**
+  String get locationUnset;
+
+  /// No description provided for @latitude.
+  ///
+  /// In en, this message translates to:
+  /// **'Latitude'**
+  String get latitude;
+
+  /// No description provided for @longitude.
+  ///
+  /// In en, this message translates to:
+  /// **'Longitude'**
+  String get longitude;
+
+  /// No description provided for @locationHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Your town is enough, e.g. 48.86 and 2.35 for Paris. Nothing leaves your PC.'**
+  String get locationHint;
+
+  /// No description provided for @locationInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Latitude -90 to 90, longitude -180 to 180'**
+  String get locationInvalid;
+
+  /// No description provided for @sunNeedsLocation.
+  ///
+  /// In en, this message translates to:
+  /// **'Sunrise and sunset need the home\'s location.'**
+  String get sunNeedsLocation;
+
+  /// No description provided for @setLocation.
+  ///
+  /// In en, this message translates to:
+  /// **'Set the location'**
+  String get setLocation;
+
+  /// No description provided for @paramApp.
+  ///
+  /// In en, this message translates to:
+  /// **'App'**
+  String get paramApp;
+
+  /// No description provided for @paramShortcut.
+  ///
+  /// In en, this message translates to:
+  /// **'Service'**
+  String get paramShortcut;
+
+  /// No description provided for @capNoDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'{cap} (no device)'**
+  String capNoDevice(String cap);
 }
 
 class _AppLocalizationsDelegate

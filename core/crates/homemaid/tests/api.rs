@@ -217,6 +217,20 @@ async fn automations_are_edited_live_and_saved() {
     assert!(reply["error"]["message"].as_str().unwrap().contains("needs at least one"), "{reply}");
     assert_eq!(std::fs::read_to_string(&config_path).unwrap(), before);
 
+    // Sunset needs where the home is; set from the app, it works at once.
+    assert_eq!(rpc(ws, inbox, 20, "home.location", json!(null)).await["result"], Value::Null);
+    let dusk = json!({ "id": "dusk", "trigger": [{ "at": "sunset" }], "action": [{ "set": { "select": "plugin:mock", "cap": "on_off", "value": true } }] });
+    let reply = rpc(ws, inbox, 21, "automation.save", json!({ "automation": dusk })).await;
+    assert!(reply["error"]["message"].as_str().unwrap().contains("latitude"), "{reply}");
+    let reply = rpc(ws, inbox, 22, "home.set_location", json!({ "latitude": 95.0, "longitude": 2.35 })).await;
+    assert!(reply["error"].is_object(), "out of range: {reply}");
+    rpc(ws, inbox, 23, "home.set_location", json!({ "latitude": 48.86, "longitude": 2.35 })).await;
+    assert_eq!(rpc(ws, inbox, 24, "home.location", json!(null)).await["result"], json!({ "latitude": 48.86, "longitude": 2.35 }));
+    let reply = rpc(ws, inbox, 25, "automation.save", json!({ "automation": dusk })).await;
+    assert_eq!(reply["result"], true, "{reply}");
+    assert_eq!(config::load(&config_path).unwrap().core.unwrap().latitude, Some(48.86));
+    rpc(ws, inbox, 26, "automation.delete", json!({ "id": "dusk" })).await;
+
     let reply = rpc(ws, inbox, 8, "automation.delete", json!({ "id": "follow" })).await;
     assert_eq!(reply["result"], true, "{reply}");
     let list = rpc(ws, inbox, 9, "automations.list", json!(null)).await;

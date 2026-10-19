@@ -293,6 +293,16 @@ pub fn save_room(path: &Path, room: &RoomConfig) -> Result<(), String> {
     })
 }
 
+/// Sets where the home is (`latitude`, `longitude` in `[core]`), for sunrise and sunset.
+pub fn set_location(path: &Path, latitude: f64, longitude: f64) -> Result<(), String> {
+    edit_toml(path, |doc| {
+        let core = doc.get_mut("core").and_then(toml_edit::Item::as_table_mut).ok_or("no [core] section")?;
+        core["latitude"] = toml_edit::value(latitude);
+        core["longitude"] = toml_edit::value(longitude);
+        Ok(())
+    })
+}
+
 /// Writes one automation into its `[[automation]]` table (found by `id`, appended when new), or
 /// removes it (`None`). `check` is given every automation of the file as it would become (hand
 /// edits since the start included); the file is written only if it accepts them all.
@@ -320,7 +330,12 @@ pub fn save_automation<R>(
                 *table.decor_mut() = decor;
                 table.set_position(position);
             }
-            (Some(automation), None) => tables.push(automation_table(automation)?),
+            (Some(automation), None) => {
+                // At the end of the file, not after whatever table happens to precede the array.
+                let mut table = automation_table(automation)?;
+                table.set_position(Some(last_position(doc.as_table()) + 1));
+                doc["automation"].as_array_of_tables_mut().expect("checked above").push(table);
+            }
             (None, Some(index)) => drop(tables.remove(index)),
             (None, None) => return Err(format!("no automation `{id}`")),
         }
@@ -332,6 +347,21 @@ pub fn save_automation<R>(
         let file: File = toml::from_str(&doc.to_string()).map_err(|e| e.to_string())?;
         check(&file.automation)
     })
+}
+
+/// The highest position of a table in the document (where the file ends).
+fn last_position(table: &toml_edit::Table) -> isize {
+    use toml_edit::Item;
+
+    table
+        .iter()
+        .flat_map(|(_, item)| match item {
+            Item::Table(t) => vec![t.position().unwrap_or(0).max(last_position(t))],
+            Item::ArrayOfTables(a) => a.iter().map(|t| t.position().unwrap_or(0).max(last_position(t))).collect(),
+            _ => vec![],
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 /// An automation as a `[[automation]]` table, its triggers, conditions and actions on one line
@@ -485,7 +515,7 @@ mod tests {
         use crate::automations::Automations;
 
         let path = std::env::temp_dir().join(format!("homemaid-automation-test-{}.toml", std::process::id()));
-        fs::write(&path, "# mine\n[core] # here\nbind = \"0.0.0.0:8123\"\ndata_dir = \"data\"\ntoken = \"0123456789abcdef\"\n\n# by hand\n[[automation]]\nid = \"kept\"\n[[automation.trigger]]\nat = \"07:00\"\n[[automation.action]]\nset = { select = \"room:Salon\", cap = \"on_off\", value = true }\n").unwrap();
+        fs::write(&path, "# mine\n[core] # here\nbind = \"0.0.0.0:8123\"\ndata_dir = \"data\"\ntoken = \"0123456789abcdef\"\n\n# by hand\n[[automation]]\nid = \"kept\"\n[[automation.trigger]]\nat = \"07:00\"\n[[automation.action]]\nset = { select = \"room:Salon\", cap = \"on_off\", value = true }\n\n# rooms\n[[room]]\nname = \"Salon\"\n").unwrap();
         let check = |all: &[AutomationConfig]| Automations::new(all, None).map(|_| all.len());
         let mut dusk: AutomationConfig = serde_json::from_value(serde_json::json!({
             "id": "dusk", "name": "Soir",
@@ -500,6 +530,7 @@ mod tests {
         assert!(text.starts_with("# mine\n[core] # here\n") && text.contains("# by hand\n[[automation]]\nid = \"kept\""), "{text}");
         assert!(text.contains(r#"set = { select = "room:Salon & cap:on_off", cap = "on_off", value = true }"#), "one line each: {text}");
         assert!(!text.contains("enabled"), "defaults are left out: {text}");
+        assert!(text.find("id = \"dusk\"") > text.find("[[room]]"), "a new one goes at the end of the file: {text}");
 
         dusk.name = Some("Crépuscule".into());
         assert_eq!(save_automation(&path, "dusk", Some(&dusk), check), Ok(2), "replaced, not added");

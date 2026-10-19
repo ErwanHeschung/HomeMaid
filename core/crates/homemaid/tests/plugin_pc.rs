@@ -14,7 +14,13 @@ use homemaid::{
 };
 
 async fn start_agent() -> (String, tokio::task::JoinHandle<()>) {
-    let config = AgentConfig { enabled: true, bind: "127.0.0.1:0".parse().unwrap(), token: "secret".into(), apps: BTreeMap::new(), shortcuts: vec![] };
+    let config = AgentConfig {
+        enabled: true,
+        bind: "127.0.0.1:0".parse().unwrap(),
+        token: "secret".into(),
+        apps: BTreeMap::from([("notepad".to_string(), "notepad.exe".into())]),
+        shortcuts: vec![],
+    };
     let (stopping, _) = tokio::sync::watch::channel(());
     let app = agent::router(&config, &stopping).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -62,6 +68,11 @@ async fn pc_is_an_entity_with_volume_and_sensors() {
     assert!(err.contains("no parameters"), "{err}");
     let err = plugins.invoke(&core, id, "open", serde_json::json!({})).await.unwrap_err();
     assert!(err.contains("needs `shortcut`"), "{err}");
+    // The editor offers the agent's apps; a wrong one is refused in the agent's words.
+    let launch = core.with(|r| r.entities[&id].actions.iter().find(|a| a.name == "launch").cloned()).unwrap();
+    assert_eq!(launch.params.unwrap()["properties"]["app"]["enum"], serde_json::json!(["notepad"]));
+    let err = plugins.invoke(&core, id, "launch", serde_json::json!({ "app": "Netflix" })).await.unwrap_err();
+    assert_eq!(err, "app `Netflix` is not in [agent.apps]");
 
     server.abort();
     wait_for("offline", Duration::from_secs(10), || !available()).await;

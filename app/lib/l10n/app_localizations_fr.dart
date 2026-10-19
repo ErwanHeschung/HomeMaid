@@ -753,4 +753,42 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get noActionHere => 'Aucun appareil ici n\'a d\'action';
+
+  @override
+  String get homeLocation => 'Emplacement de la maison';
+
+  @override
+  String get locationUnset =>
+      'Pas défini : nécessaire pour le lever et le coucher du soleil';
+
+  @override
+  String get latitude => 'Latitude';
+
+  @override
+  String get longitude => 'Longitude';
+
+  @override
+  String get locationHint =>
+      'Votre ville suffit, par exemple 48,86 et 2,35 pour Paris. Rien ne quitte votre PC.';
+
+  @override
+  String get locationInvalid => 'Latitude de -90 à 90, longitude de -180 à 180';
+
+  @override
+  String get sunNeedsLocation =>
+      'Le lever et le coucher du soleil ont besoin de l\'emplacement de la maison.';
+
+  @override
+  String get setLocation => 'Définir l\'emplacement';
+
+  @override
+  String get paramApp => 'Application';
+
+  @override
+  String get paramShortcut => 'Service';
+
+  @override
+  String capNoDevice(String cap) {
+    return '$cap (aucun appareil)';
+  }
 }

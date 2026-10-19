@@ -122,7 +122,7 @@ class _ShellState extends State<Shell> {
           HomeScreen(core: _core, onPair: _pair),
           AutomationsScreen(core: _core, onPair: _pair),
           RemoteScreen(agents: _agents.values.toList(), connections: _connections, onPair: _pair),
-          SettingsScreen(connections: _connections, onPair: _pair),
+          SettingsScreen(connections: _connections, core: _core, onPair: _pair),
         ]),
       ),
       bottomNavigationBar: NavigationBar(

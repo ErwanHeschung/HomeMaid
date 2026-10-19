@@ -136,7 +136,9 @@ class _AutomationRow extends StatelessWidget {
               Text(status, style: theme.textTheme.labelSmall?.copyWith(color: Hm.textDim, fontFeatures: Hm.tabular)),
             ],
             const SizedBox(width: 4),
-            Switch(
+            Semantics(
+              label: a.name,
+              child: Switch(
               value: a.config['enabled'] != false,
               onChanged: (on) {
                 final config = {...a.config}..remove('enabled');
@@ -144,6 +146,7 @@ class _AutomationRow extends StatelessWidget {
                   if (context.mounted) showError(context, e);
                 });
               },
+            ),
             ),
           ]),
         ),
@@ -459,7 +462,10 @@ String actionText(BuildContext context, CoreClient core, Map<String, dynamic> a)
     return l.doSet(targetText(context, set['select'] as String), capLabel(context, cap), valueText(context, cap, set['value']));
   }
   final invoke = (a['invoke'] as Map).cast<String, dynamic>();
-  return l.doInvoke(actionLabel(context, invoke['action'] as String), targetText(context, invoke['select'] as String));
+  // "Launch notepad": the parameters say what.
+  final what = ((invoke['params'] as Map?)?.values ?? const []).where((v) => v is String || v is num).join(', ');
+  final action = actionLabel(context, invoke['action'] as String);
+  return l.doInvoke(what.isEmpty ? action : '$action $what', targetText(context, invoke['select'] as String));
 }
 
 /// The words of the common actions; others humanized.

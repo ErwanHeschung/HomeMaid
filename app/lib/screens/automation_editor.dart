@@ -15,6 +15,7 @@ import '../theme.dart';
 import '../widgets/state.dart';
 import 'automations.dart';
 import 'common.dart';
+import 'settings.dart';
 
 /// Opens the editor on `automation`, or on a new one. True when it was deleted.
 Future<bool> editAutomation(BuildContext context, CoreClient core, [Automation? automation]) async =>
@@ -57,9 +58,13 @@ Object _defaultValue(String cap, Map<String, dynamic> meta) =>
 
 Map<String, dynamic> _newTrigger() => {'at': '19:00'};
 
+/// Something the home has: a switch if there is one, else a level, else any setting.
 Map<String, dynamic> _newAction(CoreClient core) {
-  final lamp = core.entities.values.where((e) => e.room != null && _writable(e, 'on_off')).firstOrNull;
-  return {'set': {'select': roomSelector(lamp?.room, 'on_off'), 'cap': 'on_off', 'value': true}};
+  final writable = [for (final e in core.entities.values) for (final c in e.caps.keys) if (_writable(e, c)) (e, c)];
+  final pick = ['on_off', 'brightness', 'volume'].map((cap) => writable.where((w) => w.$2 == cap).firstOrNull).nonNulls.firstOrNull ??
+      writable.firstOrNull;
+  final cap = pick?.$2 ?? 'on_off';
+  return {'set': {'select': roomSelector(pick?.$1.room, cap), 'cap': cap, 'value': _defaultValue(cap, _meta(core, cap))}};
 }
 
 class AutomationEditor extends StatefulWidget {
@@ -312,7 +317,7 @@ class _TriggerCard extends StatelessWidget {
       children: device
           ? [_TestFields(core: core, test: _sub(t, 'when'), trigger: true, onChanged: onChanged)]
           : [
-              _TimePoint(value: t['at'] as String, onChanged: (v) {
+              _TimePoint(core: core, value: t['at'] as String, onChanged: (v) {
                 t['at'] = v;
                 onChanged();
               }),
@@ -363,7 +368,7 @@ class _ConditionCard extends StatelessWidget {
             for (final (i, label) in [l.rangeFrom, l.rangeTo].indexed)
               _Labelled(
                 label,
-                _TimePoint(value: (c['between'] as List)[i] as String, onChanged: (v) {
+                _TimePoint(core: core, value: (c['between'] as List)[i] as String, onChanged: (v) {
                   (c['between'] as List)[i] = v;
                   onChanged();
                 }),
@@ -419,8 +424,9 @@ class _Labelled extends StatelessWidget {
 
 /// `19:30`, or sunrise/sunset shifted by minutes (`sunset-30`): the core's time points.
 class _TimePoint extends StatelessWidget {
-  const _TimePoint({required this.value, required this.onChanged});
+  const _TimePoint({required this.core, required this.value, required this.onChanged});
 
+  final CoreClient core;
   final String value;
   final ValueChanged<String> onChanged;
 
@@ -463,7 +469,18 @@ class _TimePoint extends StatelessWidget {
           min: -360,
           max: 360,
           divisions: 144,
+          semanticFormatterCallback: (v) => sunText(context, sunValue(mode, v.round()), at: true)!,
           onChanged: (v) => onChanged(sunValue(mode, v.round())),
+        ),
+        // Said here rather than refused at save: the hub cannot know when the sun sets.
+        ListenableBuilder(
+          listenable: core,
+          builder: (context, _) => core.location != null
+              ? const SizedBox()
+              : Row(children: [
+                  Expanded(child: Text(l.sunNeedsLocation, style: theme.textTheme.bodyMedium?.copyWith(color: Hm.danger))),
+                  TextButton(onPressed: () => editLocation(context, core), child: Text(l.setLocation)),
+                ]),
         ),
       ],
     ]);
@@ -552,7 +569,14 @@ class _Target extends StatelessWidget {
         isExpanded: true,
         initialValue: cap,
         decoration: InputDecoration(labelText: l.what),
-        items: [for (final c in choices) DropdownMenuItem(value: c, child: Text(capLabel(context, c)))],
+        items: [
+          for (final c in choices)
+            DropdownMenuItem(
+              value: c,
+              // Kept as written, though no device has it now.
+              child: Text(caps.contains(c) ? capLabel(context, c) : l.capNoDevice(capLabel(context, c))),
+            ),
+        ],
         onChanged: (c) {
           if (c == null || c == cap) return;
           target['cap'] = c;
@@ -627,6 +651,7 @@ class _Value extends StatelessWidget {
             min: min.toDouble(),
             max: max.toDouble(),
             divisions: (max - min).round().clamp(1, 1000),
+            semanticFormatterCallback: (x) => valueText(context, cap, x.round()),
             onChanged: (x) => onChanged(x.round()),
           ),
         ),
@@ -678,7 +703,7 @@ class _TextValueState extends State<_TextValue> {
 
 Map<String, dynamic> _newTest(CoreClient core, {required bool trigger}) {
   final action = _newAction(core)['set'] as Map<String, dynamic>;
-  return {'select': action['select'], 'cap': 'on_off', trigger ? 'becomes' : 'is': true};
+  return {'select': action['select'], 'cap': action['cap'], trigger ? 'becomes' : 'is': action['value']};
 }
 
 /// A device test: `becomes`, `above`, `below`, `changes` for a trigger; `is`, `above`, `below`
@@ -864,17 +889,37 @@ class _InvokeFields extends StatelessWidget {
           onChanged: (v) {
             invoke['action'] = v;
             invoke.remove('params');
+            // A choice to make (an app, a service): the first, so it is never left empty.
+            final fields = ((decls[v]?.params?['properties'] as Map?) ?? const {}).cast<String, dynamic>();
+            final firsts = {
+              for (final MapEntry(:key, :value) in fields.entries)
+                if ((value as Map?)?['enum'] case [final first, ...]) key: first,
+            };
+            if (firsts.isNotEmpty) invoke['params'] = firsts;
             onChanged();
           },
         ),
       for (final MapEntry(key: name, value: schema) in properties.entries)
         Padding(
           padding: const EdgeInsets.only(top: 10),
-          child: _TextValue(
+          child: (schema as Map?)?['enum'] is List
+              // The plugin lists what it accepts (the PC's apps, its services): a menu.
+              ? DropdownButtonFormField<String>(
+                  key: ValueKey('$action $name'),
+                  isExpanded: true,
+                  initialValue: (schema!['enum'] as List).contains(params[name]) ? params[name] as String : null,
+                  decoration: InputDecoration(labelText: _paramLabel(context, name)),
+                  items: [for (final v in (schema['enum'] as List).cast<String>()) DropdownMenuItem(value: v, child: Text(v))],
+                  onChanged: (v) {
+                    invoke['params'] = {...params, name: v};
+                    onChanged();
+                  },
+                )
+              : _TextValue(
             key: ValueKey('$action $name'),
-            label: name,
+            label: _paramLabel(context, name),
             value: '${params[name] ?? ''}',
-            number: (schema as Map?)?['type'] == 'integer' || schema?['type'] == 'number',
+            number: schema?['type'] == 'integer' || schema?['type'] == 'number',
             onChanged: (text) {
               final next = {...params, name: schema?['type'] == 'string' ? text : (num.tryParse(text) ?? text)};
               invoke['params'] = next;
@@ -885,4 +930,14 @@ class _InvokeFields extends StatelessWidget {
       _Matches(core: core, select: invoke['select'] as String),
     ]);
   }
+}
+
+/// The words of the common action parameters; others humanized.
+String _paramLabel(BuildContext context, String name) {
+  final l = AppLocalizations.of(context);
+  return switch (name) {
+    'app' => l.paramApp,
+    'shortcut' => l.paramShortcut,
+    _ => name.isEmpty ? name : name[0].toUpperCase() + name.substring(1).replaceAll('_', ' '),
+  };
 }

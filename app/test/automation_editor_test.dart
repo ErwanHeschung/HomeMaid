@@ -125,4 +125,69 @@ void main() {
     expect(find.text('Enregistrer'), findsOneWidget, reason: 'the bottom bar stays');
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('sunrise without a location says so, and the location is set from there', (tester) async {
+    final core = DemoCore()..location = null;
+    await pump(tester, AutomationEditor(core: core));
+    await tester.tap(find.text('Sunset').first);
+    await tester.pumpAndSettle();
+    expect(find.text("Sunrise and sunset need the home's location."), findsOneWidget);
+
+    await tester.tap(find.text('Set the location'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Latitude'), '95');
+    await tester.enterText(find.widgetWithText(TextField, 'Longitude'), '2,35');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save').last);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Latitude -90 to 90'), findsOneWidget, reason: 'checked before sending');
+    await tester.enterText(find.widgetWithText(TextField, 'Latitude'), '48,86');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save').last);
+    await tester.pumpAndSettle();
+    expect(core.location, (latitude: 48.86, longitude: 2.35));
+    expect(find.text("Sunrise and sunset need the home's location."), findsNothing);
+  });
+
+  testWidgets('a home without switches gets an action it can do', (tester) async {
+    final core = DemoCore();
+    core.entities.removeWhere((id, e) => id != 'demo-pc');
+    await pump(tester, AutomationEditor(core: core));
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    final set = (core.automations.last.actions.single['set'] as Map);
+    expect(set['cap'], isNot('on_off'), reason: 'the PC has no switch');
+    expect(core.entities['demo-pc']!.caps.containsKey(set['cap']), isTrue);
+  });
+
+  testWidgets("an action's choices come as a menu, and say what they launch", (tester) async {
+    final core = DemoCore();
+    final pc = core.entities['demo-pc']!;
+    core.entities['demo-pc'] = Entity(
+      id: pc.id, name: pc.name, room: pc.room, available: true, plugin: 'pc', caps: pc.caps,
+      actions: [
+        const ActionDecl(name: 'launch', params: {
+          'type': 'object',
+          'properties': {'app': {'type': 'string', 'enum': ['notepad', 'steam']}},
+        }),
+      ],
+    );
+    final launch = Automation(id: 'l', name: 'Launch', enabled: true, triggers: [{'at': '07:00'}], actions: [
+      {'invoke': {'select': 'plugin:pc', 'action': 'launch', 'params': {'app': 'Netflix'}}},
+    ]);
+    await pump(tester, AutomationEditor(core: core, automation: launch));
+    final list = find.byType(Scrollable).first;
+    await tester.scrollUntilVisible(find.text('App'), 300, scrollable: list);
+    await tester.drag(list, const Offset(0, -300));
+    await tester.pumpAndSettle();
+    await tester.tap(find.ancestor(of: find.text('App'), matching: find.byType(DropdownButtonFormField<String>)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('steam').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    final saved = core.automations.firstWhere((a) => a.id == 'l');
+    expect((saved.actions.single['invoke'] as Map)['params'], {'app': 'steam'});
+
+    final c = tester.element(find.byType(Navigator));
+    expect(actionText(c, core, saved.actions.single), 'Launch steam on PC');
+  });
 }

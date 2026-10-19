@@ -8,7 +8,8 @@
 //! (created or replaced by id, saved to the config file, in force at once), `automation.delete
 //! { id }`, `subscribe` (then `state.changed { id, cap, slot }`, `entity.changed { entity }`,
 //! `room.changed { name, kind }`, `automation.ran { id, run }` and `automations.changed`
-//! notifications).
+//! notifications), `home.location` and `home.set_location { latitude, longitude }` (where the
+//! home is, for sunrise and sunset; saved to the config file).
 //! `/pair` serves the pairing QR code to the PC itself; `/hello?nonce=` proves this host knows
 //! the token (see [`pairing::proof`]).
 
@@ -31,7 +32,7 @@ use uuid::Uuid;
 
 use crate::{
     Core, Event,
-    automations::{AutomationConfig, Automations},
+    automations::{AutomationConfig, Automations, Location},
     config::{self, EntityOverride, RoomConfig},
     model::{CapKind, CapValue},
     pairing,
@@ -188,6 +189,12 @@ struct AutomationId {
 }
 
 #[derive(Deserialize)]
+struct SetLocation {
+    latitude: f64,
+    longitude: f64,
+}
+
+#[derive(Deserialize)]
 struct SaveAutomation {
     automation: AutomationConfig,
 }
@@ -254,6 +261,11 @@ async fn handle(app: &AppState, req: Request) -> Value {
                 blocking(app, move |app| save_automation(app, &id, Some(p.automation))).await.map_err(|e| (-32000, e))
             }
         },
+        "home.location" => Ok(json!(app.core.automations().location.map(|l| json!({ "latitude": l.latitude, "longitude": l.longitude })))),
+        "home.set_location" => match serde_json::from_value::<SetLocation>(req.params) {
+            Err(e) => Err((-32602, e.to_string())),
+            Ok(p) => blocking(app, move |app| set_location(app, p)).await.map_err(|e| (-32000, e)),
+        },
         "automation.delete" => match serde_json::from_value::<AutomationId>(req.params) {
             Err(e) => Err((-32602, e.to_string())),
             Ok(p) => blocking(app, move |app| save_automation(app, &p.id, None)).await.map_err(|e| (-32000, e)),
@@ -270,6 +282,19 @@ async fn handle(app: &AppState, req: Request) -> Value {
 async fn blocking(app: &AppState, f: impl FnOnce(&AppState) -> Result<Value, String> + Send + 'static) -> Result<Value, String> {
     let app = app.clone();
     tokio::task::spawn_blocking(move || f(&app)).await.map_err(|e| e.to_string())?
+}
+
+/// Saves where the home is, then compiles the automations again with it: sunrise and sunset work
+/// at once.
+fn set_location(app: &AppState, p: SetLocation) -> Result<Value, String> {
+    if sunrise::Coordinates::new(p.latitude, p.longitude).is_none() {
+        return Err("latitude is -90 to 90, longitude -180 to 180".into());
+    }
+    config::set_location(&app.config_path, p.latitude, p.longitude)?;
+    let all = config::load(&app.config_path)?.automations;
+    let location = Location { latitude: p.latitude, longitude: p.longitude };
+    app.core.set_automations(Automations::new(&all, Some(location))?);
+    Ok(json!(true))
 }
 
 /// Writes the automation to the config file (`None` removes it) once every automation of the

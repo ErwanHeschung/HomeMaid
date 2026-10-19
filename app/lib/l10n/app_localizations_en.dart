@@ -753,4 +753,41 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get noActionHere => 'No device here has actions';
+
+  @override
+  String get homeLocation => 'Home location';
+
+  @override
+  String get locationUnset => 'Not set: needed for sunrise and sunset';
+
+  @override
+  String get latitude => 'Latitude';
+
+  @override
+  String get longitude => 'Longitude';
+
+  @override
+  String get locationHint =>
+      'Your town is enough, e.g. 48.86 and 2.35 for Paris. Nothing leaves your PC.';
+
+  @override
+  String get locationInvalid => 'Latitude -90 to 90, longitude -180 to 180';
+
+  @override
+  String get sunNeedsLocation =>
+      'Sunrise and sunset need the home\'s location.';
+
+  @override
+  String get setLocation => 'Set the location';
+
+  @override
+  String get paramApp => 'App';
+
+  @override
+  String get paramShortcut => 'Service';
+
+  @override
+  String capNoDevice(String cap) {
+    return '$cap (no device)';
+  }
 }

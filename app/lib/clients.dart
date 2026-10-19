@@ -135,6 +135,22 @@ class CoreClient extends ChangeNotifier {
   /// The core's automations (written in its homemaid.toml), with their last runs.
   List<Automation> automations = const [];
 
+  /// Where the home is, for sunrise and sunset; null until set (`home.location`).
+  ({double latitude, double longitude})? location;
+
+  Future<void> refreshLocation() async {
+    final at = await call('home.location') as Map?;
+    location = at == null ? null : (latitude: (at['latitude'] as num).toDouble(), longitude: (at['longitude'] as num).toDouble());
+    notifyListeners();
+  }
+
+  /// Saved in homemaid.toml; sunrise and sunset work at once.
+  Future<void> setLocation(double latitude, double longitude) async {
+    await call('home.set_location', {'latitude': latitude, 'longitude': longitude});
+    location = (latitude: latitude, longitude: longitude);
+    notifyListeners();
+  }
+
   Future<Object?> call(String method, [Object? params]) {
     final id = ++_nextId;
     final completer = Completer<Object?>();
@@ -223,8 +239,9 @@ class CoreClient extends ChangeNotifier {
       roomKinds
         ..clear()
         ..addEntries(rooms.map((r) => MapEntry((r as Map)['name'] as String, r['kind'] as String)));
-      // An older core has no automations: an empty list.
+      // An older core has no automations, nor a location: none.
       await refreshAutomations().catchError((Object _) {});
+      await refreshLocation().catchError((Object _) {});
       notifyListeners();
     } catch (_) {
       // Lost again: the socket reconnects and resyncs.
@@ -252,9 +269,14 @@ class CoreClient extends ChangeNotifier {
       case 'entity.changed':
         final entity = Entity.fromJson((params['entity'] as Map).cast<String, dynamic>());
         entities[entity.id] = entity;
-      case 'automation.ran' || 'automations.changed':
-        // A run (new history, next time) or an edit: read them again.
+      case 'automation.ran':
+        // The run comes with its automation's new history and next time: read them again.
         refreshAutomations().catchError((Object _) {});
+        return;
+      case 'automations.changed':
+        // Edited, maybe from another phone, or the location changed.
+        refreshAutomations().catchError((Object _) {});
+        refreshLocation().catchError((Object _) {});
         return;
       case 'room.changed':
         final name = params['name'] as String;

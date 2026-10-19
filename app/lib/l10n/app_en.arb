@@ -503,5 +503,23 @@
   "deleteAutomationBody": "It is removed from homemaid.toml and will not run again.",
   "removeItem": "Remove",
   "actionToRun": "Action",
-  "noActionHere": "No device here has actions"
+  "noActionHere": "No device here has actions",
+  "homeLocation": "Home location",
+  "locationUnset": "Not set: needed for sunrise and sunset",
+  "latitude": "Latitude",
+  "longitude": "Longitude",
+  "locationHint": "Your town is enough, e.g. 48.86 and 2.35 for Paris. Nothing leaves your PC.",
+  "locationInvalid": "Latitude -90 to 90, longitude -180 to 180",
+  "sunNeedsLocation": "Sunrise and sunset need the home's location.",
+  "setLocation": "Set the location",
+  "paramApp": "App",
+  "paramShortcut": "Service",
+  "capNoDevice": "{cap} (no device)",
+  "@capNoDevice": {
+    "placeholders": {
+      "cap": {
+        "type": "String"
+      }
+    }
+  }
 }

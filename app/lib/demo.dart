@@ -41,6 +41,7 @@ class DemoCore extends CoreClient {
       entities[e.id] = e;
     }
     automations = _automations(_fr);
+    location = (latitude: 48.86, longitude: 2.35);
   }
 
   final _fr = PlatformDispatcher.instance.locale.languageCode == 'fr';
@@ -94,6 +95,15 @@ class DemoCore extends CoreClient {
     automations = [for (final a in automations) a.id == id ? a.withRuns([run, ...a.runs].take(20).toList()) : a];
     notifyListeners();
     return run;
+  }
+
+  @override
+  Future<void> refreshLocation() async {}
+
+  @override
+  Future<void> setLocation(double latitude, double longitude) async {
+    location = (latitude: latitude, longitude: longitude);
+    notifyListeners();
   }
 
   /// Kept in memory only: the demo has no homemaid.toml.

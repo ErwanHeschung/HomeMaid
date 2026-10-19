@@ -21,6 +21,9 @@ struct State {
     agent: SocketAddr,
     token: String,
     online: bool,
+    /// What `launch` and `open` accept, as the agent said at discovery.
+    apps: Vec<String>,
+    shortcuts: Vec<String>,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -42,7 +45,11 @@ fn call(state: &State, request: Value) -> Result<Value, String> {
     match response.status {
         200 => serde_json::from_slice(&response.body).map_err(|e| format!("agent: invalid JSON: {e}")),
         401 => Err("agent refused the token: `token` in [pc] of secrets.toml must be the agent's agent.token".into()),
-        status => Err(format!("agent: HTTP {status}: {}", String::from_utf8_lossy(&response.body))),
+        // The agent says why in words (`{"error": "app `x` is not in [agent.apps]"}`): just that.
+        status => Err(serde_json::from_slice::<Value>(&response.body)
+            .ok()
+            .and_then(|body| body["error"].as_str().map(String::from))
+            .unwrap_or_else(|| format!("agent: HTTP {status}: {}", String::from_utf8_lossy(&response.body)))),
     }
 }
 
@@ -79,13 +86,16 @@ impl Plugin for Pc {
         let agent = settings.get("agent").ok_or("missing setting `agent` (ip:port of the agent, e.g. 127.0.0.1:8124)")?;
         let agent = agent.parse().map_err(|_| format!("invalid setting `agent` = `{agent}`: expected ip:port"))?;
         let token = secret("token").ok_or("missing secret `token` in [pc] of secrets.toml (the agent's agent.token)")?;
-        *STATE.lock().unwrap() = Some(State { agent, token, online: false });
+        *STATE.lock().unwrap() = Some(State { agent, token, online: false, apps: vec![], shortcuts: vec![] });
         Ok(())
     }
 
     fn discover() -> Result<Vec<DiscoveredEntity>, String> {
         with_state(|state| {
             let pc = call(state, json!({ "type": "state" }))?;
+            let names = |key: &str| pc[key].as_array().into_iter().flatten().filter_map(|n| n.as_str().map(String::from)).collect();
+            state.apps = names("apps");
+            state.shortcuts = names("shortcuts");
             let mut caps = vec![
                 (custom("cpu"), sensor(Some("%"), json!({ "type": "number" }))),
                 (custom("memory"), sensor(Some("%"), json!({ "type": "number" }))),
@@ -151,12 +161,20 @@ const SIMPLE: [(&str, &str, &str); 6] = [
 
 impl Actions for Pc {
     fn actions() -> Vec<ActionDecl> {
-        let named = |key: &str| Some(json!({ "type": "object", "properties": { key: { "type": "string" } }, "required": [key] }));
+        // The choices the agent has (an older one tells none: any name).
+        let (apps, shortcuts) = with_state(|s| Ok((s.apps.clone(), s.shortcuts.clone()))).unwrap_or_default();
+        let named = |key: &str, choices: Vec<String>| {
+            let mut field = json!({ "type": "string" });
+            if !choices.is_empty() {
+                field["enum"] = json!(choices);
+            }
+            Some(json!({ "type": "object", "properties": { key: field }, "required": [key] }))
+        };
         let simple = SIMPLE.iter().map(|(name, ..)| ActionDecl { local_id: LOCAL_ID.into(), name: (*name).into(), params: None });
         simple
             .chain([
-                ActionDecl { local_id: LOCAL_ID.into(), name: "open".into(), params: named("shortcut") },
-                ActionDecl { local_id: LOCAL_ID.into(), name: "launch".into(), params: named("app") },
+                ActionDecl { local_id: LOCAL_ID.into(), name: "open".into(), params: named("shortcut", shortcuts) },
+                ActionDecl { local_id: LOCAL_ID.into(), name: "launch".into(), params: named("app", apps) },
             ])
             .collect()
     }

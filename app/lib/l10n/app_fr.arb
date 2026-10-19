@@ -216,5 +216,16 @@
   "deleteAutomationBody": "Elle est retirée de homemaid.toml et ne se déclenchera plus.",
   "removeItem": "Retirer",
   "actionToRun": "Action",
-  "noActionHere": "Aucun appareil ici n'a d'action"
+  "noActionHere": "Aucun appareil ici n'a d'action",
+  "homeLocation": "Emplacement de la maison",
+  "locationUnset": "Pas défini : nécessaire pour le lever et le coucher du soleil",
+  "latitude": "Latitude",
+  "longitude": "Longitude",
+  "locationHint": "Votre ville suffit, par exemple 48,86 et 2,35 pour Paris. Rien ne quitte votre PC.",
+  "locationInvalid": "Latitude de -90 à 90, longitude de -180 à 180",
+  "sunNeedsLocation": "Le lever et le coucher du soleil ont besoin de l'emplacement de la maison.",
+  "setLocation": "Définir l'emplacement",
+  "paramApp": "Application",
+  "paramShortcut": "Service",
+  "capNoDevice": "{cap} (aucun appareil)"
 }

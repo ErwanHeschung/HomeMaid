@@ -122,6 +122,9 @@ struct PcState {
     /// Percent.
     memory: f32,
     active_window: Option<String>,
+    /// Names of `[agent.apps]` and `[[agent.shortcut]]`: what `launch` and `open` accept.
+    apps: Vec<String>,
+    shortcuts: Vec<String>,
 }
 
 type Job = (Request, oneshot::Sender<Result<Value, String>>);
@@ -377,6 +380,12 @@ fn desktop(
                     cpu: system.global_cpu_usage(),
                     memory: (system.used_memory() as f64 * 100.0 / system.total_memory().max(1) as f64) as f32,
                     active_window: desktop.active_window(),
+                    apps: apps.keys().cloned().collect(),
+                    shortcuts: {
+                        let mut names: Vec<String> = opens.keys().cloned().collect();
+                        names.sort();
+                        names
+                    },
                 };
                 Ok(json!(state))
             }
