@@ -175,3 +175,19 @@ async fn after_a_change_the_agent_restarts_with_it() {
     server.await.unwrap().unwrap();
     std::fs::remove_file(&path).unwrap();
 }
+
+#[tokio::test]
+async fn icons_are_for_known_apps_and_the_token_holder() {
+    let (addr, _stopping) = start_agent().await;
+    let get = async |auth: &str| {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let request = format!("GET /icon?app=..%5C..%5Cwindows%5Cwin.ini HTTP/1.1\r\nHost: x\r\n{auth}Connection: close\r\n\r\n");
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut answer = String::new();
+        stream.read_to_string(&mut answer).await.unwrap();
+        answer
+    };
+    assert!(get("").await.starts_with("HTTP/1.1 401"));
+    assert!(get("Authorization: Bearer secret\r\n").await.starts_with("HTTP/1.1 404"), "not an app it found: nothing");
+}

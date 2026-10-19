@@ -156,6 +156,9 @@ type Discovered = Arc<RwLock<BTreeMap<String, String>>>;
 /// How often the Start menu is read again (apps installed meanwhile).
 const DISCOVERY_PERIOD: Duration = Duration::from_secs(600);
 
+/// An app's AppID, and where its icon (PNG) goes; none when it has none.
+type IconJob = (String, oneshot::Sender<Option<Arc<Vec<u8>>>>);
+
 /// What lets the phone change the agent's own config: the file, and how to restart the agent so
 /// it reads it again. Without it (tests), those requests are refused.
 #[derive(Clone)]
@@ -169,6 +172,9 @@ struct Agent {
     jobs: mpsc::Sender<Job>,
     manage: Option<Manage>,
     discovered: Discovered,
+    /// `[agent.apps]`: a pinned app (`shell:AppsFolder\<AppID>`) has its icon too.
+    apps: Arc<BTreeMap<String, PathBuf>>,
+    icons: mpsc::Sender<IconJob>,
     token: Arc<str>,
     hello: Arc<str>,
     pair_page: Arc<str>,
@@ -244,6 +250,7 @@ pub fn router(config: &AgentConfig, stopping: &watch::Sender<()>, manage: Option
         discover(Arc::downgrade(&discovered))?;
     }
     let to_desktop = discovered.clone();
+    let icons = icon_thread()?;
     thread::Builder::new()
         .name("desktop".into())
         .spawn(move || desktop(rx, apps, opens, shortcuts, to_desktop))
@@ -265,6 +272,8 @@ pub fn router(config: &AgentConfig, stopping: &watch::Sender<()>, manage: Option
         jobs,
         manage,
         discovered,
+        apps: Arc::new(config.apps.clone()),
+        icons,
         token: config.token.as_str().into(),
         hello: hello.to_string().into(),
         pair_page: pairing::page("agent", config.bind, &config.token).into(),
@@ -274,6 +283,7 @@ pub fn router(config: &AgentConfig, stopping: &watch::Sender<()>, manage: Option
         .route("/remote", get(|| async { Html(include_str!("remote.html")) }))
         .route("/pair", get(pair))
         .route("/hello", get(prove))
+        .route("/icon", get(icon))
         .route("/ws", get(ws))
         .route("/api", post(api))
         .with_state(agent))
@@ -360,6 +370,49 @@ async fn remote(mut socket: WebSocket, mut agent: Agent) {
     }
 }
 
+/// The thread that draws app icons, set up as the Windows shell wants it; each icon is drawn
+/// once. It ends with the agent (its last sender).
+fn icon_thread() -> Result<mpsc::Sender<IconJob>, String> {
+    let (tx, rx) = mpsc::channel::<IconJob>();
+    thread::Builder::new()
+        .name("app-icons".into())
+        .spawn(move || {
+            platform::init_icon_thread();
+            let mut drawn: HashMap<String, Option<Arc<Vec<u8>>>> = HashMap::new();
+            for (app_id, reply) in rx {
+                let icon = drawn.entry(app_id).or_insert_with_key(|id| platform::app_icon(id).map(Arc::new)).clone();
+                let _ = reply.send(icon);
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(tx)
+}
+
+/// `GET /icon?app=<name>`: the Start menu's icon of an app the agent knows (found there, or
+/// pinned from it), as PNG. Never an arbitrary file: anything else is 404.
+async fn icon(State(agent): State<Agent>, headers: HeaderMap, Query(query): Query<HashMap<String, String>>) -> Response {
+    if !authorized(&headers, &HashMap::new(), &agent.token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let name = query.get("app").map(String::as_str).unwrap_or_default();
+    let pinned = agent.apps.get(name).and_then(|target| target.to_str()?.strip_prefix("shell:AppsFolder\\").map(String::from));
+    let Some(app_id) = agent.discovered.read().unwrap().get(name).cloned().or(pinned) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let (reply, answer) = oneshot::channel();
+    if agent.icons.send((app_id, reply)).is_err() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match answer.await {
+        Ok(Some(png)) => (
+            [(axum::http::header::CONTENT_TYPE, "image/png"), (axum::http::header::CACHE_CONTROL, "max-age=86400")],
+            png.as_ref().clone(),
+        )
+            .into_response(),
+        _ => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 /// Fills `discovered` from the Start menu now, then every [`DISCOVERY_PERIOD`], for as long as the
 /// agent that holds it runs.
 fn discover(discovered: Weak<RwLock<BTreeMap<String, String>>>) -> Result<(), String> {
@@ -393,6 +446,10 @@ pub fn parse_start_apps(json: &str) -> BTreeMap<String, String> {
     let mut apps = BTreeMap::new();
     for entry in entries {
         let (Some(name), Some(id)) = (entry["Name"].as_str(), entry["AppID"].as_str()) else { continue };
+        // A web link in the Start menu ("Support Center") is not an app.
+        if id.starts_with("http://") || id.starts_with("https://") {
+            continue;
+        }
         let words = name.to_lowercase();
         let junk = NOT_APPS.iter().any(|w| words.split(|c: char| !c.is_alphanumeric() && c != '-').any(|word| word.starts_with(w)) || words.contains(w));
         if !junk && !name.trim().is_empty() {
@@ -641,7 +698,8 @@ mod tests {
             {"Name":"Steam","AppID":"Valve.Steam"},{"Name":"Steam","AppID":"duplicate"},
             {"Name":"Uninstall Steam","AppID":"x"},{"Name":"Désinstaller Foo","AppID":"x"},
             {"Name":"Foo Help","AppID":"x"},{"Name":"Aide de Foo","AppID":"x"},{"Name":"Lisez-moi","AppID":"x"},
-            {"Name":"Assistance rapide","AppID":"QuickAssist!App"},{"Name":"Apex Legends","AppID":"steam://rungameid/1172470"}]"#;
+            {"Name":"Assistance rapide","AppID":"QuickAssist!App"},{"Name":"Apex Legends","AppID":"steam://rungameid/1172470"},
+            {"Name":"Steam Support Center","AppID":"http://support.steampowered.com/"}]"#;
         let apps = parse_start_apps(json);
         assert_eq!(apps.keys().collect::<Vec<_>>(), ["Accès vocal", "Apex Legends", "Assistance rapide", "Steam"]);
         assert_eq!(apps["Steam"], "Valve.Steam", "the first of two");

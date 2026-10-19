@@ -139,6 +139,65 @@ pub fn start_apps() -> std::collections::BTreeMap<String, String> {
     }
 }
 
+/// Sets this thread up as the Windows shell wants it (an STA), for [`app_icon`].
+pub fn init_icon_thread() {
+    // Already set up is fine.
+    let _ = unsafe { CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED) };
+}
+
+/// The icon the Start menu shows for an app, 96 px, as PNG.
+pub fn app_icon(app_id: &str) -> Option<Vec<u8>> {
+    unsafe { icon_png(app_id) }.map_err(|e| tracing::debug!("no icon for {app_id}: {e}")).ok()
+}
+
+unsafe fn icon_png(app_id: &str) -> windows::core::Result<Vec<u8>> {
+    use windows::{
+        Win32::{
+            Foundation::{E_FAIL, HGLOBAL, SIZE},
+            Graphics::{
+                Gdi::{DeleteObject, HPALETTE},
+                Imaging::{CLSID_WICImagingFactory, GUID_ContainerFormatPng, IWICImagingFactory, WICBitmapEncoderNoCache, WICBitmapUsePremultipliedAlpha},
+            },
+            System::{
+                Com::{CLSCTX_INPROC_SERVER, STREAM_SEEK_CUR, StructuredStorage::{CreateStreamOnHGlobal, GetHGlobalFromStream}},
+                Memory::{GlobalLock, GlobalUnlock},
+            },
+            UI::Shell::{IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY},
+        },
+        core::{Error, HSTRING},
+    };
+    unsafe {
+        // The Start menu's own item: programs, Store apps and games alike.
+        let item: IShellItemImageFactory = SHCreateItemFromParsingName(&HSTRING::from(format!("shell:AppsFolder\\{app_id}")), None)?;
+        let bitmap = item.GetImage(SIZE { cx: 96, cy: 96 }, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK)?;
+        let wic: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)?;
+        let source = wic.CreateBitmapFromHBITMAP(bitmap, HPALETTE::default(), WICBitmapUsePremultipliedAlpha);
+        let _ = DeleteObject(bitmap.into());
+        let source = source?;
+        let stream = CreateStreamOnHGlobal(HGLOBAL::default(), true)?;
+        let encoder = wic.CreateEncoder(&GUID_ContainerFormatPng, std::ptr::null())?;
+        encoder.Initialize(&stream, WICBitmapEncoderNoCache)?;
+        let (mut frame, mut options) = (None, None);
+        encoder.CreateNewFrame(&mut frame, &mut options)?;
+        let frame = frame.ok_or_else(|| Error::from(E_FAIL))?;
+        frame.Initialize(options.as_ref())?;
+        frame.WriteSource(&source, std::ptr::null())?;
+        frame.Commit()?;
+        encoder.Commit()?;
+        // What was written: up to the stream's position.
+        let mut length = 0u64;
+        stream.Seek(0, STREAM_SEEK_CUR, Some(&mut length))?;
+        let memory = GetHGlobalFromStream(&stream)?;
+        let data = GlobalLock(memory) as *const u8;
+        if data.is_null() {
+            return Err(Error::from(E_FAIL));
+        }
+        let png = std::slice::from_raw_parts(data, length as usize).to_vec();
+        let _ = GlobalUnlock(memory);
+        Ok(png)
+    }
+}
+
 fn power(action: Power) -> Result<(), String> {
     match action {
         Power::Lock => unsafe { windows::Win32::System::Shutdown::LockWorkStation() }.map_err(|e| e.to_string()),
@@ -190,5 +249,26 @@ fn media_key(action: Media) -> EnigoKey {
         Media::VolumeUp => EnigoKey::VolumeUp,
         Media::VolumeDown => EnigoKey::VolumeDown,
         Media::Mute => EnigoKey::VolumeMute,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Run on a Windows session: `cargo test --target x86_64-pc-windows-gnu -p homemaid --lib -- --ignored icons`.
+    /// With `HOMEMAID_ICON_DIR`, the icons are written there to look at.
+    #[test]
+    #[ignore = "needs a Windows desktop session"]
+    fn start_menu_icons_are_png() {
+        init_icon_thread();
+        for id in ["Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App"] {
+            let png = app_icon(id).unwrap_or_else(|| panic!("no icon for {id}"));
+            assert!(png.starts_with(b"\x89PNG\r\n\x1a\n") && png.len() > 200, "{id}: {} bytes", png.len());
+            if let Ok(dir) = std::env::var("HOMEMAID_ICON_DIR") {
+                std::fs::write(std::path::Path::new(&dir).join(format!("{}.png", id.split('_').next().unwrap())), &png).unwrap();
+            }
+        }
+        assert!(app_icon("No.Such.App!App").is_none());
     }
 }

@@ -20,6 +20,13 @@ pub fn start_apps() -> std::collections::BTreeMap<String, String> {
     Default::default()
 }
 
+pub fn init_icon_thread() {}
+
+/// No app icons here.
+pub fn app_icon(_app_id: &str) -> Option<Vec<u8>> {
+    None
+}
+
 pub struct Desktop {
     volume: u8,
     muted: bool,

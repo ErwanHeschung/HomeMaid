@@ -39,13 +39,17 @@ wasmtime-wasi = "49.0.3"
 [target.'cfg(windows)'.dependencies]
 enigo = "0.6.1"
 windows = { version = "0.62.2", features = [
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Imaging",
     "Win32_Media_Audio",
     "Win32_Media_Audio_Endpoints",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Power",
+    "Win32_System_Memory",
     "Win32_System_Shutdown",
     "Win32_System_Variant",
+    "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
 
