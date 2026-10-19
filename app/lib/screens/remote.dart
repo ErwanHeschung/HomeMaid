@@ -307,9 +307,7 @@ class _Launchers extends StatelessWidget {
                 size: 56,
                 selected: active,
                 onPressed: enabled ? launch : null,
-                child: logo != null
-                    ? SvgPicture.asset('assets/logos/$logo.svg', width: 24, height: 24, colorFilter: ColorFilter.mode(ink, BlendMode.srcIn))
-                    : Text(_monogram(name), style: theme.textTheme.titleMedium?.copyWith(fontFamily: Hm.condensed, letterSpacing: 0.5)),
+                child: _launcherMark(agent, name, logo, ink, site, theme),
               ),
               const SizedBox(height: 6),
               ExcludeSemantics(
@@ -324,6 +322,29 @@ class _Launchers extends StatelessWidget {
             ),
           );
         },
+      ),
+    );
+  }
+
+  /// A bundled logo in ink; else, for an app of the PC, its own icon redrawn in ink (duotone,
+  /// so it sits with the ink keys); else the name's initials, also while the icon comes.
+  static Widget _launcherMark(AgentClient agent, String name, String? logo, Color ink, bool site, ThemeData theme) {
+    if (logo != null) {
+      return SvgPicture.asset('assets/logos/$logo.svg', width: 24, height: 24, colorFilter: ColorFilter.mode(ink, BlendMode.srcIn));
+    }
+    final initials = Text(_monogram(name), style: theme.textTheme.titleMedium?.copyWith(fontFamily: Hm.condensed, letterSpacing: 0.5));
+    final icon = site ? null : agent.iconOf(name);
+    if (icon == null) return initials;
+    return ColorFiltered(
+      colorFilter: Hm.duotone(Hm.raised, ink),
+      child: Image.network(
+        icon.uri.toString(),
+        headers: icon.headers,
+        width: 26,
+        height: 26,
+        filterQuality: FilterQuality.medium,
+        frameBuilder: (context, child, frame, _) => frame == null ? initials : child,
+        errorBuilder: (_, _, _) => initials,
       ),
     );
   }

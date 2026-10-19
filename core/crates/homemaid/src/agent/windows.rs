@@ -257,16 +257,22 @@ mod tests {
     use super::*;
 
     /// Run on a Windows session: `cargo test --target x86_64-pc-windows-gnu -p homemaid --lib -- --ignored icons`.
-    /// With `HOMEMAID_ICON_DIR`, the icons are written there to look at.
+    /// With `HOMEMAID_ICON_DIR`, the icons are written there to look at; `HOMEMAID_ICON_IDS` adds
+    /// AppIDs (separated by `|`).
     #[test]
     #[ignore = "needs a Windows desktop session"]
     fn start_menu_icons_are_png() {
         init_icon_thread();
-        for id in ["Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App"] {
+        let more = std::env::var("HOMEMAID_ICON_IDS").unwrap_or_default();
+        let ids = ["Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App"]
+            .into_iter()
+            .chain(more.split('|').filter(|id| !id.is_empty()));
+        for id in ids {
             let png = app_icon(id).unwrap_or_else(|| panic!("no icon for {id}"));
             assert!(png.starts_with(b"\x89PNG\r\n\x1a\n") && png.len() > 200, "{id}: {} bytes", png.len());
             if let Ok(dir) = std::env::var("HOMEMAID_ICON_DIR") {
-                std::fs::write(std::path::Path::new(&dir).join(format!("{}.png", id.split('_').next().unwrap())), &png).unwrap();
+                let name: String = id.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+                std::fs::write(std::path::Path::new(&dir).join(format!("{name}.png")), &png).unwrap();
             }
         }
         assert!(app_icon("No.Such.App!App").is_none());

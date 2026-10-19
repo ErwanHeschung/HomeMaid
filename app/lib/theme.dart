@@ -62,6 +62,16 @@ abstract final class Hm {
   static const condensed = 'Barlow Semi Condensed';
   static const tabular = [FontFeature.tabularFigures()];
 
+  /// An image's brightness redrawn from [dark] to [light]: a colour icon becomes one of the
+  /// theme's, its shapes and details kept (the PC's app icons on the remote's ink keys).
+  static ColorFilter duotone(Color dark, Color light) => ColorFilter.matrix(duotoneMatrix(dark, light));
+
+  /// Its 4×5 matrix (channels 0-255): luminance (Rec. 709) mapped linearly from dark to light.
+  static List<double> duotoneMatrix(Color dark, Color light) {
+    List<double> row(double d, double l) => [(l - d) * 0.2126, (l - d) * 0.7152, (l - d) * 0.0722, 0, d * 255];
+    return [...row(dark.r, light.r), ...row(dark.g, light.g), ...row(dark.b, light.b), 0, 0, 0, 1, 0];
+  }
+
   static ThemeData theme() {
     const scheme = ColorScheme(
       brightness: Brightness.dark,
