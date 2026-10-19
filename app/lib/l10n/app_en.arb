@@ -232,6 +232,43 @@
       }
     }
   },
+  "atSun": "{days} {when}",
+  "@atSun": {
+    "placeholders": {
+      "days": {
+        "type": "String"
+      },
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "atSunrise": "at sunrise",
+  "atSunset": "at sunset",
+  "sunrise": "sunrise",
+  "sunset": "sunset",
+  "sunBefore": "{minutes} min before {event}",
+  "@sunBefore": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      },
+      "event": {
+        "type": "String"
+      }
+    }
+  },
+  "sunAfter": "{minutes} min after {event}",
+  "@sunAfter": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      },
+      "event": {
+        "type": "String"
+      }
+    }
+  },
   "whenIs": "When {target} · {cap} becomes {value}",
   "@whenIs": {
     "placeholders": {

@@ -368,9 +368,26 @@ String _value(BuildContext context, String cap, Object? value) {
   };
 }
 
+/// `sunset`, `sunrise+15`, `sunset-30` (the core's syntax) in words: with "at" for a trigger, as
+/// a noun for a range. Null for a clock time.
+String? sunText(BuildContext context, String text, {required bool at}) {
+  final m = RegExp(r'^(sunrise|sunset)([+-]\d+)?$').firstMatch(text);
+  if (m == null) return null;
+  final l = AppLocalizations.of(context);
+  final rise = m[1] == 'sunrise';
+  final offset = int.parse(m[2] ?? '0');
+  if (offset == 0) return at ? (rise ? l.atSunrise : l.atSunset) : (rise ? l.sunrise : l.sunset);
+  final event = rise ? l.sunrise : l.sunset;
+  return offset < 0 ? l.sunBefore(-offset, event) : l.sunAfter(offset, event);
+}
+
 String triggerText(BuildContext context, CoreClient core, Map<String, dynamic> t) {
   final l = AppLocalizations.of(context);
-  if (t['at'] case final String at) return l.atTime(_days(context, t['days'] as List? ?? const []), at);
+  if (t['at'] case final String at) {
+    final days = _days(context, t['days'] as List? ?? const []);
+    final sun = sunText(context, at, at: true);
+    return sun == null ? l.atTime(days, at) : l.atSun(days, sun);
+  }
   final when = (t['when'] as Map).cast<String, dynamic>();
   final (target, cap) = (targetText(context, when['select'] as String), when['cap'] as String);
   final test = (when['test'] as Map).cast<String, dynamic>();
@@ -383,7 +400,9 @@ String triggerText(BuildContext context, CoreClient core, Map<String, dynamic> t
 
 String conditionText(BuildContext context, CoreClient core, Map<String, dynamic> c) {
   final l = AppLocalizations.of(context);
-  if (c['between'] case [final String from, final String to]) return l.ifBetween(from, to);
+  if (c['between'] case [final String from, final String to]) {
+    return l.ifBetween(sunText(context, from, at: false) ?? from, sunText(context, to, at: false) ?? to);
+  }
   if (c['days'] case final List days) return _days(context, days);
   final state = (c['state'] as Map).cast<String, dynamic>();
   final (target, cap) = (targetText(context, state['select'] as String), state['cap'] as String);

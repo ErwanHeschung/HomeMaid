@@ -1,6 +1,6 @@
 //! Typed automations: `[[automation]]` in homemaid.toml, checked when the config loads.
 //!
-//! A trigger (a time of day, or an observed state crossing a value) runs the automation; its
+//! A trigger (a time of day, sunrise or sunset included, or an observed state crossing a value) runs the automation; its
 //! conditions decide; its actions set desired states (the reconciler does the rest) or invoke
 //! one-shot actions. Entities are chosen by selectors, never by name. A dry run tells what would
 //! happen without doing it. Each automation keeps its last runs in memory.
@@ -11,7 +11,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use jiff::{Zoned, civil::Time};
+use jiff::{
+    Zoned,
+    civil::{Date, Time},
+    tz::TimeZone,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -28,6 +32,8 @@ const KEEP_RUNS: usize = 20;
 const MAX_RUNS_PER_MINUTE: usize = 10;
 /// An `at` trigger found due later than this (the PC was asleep at that time) is skipped, not run late.
 const GRACE: Duration = Duration::from_secs(5 * 60);
+/// Largest sunrise/sunset offset, in minutes: what the devices that run schedules accept.
+const MAX_SUN_OFFSET: i16 = 360;
 
 // ------------------------------------------------------------------------------------- config
 
@@ -176,15 +182,89 @@ struct StateTest {
     all: bool,
 }
 
+/// Where the hub is (`latitude` and `longitude` in `[core]`), for sunrise and sunset.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Location {
+    pub latitude: f64,
+    pub longitude: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Sun {
+    Rise,
+    Set,
+}
+
+/// A time of day: `19:30`, or `sunrise`/`sunset` shifted by minutes (`sunset-30`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum TimeOf {
+    Clock(Time),
+    Sun(Sun, i16, Location),
+}
+
+impl TimeOf {
+    fn parse(text: &str, location: Option<Location>) -> Result<Self, String> {
+        let sun = [("sunrise", Sun::Rise), ("sunset", Sun::Set)].into_iter().find_map(|(name, sun)| Some((sun, text.strip_prefix(name)?)));
+        let Some((sun, offset)) = sun else {
+            return text.parse().map(TimeOf::Clock).map_err(|_| format!("`{text}` is not a time (HH:MM, sunrise, sunset, sunset-30)"));
+        };
+        let offset: i16 = match offset {
+            "" => 0,
+            o if o.starts_with(['+', '-']) => o.parse().map_err(|_| format!("`{text}`: the offset is in minutes, as in sunset-30"))?,
+            _ => return Err(format!("`{text}`: write the offset with its sign, as in sunset-30 or sunrise+15")),
+        };
+        if offset.abs() > MAX_SUN_OFFSET {
+            return Err(format!("`{text}`: the offset is {MAX_SUN_OFFSET} minutes at most"));
+        }
+        let location = location.ok_or("sunrise and sunset need `latitude` and `longitude` in [core]")?;
+        sunrise::Coordinates::new(location.latitude, location.longitude).ok_or("[core] latitude or longitude is out of range")?;
+        Ok(TimeOf::Sun(sun, offset, location))
+    }
+
+    /// When it is on `date`, in `tz`; none when the sun does not rise or set that day (polar
+    /// regions). A clock time that does not exist that day (spring forward) is just after the gap.
+    fn on(&self, date: Date, tz: &TimeZone) -> Option<Zoned> {
+        match *self {
+            TimeOf::Clock(time) => date.to_datetime(time).to_zoned(tz.clone()).ok(),
+            TimeOf::Sun(sun, offset, location) => {
+                let coordinates = sunrise::Coordinates::new(location.latitude, location.longitude)?;
+                let day = chrono::NaiveDate::from_ymd_opt(date.year().into(), date.month() as u32, date.day() as u32)?;
+                let event = match sun {
+                    Sun::Rise => sunrise::SolarEvent::Sunrise,
+                    Sun::Set => sunrise::SolarEvent::Sunset,
+                };
+                let utc = sunrise::SolarDay::new(coordinates, day).event_time(event)?;
+                let at = jiff::Timestamp::from_second(utc.timestamp()).ok()?.to_zoned(tz.clone());
+                at.checked_add(jiff::SignedDuration::from_mins(offset.into())).ok()
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for TimeOf {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            TimeOf::Clock(time) => write!(f, "{}", time.strftime("%H:%M")),
+            TimeOf::Sun(sun, offset, _) => {
+                write!(f, "{}", if *sun == Sun::Rise { "sunrise" } else { "sunset" })?;
+                if *offset != 0 {
+                    write!(f, "{offset:+}")?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 enum Trigger {
-    At { time: Time, days: Days },
+    At { time: TimeOf, days: Days },
     When(StateTest),
 }
 
 #[derive(Debug, Clone)]
 enum Condition {
-    Between(Time, Time),
+    Between(TimeOf, TimeOf),
     Days(Days),
     State(StateTest),
 }
@@ -203,10 +283,6 @@ pub struct Automation {
     triggers: Vec<Trigger>,
     conditions: Vec<Condition>,
     actions: Vec<Action>,
-}
-
-fn time(text: &str) -> Result<Time, String> {
-    text.parse().map_err(|_| format!("`{text}` is not a time (HH:MM)"))
 }
 
 fn state_test(c: &TestConfig, trigger: bool) -> Result<StateTest, String> {
@@ -246,7 +322,8 @@ fn state_test(c: &TestConfig, trigger: bool) -> Result<StateTest, String> {
 
 impl Automation {
     /// Checks everything that can be checked without the devices; errors stop the core.
-    pub fn compile(c: &AutomationConfig) -> Result<Self, String> {
+    pub fn compile(c: &AutomationConfig, location: Option<Location>) -> Result<Self, String> {
+        let time = |text: &str| TimeOf::parse(text, location);
         let at = |what: String, i: usize, e: String| format!("automation `{}`, {what} {}: {e}", c.id, i + 1);
         if c.id.is_empty() {
             return Err("an automation needs an `id`".into());
@@ -258,7 +335,8 @@ impl Automation {
         for (i, t) in c.triggers.iter().enumerate() {
             let trigger = match (&t.at, &t.when) {
                 (Some(at_time), None) => {
-                    Trigger::At { time: time(at_time)?, days: t.days.as_deref().map(Days::parse).transpose()?.unwrap_or(Days::ALL) }
+                    let time = time(at_time).map_err(|e| at("trigger".into(), i, e))?;
+                    Trigger::At { time, days: t.days.as_deref().map(Days::parse).transpose()?.unwrap_or(Days::ALL) }
                 }
                 (None, Some(when)) if t.days.is_none() => Trigger::When(state_test(when, true)?),
                 (None, Some(_)) => return Err(at("trigger".into(), i, "`days` goes with `at`".into())),
@@ -270,7 +348,7 @@ impl Automation {
         let mut conditions = vec![];
         for (i, k) in c.conditions.iter().enumerate() {
             let condition = match (&k.between, &k.days, &k.state) {
-                (Some([from, to]), None, None) => Condition::Between(time(from)?, time(to)?),
+                (Some([from, to]), None, None) => Condition::Between(time(from).map_err(|e| at("condition".into(), i, e))?, time(to).map_err(|e| at("condition".into(), i, e))?),
                 (None, Some(days), None) => Condition::Days(Days::parse(days)?),
                 (None, None, Some(state)) => Condition::State(state_test(state, false).map_err(|e| at("condition".into(), i, e))?),
                 _ => return Err(at("condition".into(), i, "give one of `between`, `days`, `state`".into())),
@@ -300,27 +378,39 @@ impl Automation {
 
     /// The next time one of its `at` triggers fires, strictly after `after`.
     fn next_time(&self, after: &Zoned) -> Option<Zoned> {
+        self.next_trigger(after).map(|(at, _)| at)
+    }
+
+    /// Same, with how the run is labelled: `19:30`, or `sunset (21:58)`.
+    fn next_trigger(&self, after: &Zoned) -> Option<(Zoned, String)> {
         self.triggers
             .iter()
             .filter_map(|t| match t {
-                Trigger::At { time, days } => next_at(*time, *days, after),
+                Trigger::At { time, days } => next_at(*time, *days, after).map(|at| {
+                    let clock = at.strftime("%H:%M").to_string();
+                    let label = if matches!(time, TimeOf::Clock(_)) { clock } else { format!("{time} ({clock})") };
+                    (at, label)
+                }),
                 Trigger::When(_) => None,
             })
-            .min()
+            .min_by(|a, b| a.0.cmp(&b.0))
     }
 }
 
-/// Next occurrence of `time` on one of `days`, strictly after `after`, in its time zone. A time
-/// that does not exist that day (spring forward) happens just after the gap.
-fn next_at(time: Time, days: Days, after: &Zoned) -> Option<Zoned> {
+/// Next occurrence of `time` on one of `days`, strictly after `after`, in its time zone.
+fn next_at(time: TimeOf, days: Days, after: &Zoned) -> Option<Zoned> {
     (0..8).find_map(|offset| {
         let date = after.date().checked_add(jiff::Span::new().days(offset)).ok()?;
-        let at = date.to_datetime(time).to_zoned(after.time_zone().clone()).ok()?;
+        let at = time.on(date, after.time_zone())?;
         (at > *after && days.contains(&at)).then_some(at)
     })
 }
 
-fn between(now: Time, from: Time, to: Time) -> bool {
+/// Whether `now` is in [from, to), today's sunrise or sunset when they are one; across midnight
+/// when `to` is earlier. Never, a day the sun does not set or rise.
+fn between(now: &Zoned, from: TimeOf, to: TimeOf) -> bool {
+    let time = |t: TimeOf| t.on(now.date(), now.time_zone()).map(|z| z.time());
+    let (Some(from), Some(to), now) = (time(from), time(to), now.time()) else { return false };
     if from <= to { now >= from && now < to } else { now >= from || now < to }
 }
 
@@ -411,14 +501,14 @@ fn describe_test(t: &StateTest) -> Value {
 
 fn describe_trigger(t: &Trigger) -> Value {
     match t {
-        Trigger::At { time, days } => json!({ "at": time.strftime("%H:%M").to_string(), "days": days.names() }),
+        Trigger::At { time, days } => json!({ "at": time.to_string(), "days": days.names() }),
         Trigger::When(test) => json!({ "when": describe_test(test) }),
     }
 }
 
 fn describe_condition(c: &Condition) -> Value {
     match c {
-        Condition::Between(from, to) => json!({ "between": [from.strftime("%H:%M").to_string(), to.strftime("%H:%M").to_string()] }),
+        Condition::Between(from, to) => json!({ "between": [from.to_string(), to.to_string()] }),
         Condition::Days(days) => json!({ "days": days.names() }),
         Condition::State(test) => json!({ "state": describe_test(test) }),
     }
@@ -450,13 +540,13 @@ pub struct Automations {
 
 impl Automations {
     /// Compiles the configured automations: any error is a config error.
-    pub fn new(configs: &[AutomationConfig]) -> Result<Self, String> {
+    pub fn new(configs: &[AutomationConfig], location: Option<Location>) -> Result<Self, String> {
         let mut list: Vec<Automation> = vec![];
         for c in configs {
             if list.iter().any(|a| a.id == c.id) {
                 return Err(format!("two automations have the id `{}`", c.id));
             }
-            list.push(Automation::compile(c)?);
+            list.push(Automation::compile(c, location)?);
         }
         Ok(Self { list, history: Mutex::default(), observed: Mutex::default() })
     }
@@ -682,12 +772,12 @@ impl Automations {
                 () = tokio::time::sleep(wait) => {
                     let now = Zoned::now();
                     for (i, a) in self.list.iter().enumerate().filter(|(_, a)| a.enabled) {
-                        let Some(due) = a.next_time(&checked).filter(|due| *due <= now) else { continue };
+                        let Some((due, label)) = a.next_trigger(&checked).filter(|(due, _)| *due <= now) else { continue };
                         let late = Duration::try_from(now.duration_since(&due)).unwrap_or(Duration::ZERO);
                         if late > GRACE {
-                            tracing::warn!(automation = %a.id, "{} skipped: the hub was not running then", due.strftime("%H:%M"));
+                            tracing::warn!(automation = %a.id, "{label} skipped: the hub was not running then");
                         } else {
-                            self.spawn_run(&core, i, due.strftime("%H:%M").to_string());
+                            self.spawn_run(&core, i, label);
                         }
                     }
                     checked = now;
@@ -747,8 +837,13 @@ fn nothing_matched(results: Vec<ActionResult>, target: &Target, label: &str) -> 
 fn check<'a>(c: &Condition, now: &Zoned, entities: impl IntoIterator<Item = &'a Entity>) -> (bool, String) {
     match c {
         Condition::Between(from, to) => {
-            let ok = between(now.time(), *from, *to);
-            (ok, format!("{} is {}between {} and {}", now.strftime("%H:%M"), if ok { "" } else { "not " }, from.strftime("%H:%M"), to.strftime("%H:%M")))
+            let ok = between(now, *from, *to);
+            // Sunrise and sunset are shown with today's time.
+            let shown = |t: &TimeOf| match t {
+                TimeOf::Clock(_) => t.to_string(),
+                TimeOf::Sun(..) => t.on(now.date(), now.time_zone()).map_or(format!("{t} (none today)"), |z| format!("{t} ({})", z.strftime("%H:%M"))),
+            };
+            (ok, format!("{} is {}between {} and {}", now.strftime("%H:%M"), if ok { "" } else { "not " }, shown(from), shown(to)))
         }
         Condition::Days(days) => {
             let ok = days.contains(now);
@@ -827,8 +922,10 @@ mod tests {
             automation: Vec<AutomationConfig>,
         }
         let file: File = toml::from_str(toml_text).map_err(|e| e.to_string())?;
-        Automations::new(&file.automation)
+        Automations::new(&file.automation, Some(PARIS))
     }
+
+    const PARIS: Location = Location { latitude: 48.8566, longitude: 2.3522 };
 
     fn paris(text: &str) -> Zoned {
         let dt: jiff::civil::DateTime = text.parse().unwrap();
@@ -914,9 +1011,46 @@ days = ["monday"]"#, ok_action), "unknown day"),
         // Exactly at the time: strictly after, so the next working day.
         assert_eq!(a.next_time(&paris("2026-10-19T19:30")).unwrap().datetime().to_string(), "2026-10-20T19:30:00");
         // A 02:30 trigger on the spring-forward night happens at 03:30.
-        let night = next_at("02:30".parse().unwrap(), Days::ALL, &paris("2026-03-29T00:00")).unwrap();
+        let night = next_at(TimeOf::Clock("02:30".parse().unwrap()), Days::ALL, &paris("2026-03-29T00:00")).unwrap();
         assert_eq!(night.to_string(), "2026-03-29T03:30:00+02:00[Europe/Paris]");
-        assert!(between("00:30".parse().unwrap(), "18:00".parse().unwrap(), "01:00".parse().unwrap()), "across midnight");
+        let clock = |t: &str| TimeOf::Clock(t.parse().unwrap());
+        assert!(between(&paris("2026-10-19T00:30"), clock("18:00"), clock("01:00")), "across midnight");
+    }
+
+    #[test]
+    fn sunrise_and_sunset_follow_the_location_and_the_date() {
+        let sun = |t: &str| TimeOf::parse(t, Some(PARIS)).unwrap();
+        let near = |at: Zoned, expected: &str| {
+            let expected = paris(expected);
+            let gap = at.duration_since(&expected).abs();
+            assert!(gap < jiff::SignedDuration::from_mins(2), "{at} is not near {expected}");
+        };
+        // Paris, summer solstice: sunset at 21:58, sunrise at 05:47 (local time).
+        let june = |t: &str| next_at(sun(t), Days::ALL, &paris("2026-06-21T00:00")).unwrap();
+        near(june("sunset"), "2026-06-21T21:58");
+        near(june("sunrise"), "2026-06-21T05:47");
+        near(june("sunset-30"), "2026-06-21T21:28");
+        // Winter solstice: 16:56.
+        near(next_at(sun("sunset"), Days::ALL, &paris("2026-12-21T12:00")).unwrap(), "2026-12-21T16:56");
+        // Already past today's: tomorrow's.
+        assert_eq!(next_at(sun("sunset"), Days::ALL, &paris("2026-06-21T23:00")).unwrap().date().to_string(), "2026-06-22");
+
+        assert!(between(&paris("2026-06-21T23:00"), sun("sunset"), TimeOf::Clock("01:00".parse().unwrap())));
+        assert!(!between(&paris("2026-06-21T21:00"), sun("sunset"), TimeOf::Clock("01:00".parse().unwrap())));
+        assert_eq!(sun("sunrise+15").to_string(), "sunrise+15");
+
+        // No sunset at the North Cape in June: never, without panicking.
+        let north = Location { latitude: 71.17, longitude: 25.78 };
+        assert!(TimeOf::parse("sunset", Some(north)).unwrap().on(paris("2026-06-21T00:00").date(), &TimeZone::UTC).is_none());
+    }
+
+    #[test]
+    fn sun_errors_say_what_is_missing() {
+        assert!(TimeOf::parse("sunset", None).unwrap_err().contains("latitude"));
+        assert!(TimeOf::parse("sunset-400", Some(PARIS)).unwrap_err().contains("360"));
+        assert!(TimeOf::parse("sunset30", Some(PARIS)).unwrap_err().contains("sign"));
+        assert!(TimeOf::parse("sunset-x", Some(PARIS)).unwrap_err().contains("minutes"));
+        assert!(TimeOf::parse("sunset", Some(Location { latitude: 120.0, longitude: 0.0 })).unwrap_err().contains("range"));
     }
 
     #[test]

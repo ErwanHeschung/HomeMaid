@@ -80,7 +80,7 @@ async fn update_is_saved_and_notified() {
         .clone()
         .try_into()
         .unwrap();
-    let _ = core.automations.set(Arc::new(homemaid::automations::Automations::new(&automations).unwrap()));
+    let _ = core.automations.set(Arc::new(homemaid::automations::Automations::new(&automations, None).unwrap()));
     let (reply, _) = call(6, "automations.list", json!(null)).await;
     assert_eq!(reply["result"][0]["id"], "dim", "{reply}");
     assert!(reply["result"][0]["next_run"].is_string());

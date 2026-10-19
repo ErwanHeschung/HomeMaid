@@ -926,6 +926,48 @@ abstract class AppLocalizations {
   /// **'{days} at {time}'**
   String atTime(String days, String time);
 
+  /// No description provided for @atSun.
+  ///
+  /// In en, this message translates to:
+  /// **'{days} {when}'**
+  String atSun(String days, String when);
+
+  /// No description provided for @atSunrise.
+  ///
+  /// In en, this message translates to:
+  /// **'at sunrise'**
+  String get atSunrise;
+
+  /// No description provided for @atSunset.
+  ///
+  /// In en, this message translates to:
+  /// **'at sunset'**
+  String get atSunset;
+
+  /// No description provided for @sunrise.
+  ///
+  /// In en, this message translates to:
+  /// **'sunrise'**
+  String get sunrise;
+
+  /// No description provided for @sunset.
+  ///
+  /// In en, this message translates to:
+  /// **'sunset'**
+  String get sunset;
+
+  /// No description provided for @sunBefore.
+  ///
+  /// In en, this message translates to:
+  /// **'{minutes} min before {event}'**
+  String sunBefore(int minutes, String event);
+
+  /// No description provided for @sunAfter.
+  ///
+  /// In en, this message translates to:
+  /// **'{minutes} min after {event}'**
+  String sunAfter(int minutes, String event);
+
   /// No description provided for @whenIs.
   ///
   /// In en, this message translates to:

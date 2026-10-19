@@ -41,6 +41,11 @@ pub struct CoreConfig {
     pub bind: SocketAddr,
     pub data_dir: PathBuf,
     pub token: String,
+    /// Where the home is, in degrees: only for sunrise and sunset in automations.
+    #[serde(default)]
+    pub latitude: Option<f64>,
+    #[serde(default)]
+    pub longitude: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

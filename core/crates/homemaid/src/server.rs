@@ -16,7 +16,7 @@ use std::{
 use serde::Serialize;
 use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::{Core, agent, api, automations::Automations, config, pairing, plugins::Plugins, reconciler::Reconciler, store};
+use crate::{Core, agent, api, automations::{Automations, Location}, config, pairing, plugins::Plugins, reconciler::Reconciler, store};
 
 /// Logs to `file` (appended), or to the console.
 pub fn init_logging(file: Option<&Path>) -> Result<(), String> {
@@ -113,7 +113,12 @@ async fn serve(
         }
         let core_config = config.core.take().ok_or("--core needs a [core] section in the config")?;
         // Checked before anything starts: a broken automation is a config error.
-        let automations = Automations::new(&config.automations).map_err(|e| format!("{}: {e}", config_path.display()))?;
+        let location = match (core_config.latitude, core_config.longitude) {
+            (Some(latitude), Some(longitude)) => Some(Location { latitude, longitude }),
+            (None, None) => None,
+            _ => return Err(format!("{}: [core] needs both latitude and longitude", config_path.display())),
+        };
+        let automations = Automations::new(&config.automations, location).map_err(|e| format!("{}: {e}", config_path.display()))?;
         start_core(core_config, &config_path, config.entities, config.rooms, config.plugins, automations, until_stopped(), &published).await
     };
     let agent = async {

@@ -473,6 +473,33 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String atSun(String days, String when) {
+    return '$days $when';
+  }
+
+  @override
+  String get atSunrise => 'at sunrise';
+
+  @override
+  String get atSunset => 'at sunset';
+
+  @override
+  String get sunrise => 'sunrise';
+
+  @override
+  String get sunset => 'sunset';
+
+  @override
+  String sunBefore(int minutes, String event) {
+    return '$minutes min before $event';
+  }
+
+  @override
+  String sunAfter(int minutes, String event) {
+    return '$minutes min after $event';
+  }
+
+  @override
   String whenIs(String target, String cap, String value) {
     return 'When $target · $cap becomes $value';
   }

@@ -305,6 +305,19 @@ List<Automation> _automations(bool fr) {
       ],
     ),
     Automation(
+      id: 'dusk',
+      name: t('Lumière au crépuscule', 'Lights at dusk'),
+      enabled: true,
+      triggers: [{'at': 'sunset-15', 'days': [...week, 'sat', 'sun']}],
+      actions: [{'set': {'select': 'room:"$living" & cap:on_off', 'cap': 'on_off', 'value': true}}],
+      nextRun: next(18, 47),
+      runs: [
+        Run(at: last(18, 47), trigger: 'sunset-15 (18:47)', results: [
+          RunResult(target: t('Lampadaire', 'Floor lamp'), action: 'set on_off true', ok: true, outcome: 'confirmed'),
+        ]),
+      ],
+    ),
+    Automation(
       id: 'pause-on-mute',
       name: t('Pause quand je coupe le son', 'Pause when muted'),
       enabled: true,

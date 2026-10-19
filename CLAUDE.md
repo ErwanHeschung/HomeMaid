@@ -200,8 +200,9 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
 - **Vérifiées au chargement** : une faute (heure, jour, capacité, valeur, sélecteur, champ inconnu) empêche le core de démarrer, avec un message précis. Ce qui dépend des appareils découverts (sélecteur vide, action absente) est signalé comme « problème », sans bloquer.
 - **Déclencheurs** :
   - `at` (heure locale, `days`), via le crate `jiff`. Un `at` manqué de plus de 5 min (PC en veille, hub arrêté) est sauté, pas rattrapé ;
+  - `at` accepte aussi le soleil : `"sunrise"`, `"sunset"`, décalés en minutes (`"sunset-30"`, `"sunrise+15"`, ±360 au plus, la limite des appareils). Calcul local par le crate `sunrise` (équation solaire, Soleil à 0,833° sous l'horizon), d'après `latitude` et `longitude` de `[core]`, obligatoires seulement si le soleil sert. Un jour sans lever ni coucher (régions polaires) ne déclenche rien ;
   - `when` (un état **observé** franchit une valeur : `becomes`, `above`, `below`, `changes`). Seul le front compte, et un souhait ne déclenche jamais.
-- **Conditions** : `between` (passe minuit), `days`, `state` (`is`, `above`, `below`, `all`).
+- **Conditions** : `between` (passe minuit, accepte aussi `sunrise`/`sunset` du jour), `days`, `state` (`is`, `above`, `below`, `all`).
 - **Actions** : `set` (un état désiré, le réconciliateur fait le reste) ou `invoke` (une action ponctuelle).
 - **Sélecteurs** (`selector.rs`) : `room:`, `tag:`, `cap:`, `plugin:`, `device:`, `model:`, `id:`, `name:"…"`, avec `&`, `|`, `!` et des parenthèses. Jamais d'UUID ni de nom fragile dans une automatisation.
 - **Dry-run** (`automation.dry_run`) : conditions avec leur raison, et appareils visés avec « à faire » ou « déjà fait ». Rien n'est envoyé.

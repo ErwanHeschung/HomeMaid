@@ -76,6 +76,17 @@ void main() {
     expect(conditionText(c, core, a.conditions[0]), 'Entre 18:00 et 01:00');
   });
 
+  testWidgets('sunrise and sunset read as words', (tester) async {
+    final core = DemoCore();
+    const all = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+    var c = await localized(tester, 'en');
+    expect(triggerText(c, core, {'at': 'sunset', 'days': all}), 'Every day at sunset');
+    expect(triggerText(c, core, {'at': 'sunrise+15', 'days': ['sat', 'sun']}), 'Weekends 15 min after sunrise');
+    c = await localized(tester, 'fr');
+    expect(triggerText(c, core, {'at': 'sunset-30', 'days': all}), 'Tous les jours 30 min avant le coucher du soleil');
+    expect(conditionText(c, core, {'between': ['sunset', '01:00']}), 'Entre le coucher du soleil et 01:00');
+  });
+
   test('the demo covers every case', () {
     final list = DemoCore().automations;
     expect(list.any((a) => a.runs.firstOrNull?.skipped == null && a.runs.firstOrNull?.failed == false), isTrue, reason: 'acted');

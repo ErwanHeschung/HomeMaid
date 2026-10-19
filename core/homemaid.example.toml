@@ -6,6 +6,10 @@ data_dir = "data"
 # Replace both tokens with long random strings (16 characters at least): the placeholders are refused.
 token = "change-me"
 # Plugin secrets go in <data_dir>/secrets.toml, one table per plugin id, never in this file.
+# Where the home is, only for sunrise and sunset in automations (your town is precise enough;
+# nothing leaves this PC).
+# latitude = 48.86
+# longitude = 2.35
 
 # PC agent (run with --agent, in the user's session): remote control of this PC.
 # On the phone: http://<this PC's IP>:8124/remote#token=<agent.token>
@@ -107,6 +111,15 @@ tags = ["lumiere"]
 # between = ["18:00", "01:00"]                   # across midnight when the end is earlier
 # [[automation.action]]
 # set = { select = "room:Salon & cap:brightness", cap = "brightness", value = 40 }
+#
+# [[automation]]
+# id = "dusk"
+# [[automation.trigger]]
+# at = "sunset-15"                               # sunrise / sunset, shifted by ±minutes (360 at most)
+# [[automation.condition]]
+# between = ["sunset", "23:30"]                  # sunrise and sunset work here too
+# [[automation.action]]
+# set = { select = "room:Salon & cap:on_off", cap = "on_off", value = true }
 #
 # [[automation]]
 # id = "pause-when-muted"
