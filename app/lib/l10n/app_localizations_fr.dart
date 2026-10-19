@@ -473,6 +473,11 @@ class AppLocalizationsFr extends AppLocalizations {
   }
 
   @override
+  String runsWithoutHub(String devices) {
+    return 'Continue même hub éteint, sur : $devices';
+  }
+
+  @override
   String atSun(String days, String when) {
     return '$days $when';
   }

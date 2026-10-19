@@ -232,6 +232,14 @@
       }
     }
   },
+  "runsWithoutHub": "Keeps running with the hub off, on: {devices}",
+  "@runsWithoutHub": {
+    "placeholders": {
+      "devices": {
+        "type": "String"
+      }
+    }
+  },
   "atSun": "{days} {when}",
   "@atSun": {
     "placeholders": {

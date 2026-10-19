@@ -311,6 +311,7 @@ List<Automation> _automations(bool fr) {
       triggers: [{'at': 'sunset-15', 'days': [...week, 'sat', 'sun']}],
       actions: [{'set': {'select': 'room:"$living" & cap:on_off', 'cap': 'on_off', 'value': true}}],
       nextRun: next(18, 47),
+      delegated: [t('Lampadaire', 'Floor lamp')],
       runs: [
         Run(at: last(18, 47), trigger: 'sunset-15 (18:47)', results: [
           RunResult(target: t('Lampadaire', 'Floor lamp'), action: 'set on_off true', ok: true, outcome: 'confirmed'),

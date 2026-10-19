@@ -157,6 +157,7 @@
   "doSet": "Mettre {target} · {cap} à {value}",
   "doInvoke": "{action} sur {target}",
   "sectionWhen": "Quand",
+  "runsWithoutHub": "Continue même hub éteint, sur : {devices}",
   "sectionIf": "Seulement si",
   "sectionThen": "Alors",
   "sectionRuns": "Dernières exécutions",

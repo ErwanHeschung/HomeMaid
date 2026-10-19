@@ -24,6 +24,7 @@ const listed = {
   ],
   'next_run': '2026-10-19T17:30:00Z',
   'problems': ['`room:Cave` matches no device'],
+  'delegated': ['Lampe'],
   'runs': [
     {'at': '2026-10-18T19:30:00+02:00', 'trigger': '19:30', 'skipped': null, 'results': [
       {'entity': null, 'target': 'Lampe', 'action': 'set brightness 40', 'ok': false, 'outcome': 'not confirmed'},
@@ -51,6 +52,7 @@ void main() {
     expect(a.triggers, hasLength(2));
     expect(a.nextRun!.isUtc, isFalse, reason: 'shown in local time');
     expect(a.runs.single.failed, isTrue);
+    expect(a.delegated, ['Lampe']);
     final dry = DryRun.fromJson({
       'would_run': false,
       'conditions': [{'condition': {}, 'ok': false, 'reason': '12:00 is not between 18:00 and 01:00'}],
@@ -94,6 +96,7 @@ void main() {
     expect(list.any((a) => a.runs.firstOrNull?.skipped != null), isTrue, reason: 'skipped');
     expect(list.any((a) => a.runs.isEmpty), isTrue, reason: 'never ran');
     expect(list.any((a) => a.problems.isNotEmpty), isTrue, reason: 'problem');
+    expect(list.any((a) => a.delegated.isNotEmpty), isTrue, reason: 'runs without the hub');
     expect(list.any((a) => a.triggers.any((t) => t.containsKey('when'))), isTrue, reason: 'state trigger');
   });
 

@@ -213,7 +213,7 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
 - **Journal** : les 20 dernières exécutions en mémoire (`automations.list`, notification `automation.ran`).
 - **Garde-fou** : plus de 10 exécutions par minute arrêtent l'automatisation jusqu'au redémarrage (une boucle entre deux automatisations).
 - Les modifier demande de **redémarrer le core** (pas de rechargement à chaud).
-- **App** : onglet Scénarios, en lecture seule (phrases, prochaine exécution, journal, Essayer et Lancer). Les actions apparaissent aussi en touches dans le panneau d'un appareil.
+- **App** : onglet Scénarios, en lecture seule (phrases, prochaine exécution, journal, Essayer et Lancer). Les actions apparaissent aussi en touches dans le panneau d'un appareil. Une automatisation confiée à des appareils l'indique (« Continue même hub éteint, sur : … »).
 - **Phase B, à faire** : lever et coucher du soleil, délégation des plannings au P300.
 
 ## Roadmap MVP

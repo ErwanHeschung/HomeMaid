@@ -202,6 +202,7 @@ class _AutomationSheetState extends State<AutomationSheet> {
                 ],
                 SectionHeader(l.sectionThen),
                 for (final act in a.actions) line(actionText(context, core, act)),
+                if (a.delegated.isNotEmpty) line(l.runsWithoutHub(a.delegated.join(', ')), color: Hm.textDim),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
                   child: Row(children: [

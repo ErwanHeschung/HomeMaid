@@ -134,6 +134,7 @@ class Automation {
     this.actions = const [],
     this.nextRun,
     this.problems = const [],
+    this.delegated = const [],
     this.runs = const [],
   });
 
@@ -146,6 +147,7 @@ class Automation {
         actions: _maps(j['actions']),
         nextRun: j['next_run'] == null ? null : DateTime.tryParse(j['next_run'] as String)?.toLocal(),
         problems: (j['problems'] as List?)?.cast<String>() ?? const [],
+        delegated: (j['delegated'] as List?)?.cast<String>() ?? const [],
         runs: [for (final r in (j['runs'] as List?) ?? const []) Run.fromJson((r as Map).cast())],
       );
 
@@ -155,6 +157,9 @@ class Automation {
   final List<Map<String, dynamic>> triggers, conditions, actions;
   final DateTime? nextRun;
   final List<String> problems;
+
+  /// The devices that run it themselves too, so it happens even with the hub off.
+  final List<String> delegated;
 
   /// Newest first.
   final List<Run> runs;

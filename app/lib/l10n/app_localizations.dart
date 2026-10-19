@@ -926,6 +926,12 @@ abstract class AppLocalizations {
   /// **'{days} at {time}'**
   String atTime(String days, String time);
 
+  /// No description provided for @runsWithoutHub.
+  ///
+  /// In en, this message translates to:
+  /// **'Keeps running with the hub off, on: {devices}'**
+  String runsWithoutHub(String devices);
+
   /// No description provided for @atSun.
   ///
   /// In en, this message translates to:

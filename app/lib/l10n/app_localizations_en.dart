@@ -473,6 +473,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String runsWithoutHub(String devices) {
+    return 'Keeps running with the hub off, on: $devices';
+  }
+
+  @override
   String atSun(String days, String when) {
     return '$days $when';
   }
