@@ -215,7 +215,7 @@ class _LauncherSheetState extends State<LauncherSheet> {
                   final on = pinned.contains(app);
                   return ListTile(
                     contentPadding: const EdgeInsets.only(left: 20, right: 8),
-                    leading: _Logo(null, app),
+                    leading: _AppIcon(widget.agent, app),
                     title: Text(app, style: theme.textTheme.bodyLarge),
                     onTap: widget.agent.connected ? () => widget.agent.send({'type': 'launch', 'app': app}) : null,
                     trailing: IconButton(
@@ -228,6 +228,36 @@ class _LauncherSheetState extends State<LauncherSheet> {
               ),
       ),
     ]);
+  }
+}
+
+/// An app's own icon, as the PC's Start menu shows it, in colour: in this list it helps find an
+/// app among many (the strip keeps its ink logos). The placeholder while it comes, or without one.
+class _AppIcon extends StatelessWidget {
+  const _AppIcon(this.agent, this.app);
+
+  final AgentClient agent;
+  final String app;
+
+  @override
+  Widget build(BuildContext context) {
+    final placeholder = _Logo(null, app);
+    final icon = agent.iconOf(app);
+    if (icon == null) return placeholder;
+    return SizedBox.square(
+      dimension: 32,
+      child: Center(
+        child: Image.network(
+          icon.uri.toString(),
+          headers: icon.headers,
+          width: 28,
+          height: 28,
+          filterQuality: FilterQuality.medium,
+          frameBuilder: (context, child, frame, _) => frame == null ? placeholder : child,
+          errorBuilder: (_, _, _) => placeholder,
+        ),
+      ),
+    );
   }
 }
 

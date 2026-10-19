@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:homemaid/clients.dart';
 import 'package:homemaid/connections.dart';
 import 'package:homemaid/demo.dart';
 import 'package:homemaid/screens/remote.dart';
@@ -89,5 +90,13 @@ void main() {
     await tester.longPress(find.byTooltip('Open Netflix'));
     await tester.pumpAndSettle();
     expect(find.text('Remove \u201cNetflix\u201d from the remote?'), findsOneWidget);
+  });
+
+  test("an app's icon is asked of the PC with the token in a header, not in the address", () {
+    const pc = Connection(kind: 'agent', id: 'PC', host: '192.168.1.20', port: 8124, token: 'secret');
+    final icon = iconRequest(pc, 'VLC media player');
+    expect(icon.uri.toString(), 'http://192.168.1.20:8124/icon?app=VLC+media+player');
+    expect(icon.headers, {'Authorization': 'Bearer secret'});
+    expect(demoAgent().iconOf('Steam'), isNull, reason: 'the demo has none: the placeholder');
   });
 }

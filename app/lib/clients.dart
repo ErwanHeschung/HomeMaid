@@ -392,6 +392,12 @@ class AgentClient extends ChangeNotifier {
   /// Asks for the PC's state (volume, mute): it comes back as a `state` message.
   void readState() => send({'type': 'state'});
 
+  /// Where the PC draws an app's Start-menu icon, and the header it wants; none in the demo.
+  ({Uri uri, Map<String, String> headers})? iconOf(String app) {
+    final socket = _socket;
+    return socket == null ? null : iconRequest(socket.connection, app);
+  }
+
   /// Asks for the Start menu's apps: they come back as an `apps` message.
   void listApps() {
     if (_socket == null) {
@@ -465,3 +471,9 @@ class AgentClient extends ChangeNotifier {
     super.dispose();
   }
 }
+
+/// `GET /icon?app=` on the PC's agent, with its token in the header (never in the address).
+({Uri uri, Map<String, String> headers}) iconRequest(Connection agent, String app) => (
+      uri: Uri(scheme: 'http', host: agent.host, port: agent.port, path: '/icon', queryParameters: {'app': app}),
+      headers: {'Authorization': 'Bearer ${agent.token}'},
+    );

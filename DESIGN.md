@@ -205,7 +205,7 @@ A graphite ramp, two inks, the logo's two colours and one red. Lavender is prima
 
 **The One Meaning Rule.** Pink is waiting for a device; red is failure, alarm or destruction; everything else that is coloured is lavender. A lit lamp and a selected key share the lavender: the glow, the swatch and the switch say "on", the ring says "selected".
 
-**The Ink Logo Rule.** Service logos (Simple Icons, CC0, `app/assets/logos/`, see `app/tools/logos.md`) are drawn in ink like every other key, lavender when active. Brand colours are refused.
+**The Ink Logo Rule.** Service logos (Simple Icons, CC0, `app/assets/logos/`, see `app/tools/logos.md`) are drawn in ink like every other key, lavender when active. Brand colours are refused. One stated exception: the "+ → Apps" list shows the PC's own app icons (from its Start menu, `GET /icon` on the agent) in colour, to find one app among many; once pinned, it is an ink key like the others.
 
 ## Typography
 
