@@ -8,6 +8,7 @@ import 'dart:ui';
 import 'clients.dart';
 import 'connections.dart';
 import 'model.dart';
+import 'selectors.dart';
 
 const demoMode = bool.fromEnvironment('HOMEMAID_DEMO');
 
@@ -90,16 +91,44 @@ class DemoCore extends CoreClient {
           ? [for (final a in dry.actions) for (final t in a.targets) RunResult(target: t.name, action: a.action.keys.first, ok: t.error == null, outcome: t.error ?? 'pending')]
           : const [],
     );
-    automations = [
-      for (final a in automations)
-        a.id == id
-            ? Automation(
-                id: a.id, name: a.name, enabled: a.enabled, triggers: a.triggers, conditions: a.conditions, actions: a.actions,
-                nextRun: a.nextRun, problems: a.problems, runs: [run, ...a.runs].take(20).toList())
-            : a,
-    ];
+    automations = [for (final a in automations) a.id == id ? a.withRuns([run, ...a.runs].take(20).toList()) : a];
     notifyListeners();
     return run;
+  }
+
+  /// Kept in memory only: the demo has no homemaid.toml.
+  @override
+  Future<void> saveAutomation(Map<String, dynamic> config) async {
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    if ((config['trigger'] as List?)?.isNotEmpty != true || (config['action'] as List?)?.isNotEmpty != true) {
+      throw 'automation `${config['id']}`: needs at least one [[automation.trigger]] and one [[automation.action]]';
+    }
+    final id = config['id'] as String;
+    final old = automations.where((a) => a.id == id).firstOrNull;
+    final saved = Automation.fromConfig(config, runs: old?.runs ?? const []);
+    automations = old == null ? [...automations, saved] : [for (final a in automations) a.id == id ? saved : a];
+    notifyListeners();
+  }
+
+  @override
+  Future<void> deleteAutomation(String id) async {
+    automations = automations.where((a) => a.id != id).toList();
+    notifyListeners();
+  }
+
+  @override
+  Future<DryRun> dryRunConfig(Map<String, dynamic> config) async {
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    return DryRun(wouldRun: true, actions: [
+      for (final a in (config['action'] as List? ?? const []).cast<Map<String, dynamic>>())
+        (
+          action: a,
+          targets: [
+            for (final e in matching(entities.values, ((a['set'] ?? a['invoke']) as Map)['select'] as String) ?? const <Entity>[])
+              (name: e.name, changes: true, error: null),
+          ],
+        ),
+    ]);
   }
 
   @override
@@ -322,7 +351,7 @@ List<Automation> _automations(bool fr) {
       id: 'pause-on-mute',
       name: t('Pause quand je coupe le son', 'Pause when muted'),
       enabled: true,
-      triggers: [{'when': {'select': 'plugin:pc', 'cap': 'mute', 'test': {'is': true}}}],
+      triggers: [{'when': {'select': 'plugin:pc', 'cap': 'mute', 'becomes': true}}],
       actions: [{'invoke': {'select': 'plugin:pc', 'action': 'play_pause', 'params': null}}],
       runs: [
         Run(at: ago(const Duration(hours: 3, minutes: 12)), trigger: 'DEMO-PC mute', results: [
@@ -335,7 +364,7 @@ List<Automation> _automations(bool fr) {
       name: t('Radiateur la nuit', 'Heater at night'),
       enabled: true,
       triggers: [{'at': '22:00', 'days': [...week, 'sat', 'sun']}],
-      conditions: [{'state': {'select': 'room:$bedroom & model:fan', 'cap': 'on_off', 'test': {'is': false}, 'all': false}}],
+      conditions: [{'state': {'select': 'room:$bedroom & model:fan', 'cap': 'on_off', 'is': false}}],
       actions: [{'set': {'select': 'room:$bedroom & model:radiator', 'cap': 'on_off', 'value': true}}],
       nextRun: next(22, 0),
       runs: [
@@ -346,7 +375,7 @@ List<Automation> _automations(bool fr) {
       id: 'garage',
       name: t('Lumière du garage', 'Garage light'),
       enabled: true,
-      triggers: [{'when': {'select': 'tag:garage-door', 'cap': 'custom:open', 'test': {'is': true}}}],
+      triggers: [{'when': {'select': 'tag:garage-door', 'cap': 'custom:open', 'becomes': true}}],
       actions: [{'set': {'select': 'room:Garage & cap:on_off', 'cap': 'on_off', 'value': true}}],
       problems: const ['`tag:garage-door` matches no device', '`room:Garage & cap:on_off` matches no device'],
     ),

@@ -382,18 +382,24 @@ String? sunText(BuildContext context, String text, {required bool at}) {
   return offset < 0 ? l.sunBefore(-offset, event) : l.sunAfter(offset, event);
 }
 
+/// The test of a `when` or a `state`: in the config (`becomes = true`), or as the core describes
+/// it (`test: {is: true}`).
+Map<String, dynamic> _test(Map<String, dynamic> m) => ((m['test'] as Map?) ?? m).cast<String, dynamic>();
+
+const allDays = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+
 String triggerText(BuildContext context, CoreClient core, Map<String, dynamic> t) {
   final l = AppLocalizations.of(context);
   if (t['at'] case final String at) {
-    final days = _days(context, t['days'] as List? ?? const []);
+    final days = _days(context, t['days'] as List? ?? allDays);
     final sun = sunText(context, at, at: true);
     return sun == null ? l.atTime(days, at) : l.atSun(days, sun);
   }
   final when = (t['when'] as Map).cast<String, dynamic>();
   final (target, cap) = (targetText(context, when['select'] as String), when['cap'] as String);
-  final test = (when['test'] as Map).cast<String, dynamic>();
+  final test = _test(when);
   final label = capLabel(context, cap);
-  if (test.containsKey('is')) return l.whenIs(target, label, _value(context, cap, test['is']));
+  if (test['becomes'] ?? test['is'] case final Object value) return l.whenIs(target, label, _value(context, cap, value));
   if (test['above'] case final num x) return l.whenAbove(target, label, _value(context, cap, x));
   if (test['below'] case final num x) return l.whenBelow(target, label, _value(context, cap, x));
   return l.whenChanges(target, label);
@@ -407,7 +413,7 @@ String conditionText(BuildContext context, CoreClient core, Map<String, dynamic>
   if (c['days'] case final List days) return _days(context, days);
   final state = (c['state'] as Map).cast<String, dynamic>();
   final (target, cap) = (targetText(context, state['select'] as String), state['cap'] as String);
-  final test = (state['test'] as Map).cast<String, dynamic>();
+  final test = _test(state);
   final label = capLabel(context, cap);
   final text = test.containsKey('is')
       ? l.ifIs(target, label, _value(context, cap, test['is']))

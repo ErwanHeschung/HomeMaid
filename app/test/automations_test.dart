@@ -78,6 +78,38 @@ void main() {
     expect(conditionText(c, core, a.conditions[0]), 'Entre 18:00 et 01:00');
   });
 
+  testWidgets('automations as written read the same as described', (tester) async {
+    final core = DemoCore();
+    final c = await localized(tester, 'en');
+    final a = Automation.fromJson({
+      'id': 'x', 'name': 'X', 'enabled': true,
+      'config': {
+        'id': 'x',
+        'trigger': [{'when': {'select': 'plugin:pc', 'cap': 'volume', 'above': 50}}, {'at': '07:00'}],
+        'condition': [{'state': {'select': 'room:Salon & cap:on_off', 'cap': 'on_off', 'is': false, 'all': true}}],
+        'action': [{'set': {'select': 'room:Salon & model:lamp', 'cap': 'brightness', 'value': 40}}],
+      },
+    });
+    expect(triggerText(c, core, a.triggers[0]), 'When PC · Volume goes above 50 %');
+    expect(triggerText(c, core, a.triggers[1]), 'Every day at 07:00', reason: 'no days written: every day');
+    expect(conditionText(c, core, a.conditions[0]), 'If Salon · Power is Off (all of them)');
+    expect(a.config['trigger'], hasLength(2), reason: 'kept as written, to edit');
+  });
+
+  test('the demo saves, replaces and deletes automations in memory', () async {
+    final core = DemoCore();
+    final count = core.automations.length;
+    final config = {'id': 'new', 'name': 'Nouveau', 'trigger': [{'at': 'sunset'}], 'action': [{'set': {'select': 'cap:on_off', 'cap': 'on_off', 'value': true}}]};
+    await core.saveAutomation(config);
+    expect(core.automations.length, count + 1);
+    await core.saveAutomation({...config, 'name': 'Renommé'});
+    expect(core.automations.where((a) => a.id == 'new').single.name, 'Renommé');
+    expect((await core.dryRunConfig(config)).actions.single.targets, isNotEmpty);
+    expect(core.saveAutomation({...config, 'action': []}), throwsA(contains('needs at least one')));
+    await core.deleteAutomation('new');
+    expect(core.automations.length, count);
+  });
+
   testWidgets('sunrise and sunset read as words', (tester) async {
     final core = DemoCore();
     const all = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];

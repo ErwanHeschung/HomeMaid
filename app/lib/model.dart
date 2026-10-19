@@ -122,8 +122,9 @@ class ActionDecl {
   final Map<String, dynamic>? params;
 }
 
-/// An automation from the core's `homemaid.toml`. Triggers, conditions and actions stay in the
-/// core's own JSON shape; the screen puts them into words.
+/// An automation from the core's `homemaid.toml`. Triggers, conditions and actions are as
+/// written there (`config`, which the editor changes and saves back); the screen puts them into
+/// words.
 class Automation {
   Automation({
     required this.id,
@@ -132,29 +133,47 @@ class Automation {
     this.triggers = const [],
     this.conditions = const [],
     this.actions = const [],
+    Map<String, dynamic>? config,
     this.nextRun,
     this.problems = const [],
     this.delegated = const [],
     this.runs = const [],
-  });
+  }) : config = config ??
+            {
+              'id': id,
+              'name': name,
+              if (!enabled) 'enabled': false,
+              'trigger': triggers,
+              if (conditions.isNotEmpty) 'condition': conditions,
+              'action': actions,
+            };
 
-  factory Automation.fromJson(Map<String, dynamic> j) => Automation(
+  /// From `automations.list`. A core older than the editor sends no `config`: its described
+  /// triggers, conditions and actions read the same.
+  factory Automation.fromJson(Map<String, dynamic> j) {
+    final config = (j['config'] as Map?)?.cast<String, dynamic>();
+    return Automation(
         id: j['id'] as String,
         name: j['name'] as String? ?? j['id'] as String,
         enabled: j['enabled'] as bool? ?? true,
-        triggers: _maps(j['triggers']),
-        conditions: _maps(j['conditions']),
-        actions: _maps(j['actions']),
+        triggers: _maps(config?['trigger'] ?? j['triggers']),
+        conditions: _maps(config?['condition'] ?? j['conditions']),
+        actions: _maps(config?['action'] ?? j['actions']),
+        config: config,
         nextRun: j['next_run'] == null ? null : DateTime.tryParse(j['next_run'] as String)?.toLocal(),
         problems: (j['problems'] as List?)?.cast<String>() ?? const [],
         delegated: (j['delegated'] as List?)?.cast<String>() ?? const [],
         runs: [for (final r in (j['runs'] as List?) ?? const []) Run.fromJson((r as Map).cast())],
       );
+  }
 
   final String id;
   final String name;
   final bool enabled;
   final List<Map<String, dynamic>> triggers, conditions, actions;
+
+  /// As written in homemaid.toml (`trigger`, `condition`, `action`...), to edit and save back.
+  final Map<String, dynamic> config;
   final DateTime? nextRun;
   final List<String> problems;
 
@@ -163,6 +182,21 @@ class Automation {
 
   /// Newest first.
   final List<Run> runs;
+
+  Automation withRuns(List<Run> runs) => Automation(
+        id: id, name: name, enabled: enabled, triggers: triggers, conditions: conditions, actions: actions, config: config,
+        nextRun: nextRun, problems: problems, delegated: delegated, runs: runs);
+
+  /// One just written (the demo saves it itself), keeping its runs if it existed.
+  factory Automation.fromConfig(Map<String, dynamic> config, {List<Run> runs = const []}) => Automation(
+        id: config['id'] as String,
+        name: config['name'] as String? ?? config['id'] as String,
+        enabled: config['enabled'] as bool? ?? true,
+        triggers: _maps(config['trigger']),
+        conditions: _maps(config['condition']),
+        actions: _maps(config['action']),
+        config: config,
+        runs: runs);
 }
 
 List<Map<String, dynamic>> _maps(Object? list) => [for (final m in (list as List?) ?? const []) (m as Map).cast<String, dynamic>()];

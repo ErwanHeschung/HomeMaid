@@ -168,6 +168,22 @@ class CoreClient extends ChangeNotifier {
 
   Future<DryRun> dryRun(String id) async => DryRun.fromJson((await call('automation.dry_run', {'id': id}) as Map).cast());
 
+  /// What an automation not saved yet would do now.
+  Future<DryRun> dryRunConfig(Map<String, dynamic> config) async =>
+      DryRun.fromJson((await call('automation.dry_run', {'automation': config}) as Map).cast());
+
+  /// Created or replaced (by `id`) in homemaid.toml, in force at once. The core refuses an
+  /// automation it would refuse at startup, with why.
+  Future<void> saveAutomation(Map<String, dynamic> config) async {
+    await call('automation.save', {'automation': config});
+    await refreshAutomations();
+  }
+
+  Future<void> deleteAutomation(String id) async {
+    await call('automation.delete', {'id': id});
+    await refreshAutomations();
+  }
+
   Future<Run> runAutomation(String id) async {
     final run = Run.fromJson((await call('automation.run', {'id': id}) as Map).cast());
     await refreshAutomations();
@@ -236,8 +252,8 @@ class CoreClient extends ChangeNotifier {
       case 'entity.changed':
         final entity = Entity.fromJson((params['entity'] as Map).cast<String, dynamic>());
         entities[entity.id] = entity;
-      case 'automation.ran':
-        // The run comes with its automation's new history and next time: read them again.
+      case 'automation.ran' || 'automations.changed':
+        // A run (new history, next time) or an edit: read them again.
         refreshAutomations().catchError((Object _) {});
         return;
       case 'room.changed':
