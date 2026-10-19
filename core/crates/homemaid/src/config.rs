@@ -70,17 +70,17 @@ pub struct AgentConfig {
 }
 
 /// A service on the remote: its logo, what opens it, and the keys its player answers to.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Shortcut {
     pub name: String,
     /// A logo bundled with the app (`app/assets/logos/<icon>.svg`); none shows the name's initials.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
     /// A URL, opened in the default browser, or a program.
     pub open: String,
     /// Key combos sent to the focused window by the playback buttons, by action (`play_pause`,
     /// `back`, `forward`, `restart`, `next_episode`, `skip_intro`), e.g. `"shift+n"`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub keys: BTreeMap<String, String>,
 }
 
@@ -294,6 +294,82 @@ pub fn save_override(path: &Path, o: &EntityOverride) -> Result<(), String> {
 pub fn save_room(path: &Path, room: &RoomConfig) -> Result<(), String> {
     save_table(path, "room", "name", &room.name, |set| {
         set("kind", room.kind.as_ref().filter(|k| !k.is_empty()).map(toml_edit::value));
+    })
+}
+
+/// Sets `discover_apps` in `[agent]` (the window's switch), keeping the rest of the file.
+pub fn set_agent_discover(path: &Path, on: bool) -> Result<(), String> {
+    edit_toml(path, |doc| {
+        let agent = doc.get_mut("agent").and_then(toml_edit::Item::as_table_mut).ok_or("no [agent] section")?;
+        agent["discover_apps"] = toml_edit::value(on);
+        Ok(())
+    })
+}
+
+/// Writes a `[[agent.shortcut]]` (found by name, appended when new), its keys on one line.
+pub fn save_shortcut(path: &Path, shortcut: &Shortcut) -> Result<(), String> {
+    use toml_edit::{ArrayOfTables, InlineTable, Item, Table, value};
+
+    edit_toml(path, |doc| {
+        let agent = doc.get_mut("agent").and_then(Item::as_table_mut).ok_or("no [agent] section")?;
+        let tables = agent
+            .entry("shortcut")
+            .or_insert(Item::ArrayOfTables(ArrayOfTables::new()))
+            .as_array_of_tables_mut()
+            .ok_or("`agent.shortcut` must be an array of tables ([[agent.shortcut]])")?;
+        let mut table = Table::new();
+        table["name"] = value(&shortcut.name);
+        if let Some(icon) = &shortcut.icon {
+            table["icon"] = value(icon);
+        }
+        table["open"] = value(&shortcut.open);
+        if !shortcut.keys.is_empty() {
+            table["keys"] = value(shortcut.keys.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect::<InlineTable>());
+        }
+        let found = tables.iter().position(|t| t.get("name").and_then(Item::as_str) == Some(&shortcut.name));
+        match found.and_then(|i| tables.get_mut(i)) {
+            Some(old) => {
+                let (decor, position) = (old.decor().clone(), old.position());
+                *old = table;
+                *old.decor_mut() = decor;
+                old.set_position(position);
+            }
+            None => tables.push(table),
+        }
+        Ok(())
+    })
+}
+
+/// Removes the `[[agent.shortcut]]` named `name`.
+pub fn delete_shortcut(path: &Path, name: &str) -> Result<(), String> {
+    use toml_edit::Item;
+
+    edit_toml(path, |doc| {
+        let tables = doc
+            .get_mut("agent")
+            .and_then(|a| a.get_mut("shortcut"))
+            .and_then(Item::as_array_of_tables_mut)
+            .ok_or(format!("no shortcut `{name}`"))?;
+        let index = tables.iter().position(|t| t.get("name").and_then(Item::as_str) == Some(name)).ok_or(format!("no shortcut `{name}`"))?;
+        tables.remove(index);
+        Ok(())
+    })
+}
+
+/// Sets (or, with `None`, removes) an app of `[agent.apps]`.
+pub fn set_app(path: &Path, name: &str, target: Option<&str>) -> Result<(), String> {
+    use toml_edit::{Item, Table};
+
+    edit_toml(path, |doc| {
+        let agent = doc.get_mut("agent").and_then(Item::as_table_mut).ok_or("no [agent] section")?;
+        let apps = agent.entry("apps").or_insert(Item::Table(Table::new())).as_table_mut().ok_or("`agent.apps` must be a table")?;
+        match target {
+            Some(target) => apps[name] = toml_edit::value(target),
+            None => {
+                apps.remove(name).ok_or(format!("no app `{name}` in [agent.apps]"))?;
+            }
+        }
+        Ok(())
     })
 }
 
@@ -553,6 +629,33 @@ mod tests {
         let text = fs::read_to_string(&path).unwrap();
         fs::remove_file(&path).unwrap();
         assert!(!text.contains("dusk") && text.contains("id = \"kept\""), "{text}");
+    }
+
+    #[test]
+    fn the_phone_writes_shortcuts_and_pinned_apps() {
+        let path = std::env::temp_dir().join(format!("homemaid-shortcut-test-{}.toml", std::process::id()));
+        fs::write(&path, "# pc\n[agent]\nbind = \"0.0.0.0:8124\"\ntoken = \"0123456789abcdef\"\n\n# by hand\n[[agent.shortcut]]\nname = \"Netflix\"\nopen = \"https://www.netflix.com\"\n").unwrap();
+        let plex = Shortcut { name: "Plex".into(), icon: Some("plex".into()), open: "https://app.plex.tv".into(), keys: BTreeMap::from([("skip_intro".into(), "s".into())]) };
+        save_shortcut(&path, &plex).unwrap();
+        save_shortcut(&path, &Shortcut { open: "https://app.plex.tv/desktop".into(), ..plex.clone() }).unwrap();
+        set_app(&path, "Steam", Some("shell:AppsFolder\\Valve.Steam")).unwrap();
+        set_agent_discover(&path, true).unwrap();
+        let agent = load(&path).unwrap().agent.unwrap();
+        assert_eq!(agent.shortcuts.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["Netflix", "Plex"], "replaced, not added");
+        assert_eq!(agent.shortcuts[1].open, "https://app.plex.tv/desktop");
+        assert_eq!(agent.shortcuts[1].keys["skip_intro"], "s");
+        assert_eq!(agent.apps["Steam"], PathBuf::from("shell:AppsFolder\\Valve.Steam"));
+        assert!(agent.discover_apps);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# pc\n[agent]\n") && text.contains("# by hand\n[[agent.shortcut]]\nname = \"Netflix\""), "{text}");
+        assert!(text.contains(r#"keys = { skip_intro = "s" }"#), "{text}");
+
+        delete_shortcut(&path, "Plex").unwrap();
+        set_app(&path, "Steam", None).unwrap();
+        assert!(delete_shortcut(&path, "Plex").is_err() && set_app(&path, "Steam", None).is_err(), "already gone");
+        let agent = load(&path).unwrap().agent.unwrap();
+        fs::remove_file(&path).unwrap();
+        assert_eq!((agent.shortcuts.len(), agent.apps.len()), (1, 0));
     }
 
     #[test]

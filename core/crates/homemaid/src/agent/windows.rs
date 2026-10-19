@@ -52,6 +52,7 @@ impl Desktop {
             Request::Power { action } => return power(*action),
             // Handled by the desktop thread itself.
             Request::Launch { .. } | Request::Open { .. } | Request::Control { .. } | Request::State | Request::ListApps => return Ok(()),
+            Request::SaveShortcut { .. } | Request::DeleteShortcut { .. } | Request::PinApp { .. } | Request::UnpinApp { .. } => return Ok(()),
         };
         result.map_err(|e| e.to_string())
     }

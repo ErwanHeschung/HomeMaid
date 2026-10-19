@@ -204,6 +204,10 @@ fn run(config: Option<PathBuf>, background: bool, dir: PathBuf, config_path: Pat
                         }
                         Err(e) => json!({ "error": e }),
                     },
+                    "discover" => match server.set_discover(on) {
+                        Ok(()) => status(),
+                        Err(e) => json!({ "error": e }),
+                    },
                     "startup" => match startup::set(on) {
                         Ok(()) => status(),
                         Err(e) => json!({ "error": e }),

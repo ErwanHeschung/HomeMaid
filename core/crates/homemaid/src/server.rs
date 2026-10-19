@@ -81,7 +81,7 @@ pub async fn run(
     agent_switch: Option<watch::Receiver<bool>>,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), String> {
-    serve(config_path, run_core, agent_switch, shutdown, Arc::default()).await
+    serve(config_path, run_core, agent_switch, shutdown, Arc::default(), Arc::default()).await
 }
 
 async fn serve(
@@ -90,6 +90,7 @@ async fn serve(
     agent_switch: Option<watch::Receiver<bool>>,
     shutdown: impl Future<Output = ()> + Send + 'static,
     published: Arc<OnceLock<Arc<Core>>>,
+    agent_restart: Arc<tokio::sync::Notify>,
 ) -> Result<(), String> {
     if !run_core && agent_switch.is_none() {
         return Err("nothing to run: pass --core and/or --agent".into());
@@ -123,9 +124,16 @@ async fn serve(
     };
     let agent = async {
         let Some(mut switch) = agent_switch else { return Ok(()) };
-        let agent_config = config.agent.take().ok_or("--agent needs an [agent] section in the config")?;
+        let mut agent_config = config.agent.take().ok_or("--agent needs an [agent] section in the config")?;
+        let manage = agent::Manage { config_path: config_path.clone(), restart: agent_restart };
         loop {
             if *switch.borrow_and_update() {
+                // Read again at each start: the phone or the window may have changed it.
+                match config::load(&config_path).map(|c| c.agent) {
+                    Ok(Some(fresh)) => agent_config = fresh,
+                    Ok(None) => tracing::warn!("no [agent] section any more: the agent keeps the one it had"),
+                    Err(e) => tracing::warn!("{e}: the agent keeps the config it had"),
+                }
                 // Until switched off (a dropped switch never is) or stopped.
                 let mut off = switch.clone();
                 let switched_off = async move {
@@ -139,11 +147,14 @@ async fn serve(
                     }
                 };
                 let stop = until_stopped();
-                agent::run(agent_config.clone(), async move {
+                let restarted = agent::run(agent_config.clone(), Some(manage.clone()), async move {
                     tokio::select! { () = stop => {}, () = switched_off => {} }
                 })
                 .await?;
-                tracing::info!("agent stopped");
+                tracing::info!("agent stopped{}", if restarted { ", restarting with its new config" } else { "" });
+                if restarted {
+                    continue;
+                }
             } else {
                 tokio::select! {
                     changed = switch.changed() => if changed.is_err() { return Ok(()) },
@@ -247,6 +258,10 @@ pub struct Handle {
     core_bind: SocketAddr,
     data_dir: PathBuf,
     agent: Option<(watch::Sender<bool>, u16)>,
+    /// Restarts the agent so it reads its config again.
+    agent_restart: Arc<tokio::sync::Notify>,
+    /// The Start menu's apps offered to the phone (`[agent] discover_apps`).
+    discover: std::sync::atomic::AtomicBool,
     qr: (String, Option<String>),
     stop: Mutex<Option<oneshot::Sender<()>>>,
 }
@@ -268,6 +283,8 @@ pub struct Status {
 pub struct AgentStatus {
     pub on: bool,
     pub port: u16,
+    /// The PC's apps offered to the phone.
+    pub discover: bool,
 }
 
 impl Handle {
@@ -281,6 +298,9 @@ impl Handle {
             config.agent.as_ref().map(|a| pairing::qr_svg("agent", a.bind, &a.token)),
         );
         let agent = config.agent.as_ref().map(|a| (watch::channel(a.enabled), a.bind.port()));
+        let discover = config.agent.as_ref().is_some_and(|a| a.discover_apps);
+        let agent_restart = Arc::new(tokio::sync::Notify::new());
+        let restart = agent_restart.clone();
         let switch = agent.as_ref().map(|((_, rx), _)| rx.clone());
         let (stop, stop_rx) = oneshot::channel();
         let published = Arc::new(OnceLock::new());
@@ -291,7 +311,7 @@ impl Handle {
                 // A panic is reported like any error, or the window would wait forever.
                 let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
                     let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
-                    runtime.block_on(serve(path, true, switch, async { drop(stop_rx.await) }, core_slot))
+                    runtime.block_on(serve(path, true, switch, async { drop(stop_rx.await) }, core_slot, restart))
                 }));
                 stopped(result.unwrap_or_else(|panic| {
                     let what = panic.downcast_ref::<&str>().copied().or(panic.downcast_ref::<String>().map(String::as_str));
@@ -305,6 +325,8 @@ impl Handle {
             config_path,
             core: published,
             agent: agent.map(|((tx, _), port)| (tx, port)),
+            agent_restart,
+            discover: discover.into(),
             qr,
             stop: Mutex::new(Some(stop)),
         })
@@ -318,7 +340,11 @@ impl Handle {
             online: counts.map_or(0, |c| c.1),
             address: format!("{}:{}", pairing::lan_ip(self.core_bind), self.core_bind.port()),
             host: pairing::hostname(),
-            agent: self.agent.as_ref().map(|(switch, port)| AgentStatus { on: *switch.borrow(), port: *port }),
+            agent: self.agent.as_ref().map(|(switch, port)| AgentStatus {
+                on: *switch.borrow(),
+                port: *port,
+                discover: self.discover.load(std::sync::atomic::Ordering::Relaxed),
+            }),
         }
     }
 
@@ -341,6 +367,15 @@ impl Handle {
             switch.send_replace(on);
         }
         Ok(created)
+    }
+
+    /// Offers the PC's apps to the phone, or stops: saved in the config, then the agent restarts
+    /// to read it.
+    pub fn set_discover(&self, on: bool) -> Result<(), String> {
+        config::set_agent_discover(&self.config_path, on)?;
+        self.discover.store(on, std::sync::atomic::Ordering::Relaxed);
+        self.agent_restart.notify_one();
+        Ok(())
     }
 
     /// Stops the hub and the agent cleanly (the state is saved); `stopped` follows.

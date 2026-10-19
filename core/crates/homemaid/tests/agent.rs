@@ -24,7 +24,7 @@ async fn start_agent() -> (SocketAddr, watch::Sender<()>) {
         discover_apps: false,
     };
     let (stopping, _) = watch::channel(());
-    let app = agent::router(&config, &stopping).unwrap();
+    let app = agent::router(&config, &stopping, None).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -98,4 +98,80 @@ async fn switching_the_agent_off_ends_live_sessions() {
     drop(stopping);
     let end = tokio::time::timeout(std::time::Duration::from_secs(5), ws.next()).await.expect("the session must end");
     assert!(!matches!(end, Some(Ok(Message::Text(_)))), "{end:?}");
+}
+
+#[tokio::test]
+async fn the_phone_adds_sites_never_programs_and_the_agent_restarts() {
+    let path = std::env::temp_dir().join(format!("homemaid-agent-manage-{}.toml", std::process::id()));
+    std::fs::write(&path, "# mine\n[agent]\nbind = \"127.0.0.1:0\"\ntoken = \"secret0123456789\"\n").unwrap();
+    let config = homemaid::config::load(&path).unwrap().agent.unwrap();
+    let restart = std::sync::Arc::new(tokio::sync::Notify::new());
+    let manage = agent::Manage { config_path: path.clone(), restart: restart.clone() };
+    let (stopping, _) = watch::channel(());
+    let app = agent::router(&config, &stopping, Some(manage)).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let (mut ws, _) = connect_async(format!("ws://{addr}/ws?token=secret0123456789")).await.unwrap();
+    let hello = ws.next().await;
+    assert!(matches!(hello, Some(Ok(Message::Text(_)))));
+    let mut ask = async |request: Value| -> Value {
+        ws.send(Message::Text(request.to_string().into())).await.unwrap();
+        let Some(Ok(Message::Text(text))) = ws.next().await else { panic!("closed") };
+        serde_json::from_str(&text).unwrap()
+    };
+
+    let site = json!({ "type": "save_shortcut", "shortcut": { "name": "Plex", "icon": "plex", "open": "https://app.plex.tv", "keys": { "skip_intro": "s" } } });
+    assert_eq!(ask(site).await["type"], "saved");
+    let program = json!({ "type": "save_shortcut", "shortcut": { "name": "Evil", "open": "C:\\Windows\\System32\\cmd.exe" } });
+    assert!(ask(program).await["message"].as_str().unwrap().contains("web addresses"));
+    let unknown = json!({ "type": "pin_app", "name": "cmd" });
+    assert!(ask(unknown).await["message"].as_str().unwrap().contains("Start menu"), "only an app the agent found");
+    assert_eq!(ask(json!({ "type": "list_apps" })).await, json!({ "type": "apps", "apps": [] }));
+
+    let shortcuts = homemaid::config::load(&path).unwrap().agent.unwrap().shortcuts;
+    assert_eq!((shortcuts.len(), shortcuts[0].name.as_str()), (1, "Plex"));
+    assert!(std::fs::read_to_string(&path).unwrap().starts_with("# mine\n"));
+    tokio::time::timeout(std::time::Duration::from_secs(2), restart.notified()).await.expect("the agent restarts to read it");
+
+    assert_eq!(ask(json!({ "type": "delete_shortcut", "name": "Plex" })).await["type"], "saved");
+    let left = homemaid::config::load(&path).unwrap().agent.unwrap().shortcuts;
+    std::fs::remove_file(&path).unwrap();
+    assert!(left.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn after_a_change_the_agent_restarts_with_it() {
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let path = std::env::temp_dir().join(format!("homemaid-agent-restart-{}.toml", std::process::id()));
+    std::fs::write(&path, format!("[agent]\nbind = \"127.0.0.1:{port}\"\ntoken = \"secret0123456789\"\n")).unwrap();
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(homemaid::server::run(path.clone(), false, Some(homemaid::server::always_on()), async {
+        let _ = stopped.await;
+    }));
+    let url = format!("ws://127.0.0.1:{port}/ws?token=secret0123456789");
+    let connect = async || loop {
+        if let Ok((ws, _)) = connect_async(&url).await {
+            return ws;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    };
+    let hello = async |ws: &mut tokio_tungstenite::WebSocketStream<_>| -> Value {
+        let Some(Ok(Message::Text(text))) = ws.next().await else { panic!("no hello") };
+        serde_json::from_str(&text).unwrap()
+    };
+
+    let mut ws = connect().await;
+    assert_eq!(hello(&mut ws).await["shortcuts"], json!([]));
+    let site = json!({ "type": "save_shortcut", "shortcut": { "name": "Plex", "open": "https://app.plex.tv" } });
+    ws.send(Message::Text(site.to_string().into())).await.unwrap();
+    // The answer, then the session ends with the restart.
+    while let Some(Ok(_)) = ws.next().await {}
+
+    let mut ws = connect().await;
+    assert_eq!(hello(&mut ws).await["shortcuts"][0]["name"], "Plex", "read again at restart");
+    let _ = stop.send(());
+    server.await.unwrap().unwrap();
+    std::fs::remove_file(&path).unwrap();
 }

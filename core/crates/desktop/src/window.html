@@ -95,6 +95,10 @@
       <div><div class="name" data-t="control"></div><div class="sub" id="agent-sub"></div></div>
       <button class="switch" id="agent" role="switch" aria-checked="false" disabled></button>
     </div>
+    <div class="row" id="discover-row" hidden>
+      <div><div class="name" data-t="discover"></div><div class="sub" data-t="discover-sub"></div></div>
+      <button class="switch" id="discover" role="switch" aria-checked="false" disabled></button>
+    </div>
     <div class="row">
       <div><div class="name" data-t="startup"></div><div class="sub" data-t="startup-sub"></div></div>
       <button class="switch" id="startup" role="switch" aria-checked="false" disabled></button>
@@ -124,6 +128,8 @@
   const T = fr ? {
     running: 'En marche', starting: 'Démarrage…', home: 'Maison', hub: 'Hub', pc: 'Ce PC',
     control: 'Contrôle du PC', startup: 'Démarrer avec Windows',
+    discover: 'Applis de ce PC sur le téléphone',
+    'discover-sub': 'Celles du menu Démarrer, à lancer ou épingler depuis le téléphone',
     'startup-sub': 'À l’ouverture de session, dans la zone de notification',
     pair: 'Appairer un téléphone', 'tab-home': 'Maison', 'tab-pc': 'Ce PC',
     'pair-hint': 'Dans l’app HomeMaid : Réglages → Appairer, puis scanne ce code. Il contient le code d’accès : ne le partage pas.',
@@ -136,6 +142,8 @@
   } : {
     running: 'Running', starting: 'Starting…', home: 'Home', hub: 'Hub', pc: 'This PC',
     control: 'PC control', startup: 'Start with Windows',
+    discover: 'This PC’s apps on the phone',
+    'discover-sub': 'Those of the Start menu, to launch or pin from the phone',
     'startup-sub': 'At sign-in, in the notification area',
     pair: 'Pair a phone', 'tab-home': 'Home', 'tab-pc': 'This PC',
     'pair-hint': 'In the HomeMaid app: Settings → Pair, then scan this code. It holds the access code: do not share it.',
@@ -151,6 +159,7 @@
   const $ = id => document.getElementById(id);
   $('agent').setAttribute('aria-label', T.control);
   $('startup').setAttribute('aria-label', T.startup);
+  $('discover').setAttribute('aria-label', T.discover);
 
   const send = (cmd, extra = {}) => window.ipc.postMessage(JSON.stringify({ cmd, ...extra }));
   let qr = {}, kind = 'core', last = null;
@@ -180,6 +189,11 @@
     agent.disabled = false;
     agent.setAttribute('aria-checked', String(!!(s.agent && s.agent.on)));
     $('agent-sub').textContent = !s.agent ? T.noAgent : s.agent.on ? T.agentOn(s.agent.port) : T.agentOff;
+    // Only with PC control on: the apps are the agent's.
+    $('discover-row').hidden = !(s.agent && s.agent.on);
+    const discover = $('discover');
+    discover.disabled = false;
+    discover.setAttribute('aria-checked', String(!!(s.agent && s.agent.discover)));
     const startup = $('startup');
     startup.disabled = false;
     startup.setAttribute('aria-checked', String(s.startup));
@@ -188,7 +202,7 @@
     renderQr();
   };
 
-  for (const id of ['agent', 'startup']) {
+  for (const id of ['agent', 'discover', 'startup']) {
     $(id).addEventListener('click', e => {
       const el = e.currentTarget;
       const on = el.getAttribute('aria-checked') !== 'true';

@@ -23,7 +23,7 @@ async fn start_agent() -> (String, tokio::task::JoinHandle<()>) {
         discover_apps: false,
     };
     let (stopping, _) = tokio::sync::watch::channel(());
-    let app = agent::router(&config, &stopping).unwrap();
+    let app = agent::router(&config, &stopping, None).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap().to_string();
     (addr, tokio::spawn(async move {
