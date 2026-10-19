@@ -8,5 +8,8 @@ The remote draws them in ink like every other key (`lib/screens/remote.dart`, `l
 `[[agent.shortcut]]` names its logo with `icon = "<slug>"`; apps without one get a logo when their
 name matches a slug or an alias, otherwise their initials.
 
+`assets/shortcuts.json` is the catalogue of sites the phone can add to the remote (name, logo,
+address, player keys): data, so the code knows no service. A new entry needs its logo here.
+
 To add one: download `https://cdn.jsdelivr.net/npm/simple-icons@<version>/icons/<slug>.svg` into
 `assets/logos/`, then add the slug to `_logos` in `remote.dart`.

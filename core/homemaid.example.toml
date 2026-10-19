@@ -15,6 +15,7 @@ token = "change-me"
 # On the phone: http://<this PC's IP>:8124/remote#token=<agent.token>
 [agent]
 # enabled = true      # desktop mode only: the window's "PC control" switch writes it
+# discover_apps = true   # the Start menu's apps can be launched and pinned from the phone (off by default)
 bind = "0.0.0.0:8124"
 token = "change-me-too"
 
