@@ -1,0 +1,13 @@
+[
+  {"name": "Netflix", "icon": "netflix", "open": "https://www.netflix.com", "keys": {"skip_intro": "s"}},
+  {"name": "YouTube", "icon": "youtube", "open": "https://www.youtube.com", "keys": {"restart": "0", "next_episode": "shift+n"}},
+  {"name": "Spotify", "icon": "spotify", "open": "https://open.spotify.com"},
+  {"name": "Twitch", "icon": "twitch", "open": "https://www.twitch.tv"},
+  {"name": "Crunchyroll", "icon": "crunchyroll", "open": "https://www.crunchyroll.com", "keys": {"restart": "0", "next_episode": "shift+n", "skip_intro": "s"}},
+  {"name": "Plex", "icon": "plex", "open": "https://app.plex.tv"},
+  {"name": "Apple TV", "icon": "appletv", "open": "https://tv.apple.com"},
+  {"name": "Max", "icon": "max", "open": "https://play.max.com"},
+  {"name": "Deezer", "icon": "deezer", "open": "https://www.deezer.com"},
+  {"name": "SoundCloud", "icon": "soundcloud", "open": "https://soundcloud.com"},
+  {"name": "Apple Music", "icon": "applemusic", "open": "https://music.apple.com"}
+]

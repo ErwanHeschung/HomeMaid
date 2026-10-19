@@ -12,6 +12,7 @@ import '../l10n/app_localizations.dart';
 import '../theme.dart';
 import '../trackpad.dart';
 import 'common.dart';
+import 'launchers.dart';
 
 /// The PC remote: one column weighted towards the thumb. The PC and its power on top, its apps,
 /// the trackpad taking what is left, then playback and volume. The keyboard swaps the bottom
@@ -45,7 +46,8 @@ class _RemoteScreenState extends State<RemoteScreen> {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           _header(context, agent),
-          if (agent.apps.isNotEmpty || agent.shortcuts.isNotEmpty) ...[const SizedBox(height: 16), _Launchers(agent: agent)],
+          const SizedBox(height: 16),
+          _Launchers(agent: agent),
           const SizedBox(height: 16),
           Expanded(child: SketchPlane(agent: agent, connections: widget.connections)),
           const SizedBox(height: 20),
@@ -271,20 +273,32 @@ class _Launchers extends StatelessWidget {
     final l = AppLocalizations.of(context);
     final theme = Theme.of(context);
     final items = [
-      for (final s in agent.shortcuts) (s.name, logoFor(s.icon, s.name), s.name == agent.active, () => agent.open(s)),
-      for (final app in agent.apps) (app, logoFor(null, app), false, () => agent.send({'type': 'launch', 'app': app})),
+      for (final s in agent.shortcuts) (s.name, logoFor(s.icon, s.name), s.name == agent.active, () => agent.open(s), true),
+      for (final app in agent.apps) (app, logoFor(null, app), false, () => agent.send({'type': 'launch', 'app': app}), false),
     ];
     return SizedBox(
       height: 82,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        itemCount: items.length,
+        itemCount: items.length + 1,
         separatorBuilder: (_, _) => const SizedBox(width: 12),
         itemBuilder: (context, i) {
-          final (name, logo, active, launch) = items[i];
+          // Last, the way to add sites and the PC's apps.
+          if (i == items.length) {
+            return SizedBox(
+              width: 64,
+              child: Column(children: [
+                _Round(icon: Icons.add, label: l.addLauncher, size: 56, onPressed: agent.connected ? () => showLaunchers(context, agent) : null),
+              ]),
+            );
+          }
+          final (name, logo, active, launch, site) = items[i];
           final enabled = agent.connected;
           final ink = !enabled ? Hm.textDim.withValues(alpha: 0.5) : (active ? Hm.select : Hm.text);
-          return SizedBox(
+          return GestureDetector(
+            // Long press: off the remote (out of homemaid.toml).
+            onLongPress: enabled ? () => removeLauncher(context, agent, name, site: site) : null,
+            child: SizedBox(
             width: 64,
             child: Column(children: [
               _Round(
@@ -306,6 +320,7 @@ class _Launchers extends StatelessWidget {
                 ),
               ),
             ]),
+            ),
           );
         },
       ),

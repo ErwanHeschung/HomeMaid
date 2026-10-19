@@ -1465,6 +1465,96 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{cap} (no device)'**
   String capNoDevice(String cap);
+
+  /// No description provided for @addLauncher.
+  ///
+  /// In en, this message translates to:
+  /// **'Add to the remote'**
+  String get addLauncher;
+
+  /// No description provided for @launcherSites.
+  ///
+  /// In en, this message translates to:
+  /// **'Sites'**
+  String get launcherSites;
+
+  /// No description provided for @launcherApps.
+  ///
+  /// In en, this message translates to:
+  /// **'Apps'**
+  String get launcherApps;
+
+  /// No description provided for @siteAdded.
+  ///
+  /// In en, this message translates to:
+  /// **'Added'**
+  String get siteAdded;
+
+  /// No description provided for @otherSite.
+  ///
+  /// In en, this message translates to:
+  /// **'Another site'**
+  String get otherSite;
+
+  /// No description provided for @siteAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Address'**
+  String get siteAddress;
+
+  /// No description provided for @addSite.
+  ///
+  /// In en, this message translates to:
+  /// **'Add the site'**
+  String get addSite;
+
+  /// No description provided for @siteInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'A name, and a web address in https://…'**
+  String get siteInvalid;
+
+  /// No description provided for @appsOff.
+  ///
+  /// In en, this message translates to:
+  /// **'To see this PC\'s apps, turn on “This PC\'s apps on the phone” in the HomeMaid window on the PC.'**
+  String get appsOff;
+
+  /// No description provided for @searchApps.
+  ///
+  /// In en, this message translates to:
+  /// **'Search apps'**
+  String get searchApps;
+
+  /// No description provided for @noAppsFound.
+  ///
+  /// In en, this message translates to:
+  /// **'No apps'**
+  String get noAppsFound;
+
+  /// No description provided for @pinApp.
+  ///
+  /// In en, this message translates to:
+  /// **'Pin {name}'**
+  String pinApp(String name);
+
+  /// No description provided for @unpinApp.
+  ///
+  /// In en, this message translates to:
+  /// **'Unpin {name}'**
+  String unpinApp(String name);
+
+  /// No description provided for @removeLauncher.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove “{name}” from the remote?'**
+  String removeLauncher(String name);
+
+  /// No description provided for @removeLauncherBody.
+  ///
+  /// In en, this message translates to:
+  /// **'It is removed from homemaid.toml on the PC.'**
+  String get removeLauncherBody;
 }
 
 class _AppLocalizationsDelegate

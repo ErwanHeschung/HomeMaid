@@ -227,5 +227,20 @@
   "setLocation": "Définir l'emplacement",
   "paramApp": "Application",
   "paramShortcut": "Service",
-  "capNoDevice": "{cap} (aucun appareil)"
+  "capNoDevice": "{cap} (aucun appareil)",
+  "addLauncher": "Ajouter à la télécommande",
+  "launcherSites": "Sites",
+  "launcherApps": "Applis",
+  "siteAdded": "Ajouté",
+  "otherSite": "Autre site",
+  "siteAddress": "Adresse",
+  "addSite": "Ajouter le site",
+  "siteInvalid": "Un nom, et une adresse web en https://…",
+  "appsOff": "Pour voir les applis de ce PC, active « Applis de ce PC sur le téléphone » dans la fenêtre HomeMaid du PC.",
+  "searchApps": "Chercher une appli",
+  "noAppsFound": "Aucune appli",
+  "pinApp": "Épingler {name}",
+  "unpinApp": "Désépingler {name}",
+  "removeLauncher": "Retirer « {name} » de la télécommande ?",
+  "removeLauncherBody": "Il est retiré de homemaid.toml sur le PC."
 }

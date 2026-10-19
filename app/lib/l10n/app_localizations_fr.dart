@@ -791,4 +791,56 @@ class AppLocalizationsFr extends AppLocalizations {
   String capNoDevice(String cap) {
     return '$cap (aucun appareil)';
   }
+
+  @override
+  String get addLauncher => 'Ajouter à la télécommande';
+
+  @override
+  String get launcherSites => 'Sites';
+
+  @override
+  String get launcherApps => 'Applis';
+
+  @override
+  String get siteAdded => 'Ajouté';
+
+  @override
+  String get otherSite => 'Autre site';
+
+  @override
+  String get siteAddress => 'Adresse';
+
+  @override
+  String get addSite => 'Ajouter le site';
+
+  @override
+  String get siteInvalid => 'Un nom, et une adresse web en https://…';
+
+  @override
+  String get appsOff =>
+      'Pour voir les applis de ce PC, active « Applis de ce PC sur le téléphone » dans la fenêtre HomeMaid du PC.';
+
+  @override
+  String get searchApps => 'Chercher une appli';
+
+  @override
+  String get noAppsFound => 'Aucune appli';
+
+  @override
+  String pinApp(String name) {
+    return 'Épingler $name';
+  }
+
+  @override
+  String unpinApp(String name) {
+    return 'Désépingler $name';
+  }
+
+  @override
+  String removeLauncher(String name) {
+    return 'Retirer « $name » de la télécommande ?';
+  }
+
+  @override
+  String get removeLauncherBody => 'Il est retiré de homemaid.toml sur le PC.';
 }

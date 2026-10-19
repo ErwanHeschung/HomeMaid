@@ -790,4 +790,57 @@ class AppLocalizationsEn extends AppLocalizations {
   String capNoDevice(String cap) {
     return '$cap (no device)';
   }
+
+  @override
+  String get addLauncher => 'Add to the remote';
+
+  @override
+  String get launcherSites => 'Sites';
+
+  @override
+  String get launcherApps => 'Apps';
+
+  @override
+  String get siteAdded => 'Added';
+
+  @override
+  String get otherSite => 'Another site';
+
+  @override
+  String get siteAddress => 'Address';
+
+  @override
+  String get addSite => 'Add the site';
+
+  @override
+  String get siteInvalid => 'A name, and a web address in https://…';
+
+  @override
+  String get appsOff =>
+      'To see this PC\'s apps, turn on “This PC\'s apps on the phone” in the HomeMaid window on the PC.';
+
+  @override
+  String get searchApps => 'Search apps';
+
+  @override
+  String get noAppsFound => 'No apps';
+
+  @override
+  String pinApp(String name) {
+    return 'Pin $name';
+  }
+
+  @override
+  String unpinApp(String name) {
+    return 'Unpin $name';
+  }
+
+  @override
+  String removeLauncher(String name) {
+    return 'Remove “$name” from the remote?';
+  }
+
+  @override
+  String get removeLauncherBody =>
+      'It is removed from homemaid.toml on the PC.';
 }

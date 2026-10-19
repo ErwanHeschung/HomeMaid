@@ -521,5 +521,41 @@
         "type": "String"
       }
     }
-  }
+  },
+  "addLauncher": "Add to the remote",
+  "launcherSites": "Sites",
+  "launcherApps": "Apps",
+  "siteAdded": "Added",
+  "otherSite": "Another site",
+  "siteAddress": "Address",
+  "addSite": "Add the site",
+  "siteInvalid": "A name, and a web address in https://…",
+  "appsOff": "To see this PC's apps, turn on “This PC's apps on the phone” in the HomeMaid window on the PC.",
+  "searchApps": "Search apps",
+  "noAppsFound": "No apps",
+  "pinApp": "Pin {name}",
+  "@pinApp": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "unpinApp": "Unpin {name}",
+  "@unpinApp": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "removeLauncher": "Remove “{name}” from the remote?",
+  "@removeLauncher": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "removeLauncherBody": "It is removed from homemaid.toml on the PC."
 }

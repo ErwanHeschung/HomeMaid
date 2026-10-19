@@ -298,18 +298,25 @@ class CoreClient extends ChangeNotifier {
   }
 }
 
-/// A service on the remote (`[[agent.shortcut]]`): its logo and the playback actions it has keys for.
+/// A service on the remote (`[[agent.shortcut]]`): its logo, what it opens, the keys of its
+/// player, and the playback actions it has keys for.
 class Shortcut {
-  const Shortcut({required this.name, this.icon, this.actions = const {}});
+  const Shortcut({required this.name, this.icon, this.open, this.keys = const {}, this.actions = const {}});
 
   Shortcut.fromJson(Map<String, dynamic> j)
       : name = j['name'] as String,
         icon = j['icon'] as String?,
+        open = j['open'] as String?,
+        keys = {...?(j['keys'] as Map?)?.cast<String, String>()},
         actions = {...?(j['actions'] as List?)?.cast<String>()};
 
   final String name;
   final String? icon;
+  final String? open;
+  final Map<String, String> keys;
   final Set<String> actions;
+
+  Map<String, Object> toJson() => {'name': name, 'icon': ?icon, 'open': ?open, if (keys.isNotEmpty) 'keys': keys};
 }
 
 /// The PC remote: requests are fire-and-forget, only errors come back.
@@ -319,14 +326,30 @@ class AgentClient extends ChangeNotifier {
     _socket = HostSocket(connection, onMessage: _onMessage, onState: _onState, onMoved: onMoved, locate: locate)..start();
   }
 
-  /// No socket: requests go nowhere (the demo).
-  AgentClient.detached({required this.hostname, this.apps = const [], this.shortcuts = const [], this.volume, this.muted})
-      : connected = true;
+  /// No socket: requests go nowhere, the changes stay in memory (the demo).
+  AgentClient.detached({
+    required this.hostname,
+    this.apps = const [],
+    this.shortcuts = const [],
+    this.volume,
+    this.muted,
+    List<String> startApps = const [],
+  })  : connected = true,
+        discover = startApps.isNotEmpty,
+        _startApps = startApps;
+
+  List<String> _startApps = const [];
 
   HostSocket? _socket;
   String hostname;
+
+  /// Written in `[agent.apps]` or pinned: the remote's strip.
   List<String> apps = const [];
   List<Shortcut> shortcuts = const [];
+
+  /// The PC offers its Start menu's apps (`[agent] discover_apps`); they come with [listApps].
+  bool discover = false;
+  List<String>? discovered;
 
   /// The service the playback buttons drive: the last one opened.
   String? active;
@@ -369,6 +392,41 @@ class AgentClient extends ChangeNotifier {
   /// Asks for the PC's state (volume, mute): it comes back as a `state` message.
   void readState() => send({'type': 'state'});
 
+  /// Asks for the Start menu's apps: they come back as an `apps` message.
+  void listApps() {
+    if (_socket == null) {
+      discovered = _startApps;
+      notifyListeners();
+    }
+    send({'type': 'list_apps'});
+  }
+
+  // The PC writes these to its homemaid.toml, then its agent restarts to read them: the socket
+  // reconnects and the hello brings the new strip.
+
+  /// A site (a web address), created or replaced by name.
+  void saveShortcut(Shortcut shortcut) => _change({'type': 'save_shortcut', 'shortcut': shortcut.toJson()}, () {
+        shortcuts = [...shortcuts.where((s) => s.name != shortcut.name), shortcut];
+      });
+
+  void deleteShortcut(String name) => _change({'type': 'delete_shortcut', 'name': name}, () {
+        shortcuts = shortcuts.where((s) => s.name != name).toList();
+      });
+
+  /// An app of the Start menu on the strip, or off it.
+  void pinApp(String name) => _change({'type': 'pin_app', 'name': name}, () => apps = {...apps, name}.toList());
+
+  void unpinApp(String name) => _change({'type': 'unpin_app', 'name': name}, () => apps = apps.where((a) => a != name).toList());
+
+  void _change(Map<String, Object> request, void Function() inMemory) {
+    refused = null;
+    if (_socket == null) {
+      inMemory();
+      notifyListeners();
+    }
+    send(request);
+  }
+
   void _onState(bool up, LinkError? why) {
     connected = up;
     linkError = why;
@@ -380,6 +438,7 @@ class AgentClient extends ChangeNotifier {
       case 'hello':
         hostname = message['hostname'] as String? ?? hostname;
         apps = (message['apps'] as List?)?.cast<String>() ?? const [];
+        discover = message['discover'] == true;
         shortcuts = [for (final s in (message['shortcuts'] as List?) ?? const []) Shortcut.fromJson((s as Map).cast())];
         if (!shortcuts.any((s) => s.name == active)) active = null;
         readState();
@@ -387,6 +446,11 @@ class AgentClient extends ChangeNotifier {
         final state = (message['state'] as Map?) ?? const {};
         volume = (state['volume'] as num?)?.round();
         muted = state['muted'] as bool?;
+      case 'apps':
+        discovered = (message['apps'] as List?)?.cast<String>() ?? const [];
+      case 'saved':
+        // The agent restarts to read it; the new hello follows.
+        return;
       case 'error':
         refused = message['message'] as String?;
       default:

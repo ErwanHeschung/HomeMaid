@@ -32,6 +32,7 @@ AgentClient demoAgent() => AgentClient.detached(
       ],
       volume: 35,
       muted: false,
+      startApps: const ['Calculatrice', 'Firefox', 'Notepad', 'OBS Studio', 'Paint', 'Steam', 'VLC media player', 'VS Code'],
     );
 
 class DemoCore extends CoreClient {

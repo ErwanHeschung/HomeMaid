@@ -68,6 +68,8 @@ flutter:
     - assets/models/bulb_hung/
     # Service logos (Simple Icons 16.33.0, CC0; see tools/logos.md).
     - assets/logos/
+    # Sites the phone can add to the remote (data, not code: tools/logos.md).
+    - assets/shortcuts.json
     # Furnished rooms (tools/render/room.py): views over the arc, and rooms.json.
     - assets/rooms/
     - assets/rooms/living_s/
