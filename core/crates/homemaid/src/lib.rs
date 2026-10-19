@@ -12,7 +12,7 @@ pub mod store;
 
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock, RwLock},
 };
 
 use tokio::sync::{Notify, broadcast, mpsc};
@@ -30,6 +30,8 @@ pub enum Event {
     Room(config::RoomConfig),
     /// An automation ran (or was skipped, with why).
     Automation { id: String, run: automations::Run },
+    /// Automations were added, edited or removed.
+    Automations,
 }
 
 /// Shared runtime around the reconciler: routes its outputs to the driver and the API subscribers.
@@ -45,8 +47,10 @@ pub struct Core {
     pub rooms: Mutex<BTreeMap<String, String>>,
     /// The plugin host, set once started: actions are invoked through it.
     pub plugins: OnceLock<Arc<plugins::Plugins>>,
-    /// The configured automations, set once started.
-    pub automations: OnceLock<Arc<automations::Automations>>,
+    /// The automations in force (none until started), swapped when edited: see [`Core::automations`].
+    automations: RwLock<Arc<automations::Automations>>,
+    /// The task running them, replaced with them.
+    engine: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl Core {
@@ -59,8 +63,35 @@ impl Core {
             overrides: Mutex::default(),
             rooms: Mutex::default(),
             plugins: OnceLock::new(),
-            automations: OnceLock::new(),
+            automations: RwLock::new(Arc::new(automations::Automations::none())),
+            engine: Mutex::default(),
         }
+    }
+
+    /// The automations in force. Hold the `Arc` for one use: an edit replaces them.
+    pub fn automations(&self) -> Arc<automations::Automations> {
+        self.automations.read().unwrap().clone()
+    }
+
+    /// Puts `next` in force: their runs carry over by id, the engine restarts from now (missed
+    /// times are not caught up), devices get their new schedules, and subscribers are told.
+    /// Needs a tokio runtime.
+    pub fn set_automations(self: &Arc<Self>, next: automations::Automations) {
+        let next = Arc::new(next);
+        next.carry_runs(&self.automations());
+        *self.automations.write().unwrap() = next.clone();
+        let mut engine = self.engine.lock().unwrap();
+        if let Some(old) = engine.take() {
+            old.abort();
+        }
+        if !next.is_empty() {
+            *engine = Some(tokio::spawn(next.drive(self.clone())));
+        }
+        drop(engine);
+        if let Some(plugins) = self.plugins.get() {
+            plugins.reschedule();
+        }
+        let _ = self.changes.send(Event::Automations);
     }
 
     pub fn with<R>(&self, f: impl FnOnce(&mut Reconciler) -> R) -> R {

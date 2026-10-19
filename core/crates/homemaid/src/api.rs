@@ -3,9 +3,11 @@
 //! Methods: `entities.list`, `entity.set_desired { id, cap, value }`,
 //! `entity.update { id, name?, room?, tags?, model? }` (saved to the config file), `rooms.list`,
 //! `room.update { name, kind }` (saved too; empty kind clears it), `entity.invoke { id, action,
-//! params? }` (a one-shot action), `automations.list`, `automation.dry_run { id }`,
-//! `automation.run { id }`, `subscribe` (then `state.changed { id, cap, slot }`,
-//! `entity.changed { entity }`, `room.changed { name, kind }` and `automation.ran { id, run }`
+//! params? }` (a one-shot action), `automations.list`, `automation.dry_run { id }` or
+//! `{ automation }` (one not saved yet), `automation.run { id }`, `automation.save { automation }`
+//! (created or replaced by id, saved to the config file, in force at once), `automation.delete
+//! { id }`, `subscribe` (then `state.changed { id, cap, slot }`, `entity.changed { entity }`,
+//! `room.changed { name, kind }`, `automation.ran { id, run }` and `automations.changed`
 //! notifications).
 //! `/pair` serves the pairing QR code to the PC itself; `/hello?nonce=` proves this host knows
 //! the token (see [`pairing::proof`]).
@@ -29,6 +31,7 @@ use uuid::Uuid;
 
 use crate::{
     Core, Event,
+    automations::{AutomationConfig, Automations},
     config::{self, EntityOverride, RoomConfig},
     model::{CapKind, CapValue},
     pairing,
@@ -139,6 +142,7 @@ async fn session(mut socket: WebSocket, app: AppState) {
                 Ok(Event::Automation { id, run }) if subscribed => {
                     json!({ "jsonrpc": "2.0", "method": "automation.ran", "params": { "id": id, "run": run } })
                 }
+                Ok(Event::Automations) if subscribed => json!({ "jsonrpc": "2.0", "method": "automations.changed", "params": {} }),
                 Ok(_) => continue,
                 // Changes were lost: closing makes the client reconnect and read everything again.
                 Err(RecvError::Lagged(n)) => {
@@ -183,6 +187,17 @@ struct AutomationId {
     id: String,
 }
 
+#[derive(Deserialize)]
+struct SaveAutomation {
+    automation: AutomationConfig,
+}
+
+#[derive(Deserialize)]
+struct DryRunParams {
+    id: Option<String>,
+    automation: Option<AutomationConfig>,
+}
+
 async fn handle(app: &AppState, req: Request) -> Value {
     let result = match req.method.as_str() {
         "entities.list" => Ok(app.core.with(|r| json!(r.entities.values().collect::<Vec<_>>()))),
@@ -212,19 +227,36 @@ async fn handle(app: &AppState, req: Request) -> Value {
                 None => Err((-32000, "plugins are not running".into())),
             },
         },
-        "automations.list" => match app.core.automations.get() {
-            Some(automations) => Ok(automations.list(&app.core, &jiff::Zoned::now())),
-            None => Ok(json!([])),
+        "automations.list" => Ok(app.core.automations().list(&app.core, &jiff::Zoned::now())),
+        "automation.dry_run" => match serde_json::from_value::<DryRunParams>(req.params) {
+            Err(e) => Err((-32602, e.to_string())),
+            Ok(DryRunParams { id: Some(id), automation: None }) => {
+                app.core.automations().dry_run(&app.core, &id, &jiff::Zoned::now()).map(|d| json!(d)).map_err(|e| (-32000, e))
+            }
+            // Not saved yet: compiled on its own, as it would be.
+            Ok(DryRunParams { id: None, automation: Some(a) }) => Automations::new(std::slice::from_ref(&a), app.core.automations().location)
+                .and_then(|one| one.dry_run(&app.core, &a.id, &jiff::Zoned::now()))
+                .map(|d| json!(d))
+                .map_err(|e| (-32000, e)),
+            Ok(_) => Err((-32602, "give either `id` or `automation`".into())),
         },
-        "automation.dry_run" => match (serde_json::from_value::<AutomationId>(req.params), app.core.automations.get()) {
-            (Err(e), _) => Err((-32602, e.to_string())),
-            (Ok(_), None) => Err((-32000, "no automations".into())),
-            (Ok(p), Some(a)) => a.dry_run(&app.core, &p.id, &jiff::Zoned::now()).map(|d| json!(d)).map_err(|e| (-32000, e)),
+        "automation.run" => match serde_json::from_value::<AutomationId>(req.params) {
+            Err(e) => Err((-32602, e.to_string())),
+            Ok(p) => {
+                let automations = app.core.automations();
+                automations.run(&app.core, &p.id, "manual".into(), &jiff::Zoned::now()).await.map(|r| json!(r)).map_err(|e| (-32000, e))
+            }
         },
-        "automation.run" => match (serde_json::from_value::<AutomationId>(req.params), app.core.automations.get()) {
-            (Err(e), _) => Err((-32602, e.to_string())),
-            (Ok(_), None) => Err((-32000, "no automations".into())),
-            (Ok(p), Some(a)) => a.run(&app.core, &p.id, "manual".into(), &jiff::Zoned::now()).await.map(|r| json!(r)).map_err(|e| (-32000, e)),
+        "automation.save" => match serde_json::from_value::<SaveAutomation>(req.params) {
+            Err(e) => Err((-32602, e.to_string())),
+            Ok(p) => {
+                let id = p.automation.id.clone();
+                blocking(app, move |app| save_automation(app, &id, Some(p.automation))).await.map_err(|e| (-32000, e))
+            }
+        },
+        "automation.delete" => match serde_json::from_value::<AutomationId>(req.params) {
+            Err(e) => Err((-32602, e.to_string())),
+            Ok(p) => blocking(app, move |app| save_automation(app, &p.id, None)).await.map_err(|e| (-32000, e)),
         },
         _ => Err((-32601, format!("unknown method `{}`", req.method))),
     };
@@ -238,6 +270,15 @@ async fn handle(app: &AppState, req: Request) -> Value {
 async fn blocking(app: &AppState, f: impl FnOnce(&AppState) -> Result<Value, String> + Send + 'static) -> Result<Value, String> {
     let app = app.clone();
     tokio::task::spawn_blocking(move || f(&app)).await.map_err(|e| e.to_string())?
+}
+
+/// Writes the automation to the config file (`None` removes it) once every automation of the
+/// file compiles, and puts them in force at once.
+fn save_automation(app: &AppState, id: &str, automation: Option<AutomationConfig>) -> Result<Value, String> {
+    let location = app.core.automations().location;
+    let next = config::save_automation(&app.config_path, id, automation.as_ref(), |all| Automations::new(all, location))?;
+    app.core.set_automations(next);
+    Ok(json!(true))
 }
 
 /// Merges the given fields into the entity's metadata, saves it to the config file, then applies it.
@@ -260,6 +301,7 @@ fn update_entity(app: &AppState, update: EntityOverride) -> Result<Value, String
     config::save_override(&app.config_path, &merged)?;
     app.core.with(|r| r.edit(merged.id, |e| merged.apply(e)))?;
     overrides.insert(merged.id, merged);
+    reschedule(app);
     Ok(json!(true))
 }
 
@@ -275,7 +317,15 @@ fn update_room(app: &AppState, mut room: RoomConfig) -> Result<Value, String> {
         None => rooms.remove(&room.name),
     };
     let _ = app.core.changes.send(Event::Room(room));
+    reschedule(app);
     Ok(json!(true))
+}
+
+/// A device moved or renamed may now match other automations: their schedules follow.
+fn reschedule(app: &AppState) {
+    if let Some(plugins) = app.core.plugins.get() {
+        plugins.reschedule();
+    }
 }
 
 fn error(id: Value, code: i32, message: String) -> Value {

@@ -103,6 +103,7 @@ tags = ["lumiere"]
 # Devices are chosen by selectors: room:, tag:, cap:, plugin:, device:, model:, id:, name:"..."
 # combined with & | ! and parentheses. Changing them takes a core restart.
 #
+# The app's Scénarios tab writes these sections too (one [[automation]] each), in force at once.
 # [[automation]]
 # id = "evening-lamp"
 # name = "Lampe du soir"

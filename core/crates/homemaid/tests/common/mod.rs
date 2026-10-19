@@ -57,7 +57,7 @@ fn start_on(plugin: Plugin, path: PathBuf, automations: Option<Automations>) -> 
     let (commands, mut command_rx) = mpsc::unbounded_channel();
     let core = Arc::new(Core::new(Reconciler::new(BTreeMap::new()), commands));
     if let Some(automations) = automations {
-        let _ = core.automations.set(Arc::new(automations));
+        core.set_automations(automations);
     }
     let pairs = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
     let config = PluginConfig {

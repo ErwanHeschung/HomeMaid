@@ -185,8 +185,7 @@ async fn start_core(
     *core.rooms.lock().unwrap() = rooms.into_iter().filter_map(|r| Some((r.name, r.kind.filter(|k| !k.is_empty())?))).collect();
 
     // Before the plugins: they hand the automations' schedules to their devices at start.
-    let automations = Arc::new(automations);
-    let _ = core.automations.set(automations.clone());
+    core.set_automations(automations);
     let plugins = Arc::new(Plugins::start(core.clone(), plugins, data_dir, secrets)?);
     let _ = core.plugins.set(plugins.clone());
     let router = core.clone();
@@ -196,9 +195,6 @@ async fn start_core(
         }
     });
 
-    if !automations.is_empty() {
-        tokio::spawn(automations.drive(core.clone()));
-    }
 
     let ticker = core.clone();
     tokio::spawn(async move {

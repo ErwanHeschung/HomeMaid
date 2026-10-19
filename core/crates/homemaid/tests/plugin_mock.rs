@@ -91,7 +91,24 @@ async fn a_plugin_api_1_2_device_is_handed_its_schedules() {
     let kv = std::fs::read_to_string(data.0.join("plugins/mock.kv.json")).unwrap();
     let kv: std::collections::BTreeMap<String, String> = serde_json::from_str(&kv).unwrap();
     assert_eq!(kv["schedules:lamp"], r#"dusk on_off={"on_off":true} Sunset(-15) 0b0010001"#, "only what needs no hub");
-    let list = core.automations.get().unwrap().list(&core, &jiff::Zoned::now());
+    let list = core.automations().list(&core, &jiff::Zoned::now());
     assert_eq!(list[0]["delegated"], serde_json::json!(["Mock lamp"]));
     assert_eq!(list[1]["delegated"], serde_json::json!([]));
+
+    // Edited while running: the device gets its new schedules, no restart.
+    let file: File = toml::from_str(r#"
+        [[automation]]
+        id = "morning"
+        [[automation.trigger]]
+        at = "07:30"
+        [[automation.action]]
+        set = { select = "plugin:mock", cap = "on_off", value = false }
+    "#).unwrap();
+    core.set_automations(homemaid::automations::Automations::new(&file.automation, Some(paris)).unwrap());
+    let schedules = || {
+        let kv = std::fs::read_to_string(data.0.join("plugins/mock.kv.json")).unwrap_or_default();
+        serde_json::from_str::<std::collections::BTreeMap<String, String>>(&kv).ok().and_then(|kv| kv.get("schedules:lamp").cloned())
+    };
+    wait_for("the new schedules", Duration::from_secs(5), || schedules().is_some_and(|s| s.starts_with("morning"))).await;
+    assert_eq!(core.automations().list(&core, &jiff::Zoned::now())[0]["delegated"], serde_json::json!(["Mock lamp"]));
 }

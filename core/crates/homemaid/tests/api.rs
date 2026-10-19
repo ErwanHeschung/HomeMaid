@@ -80,7 +80,7 @@ async fn update_is_saved_and_notified() {
         .clone()
         .try_into()
         .unwrap();
-    let _ = core.automations.set(Arc::new(homemaid::automations::Automations::new(&automations, None).unwrap()));
+    core.set_automations(homemaid::automations::Automations::new(&automations, None).unwrap());
     let (reply, _) = call(6, "automations.list", json!(null)).await;
     assert_eq!(reply["result"][0]["id"], "dim", "{reply}");
     assert!(reply["result"][0]["next_run"].is_string());
@@ -127,4 +127,99 @@ async fn pair_page_is_served_to_the_pc_itself() {
     let nonce = "00112233445566778899aabbccddeeff";
     let hello = get(&format!("/hello?nonce={nonce}"), "x").await;
     assert!(hello.ends_with(&homemaid::pairing::proof("0123456789abcdef", nonce)), "{hello}");
+}
+
+type Ws = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Sends a request and returns its reply; notifications read meanwhile go to `inbox`.
+async fn rpc(ws: &mut Ws, inbox: &mut Vec<Value>, id: u32, method: &str, params: Value) -> Value {
+    let request = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
+    ws.send(Message::Text(request.to_string().into())).await.unwrap();
+    loop {
+        let Some(Ok(Message::Text(text))) = ws.next().await else { panic!("closed") };
+        let message: Value = serde_json::from_str(&text).unwrap();
+        if message["id"] == id {
+            return message;
+        }
+        inbox.push(message);
+    }
+}
+
+/// Whether the notification `method` came, or comes within 5 s.
+async fn notified(ws: &mut Ws, inbox: &mut Vec<Value>, method: &str) -> bool {
+    if inbox.iter().any(|m| m["method"] == method) {
+        inbox.retain(|m| m["method"] != method);
+        return true;
+    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(Ok(Message::Text(text))) = ws.next().await {
+            if serde_json::from_str::<Value>(&text).unwrap()["method"] == method {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn automations_are_edited_live_and_saved() {
+    use homemaid::model::{CapKind, CapValue};
+
+    let (core, data) = start(Plugin { id: "mock", package: "mock-plugin", permissions: &["local-network"], settings: &[], secrets: &[] });
+    let lamp = entity_uuid("mock", "lamp");
+    wait_for("discovery", Duration::from_secs(10), || core.with(|r| r.entities.contains_key(&lamp))).await;
+    let config_path = data.0.join("homemaid.toml");
+    std::fs::write(&config_path, CONFIG).unwrap();
+    let addr = serve(core.clone(), &config_path).await;
+    let (mut ws, _) = connect_async(format!("ws://{addr}/ws?token=0123456789abcdef")).await.unwrap();
+    let (ws, inbox) = (&mut ws, &mut Vec::new());
+    rpc(ws, inbox, 1, "subscribe", json!(null)).await;
+
+    let mut follow = json!({
+        "id": "follow", "name": "Suit la lampe",
+        "trigger": [{ "when": { "select": "plugin:mock", "cap": "on_off", "becomes": true } }],
+        "action": [{ "set": { "select": "plugin:mock", "cap": "brightness", "value": 30 } }],
+    });
+    let reply = rpc(ws, inbox, 2, "automation.save", json!({ "automation": follow })).await;
+    assert_eq!(reply["result"], true, "{reply}");
+    assert!(notified(ws, inbox, "automations.changed").await);
+    let text = std::fs::read_to_string(&config_path).unwrap();
+    assert!(text.starts_with("# kept\n") && text.contains("[[automation]]\nid = \"follow\""), "{text}");
+    let list = rpc(ws, inbox, 3, "automations.list", json!(null)).await;
+    assert_eq!(list["result"][0]["config"]["trigger"][0]["when"]["cap"], "on_off", "{list}");
+
+    // In force without a restart: switching the lamp on runs it.
+    let brightness = || core.with(|r| r.entities[&lamp].caps[&CapKind::Brightness].desired.clone());
+    let set_on = |on| core.with(|r| r.set_desired(lamp, &CapKind::OnOff, CapValue::OnOff(on), std::time::Instant::now())).unwrap();
+    set_on(false);
+    wait_for("the lamp off", Duration::from_secs(5), || core.with(|r| r.entities[&lamp].caps[&CapKind::OnOff].observed == Some(CapValue::OnOff(false)))).await;
+    set_on(true);
+    wait_for("the saved automation ran", Duration::from_secs(5), || brightness() == Some(CapValue::Brightness(30))).await;
+
+    // Edited: same id, its runs stay.
+    follow["name"] = json!("Suit la lampe allumée");
+    rpc(ws, inbox, 4, "automation.save", json!({ "automation": follow })).await;
+    let list = rpc(ws, inbox, 5, "automations.list", json!(null)).await;
+    assert_eq!(list["result"][0]["name"], "Suit la lampe allumée");
+    assert_eq!(list["result"][0]["runs"].as_array().map(Vec::len), Some(1), "{list}");
+
+    // Tried before saving.
+    let draft = json!({ "id": "draft", "trigger": [{ "at": "07:00" }], "action": [{ "set": { "select": "plugin:mock", "cap": "on_off", "value": false } }] });
+    let dry = rpc(ws, inbox, 6, "automation.dry_run", json!({ "automation": draft })).await;
+    assert_eq!(dry["result"]["actions"][0]["targets"][0]["name"], "Mock lamp", "{dry}");
+
+    // Refused as at startup, the file untouched.
+    let before = std::fs::read_to_string(&config_path).unwrap();
+    let broken = json!({ "id": "broken", "trigger": [{ "at": "25:00" }], "action": [] });
+    let reply = rpc(ws, inbox, 7, "automation.save", json!({ "automation": broken })).await;
+    assert!(reply["error"]["message"].as_str().unwrap().contains("needs at least one"), "{reply}");
+    assert_eq!(std::fs::read_to_string(&config_path).unwrap(), before);
+
+    let reply = rpc(ws, inbox, 8, "automation.delete", json!({ "id": "follow" })).await;
+    assert_eq!(reply["result"], true, "{reply}");
+    let list = rpc(ws, inbox, 9, "automations.list", json!(null)).await;
+    assert_eq!(list["result"], json!([]));
+    assert!(!std::fs::read_to_string(&config_path).unwrap().contains("follow"));
 }

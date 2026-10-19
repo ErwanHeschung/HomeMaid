@@ -92,6 +92,8 @@ macro_rules! call {
 enum Job {
     Apply(String, Command),
     Invoke { local_id: String, name: String, params: String, reply: tokio::sync::oneshot::Sender<Result<(), String>> },
+    /// Automations or entities changed: hand the devices their schedules again.
+    Reschedule,
 }
 
 const API_MAJOR: &str = "1.";
@@ -165,6 +167,13 @@ impl Plugins {
             // A stopped plugin drops the command; the reconciler fails it after its retries.
             Some((tx, local_id)) => drop(tx.send(Job::Apply(local_id, command))),
             None => tracing::warn!(?command, "no plugin for entity, command dropped"),
+        }
+    }
+
+    /// Every plugin hands its devices their schedules again, as they now are.
+    pub fn reschedule(&self) {
+        for tx in self.senders.values() {
+            let _ = tx.send(Job::Reschedule);
         }
     }
 
@@ -330,6 +339,12 @@ impl Runner {
                     // An action may change states (pause, lock): read them back.
                     next_refresh = Instant::now();
                 }
+                Ok(Job::Reschedule) => {
+                    if let Instance::Schedules(p) = &plugin {
+                        let mine: Vec<Entity> = self.core.with(|r| r.entities.values().filter(|e| e.plugin == self.cfg.id).cloned().collect());
+                        self.hand_schedules(p, &mut store, &mine)?;
+                    }
+                }
                 Err(RecvTimeoutError::Timeout) => {
                     store.set_epoch_deadline(CALL_BUDGET);
                     let ms = call!(&plugin, call_refresh(&mut store))?;
@@ -343,9 +358,9 @@ impl Runner {
     }
 
     /// Gives each entity the schedules its device can run alone (none clears the old ones), so
-    /// they keep happening while the hub is off. Selectors are resolved now, at start.
+    /// they keep happening while the hub is off. At start, and again on [`Job::Reschedule`].
     fn hand_schedules(&self, plugin: &PluginWithSchedules, store: &mut Store<HostState>, entities: &[Entity]) -> wasmtime::Result<()> {
-        let Some(automations) = self.core.automations.get() else { return Ok(()) };
+        let automations = self.core.automations();
         for entity in entities {
             let schedules = automations.schedules_for(entity);
             let wit: Vec<schedule_types::Schedule> = schedules.iter().map(to_wit).collect();

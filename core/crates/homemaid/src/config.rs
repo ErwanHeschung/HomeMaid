@@ -9,7 +9,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::model::Entity;
+use crate::{automations::AutomationConfig, model::Entity};
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -293,6 +293,77 @@ pub fn save_room(path: &Path, room: &RoomConfig) -> Result<(), String> {
     })
 }
 
+/// Writes one automation into its `[[automation]]` table (found by `id`, appended when new), or
+/// removes it (`None`). `check` is given every automation of the file as it would become (hand
+/// edits since the start included); the file is written only if it accepts them all.
+pub fn save_automation<R>(
+    path: &Path,
+    id: &str,
+    automation: Option<&AutomationConfig>,
+    check: impl FnOnce(&[AutomationConfig]) -> Result<R, String>,
+) -> Result<R, String> {
+    use toml_edit::{ArrayOfTables, Item};
+
+    edit_toml(path, |doc| {
+        let tables = doc
+            .entry("automation")
+            .or_insert(Item::ArrayOfTables(ArrayOfTables::new()))
+            .as_array_of_tables_mut()
+            .ok_or("`automation` must be an array of tables ([[automation]])")?;
+        let found = tables.iter().position(|t| t.get("id").and_then(Item::as_str) == Some(id));
+        match (automation, found) {
+            (Some(automation), Some(index)) => {
+                let table = tables.get_mut(index).expect("index is in bounds");
+                // Where it was, with the comment above its [[automation]].
+                let (decor, position) = (table.decor().clone(), table.position());
+                *table = automation_table(automation)?;
+                *table.decor_mut() = decor;
+                table.set_position(position);
+            }
+            (Some(automation), None) => tables.push(automation_table(automation)?),
+            (None, Some(index)) => drop(tables.remove(index)),
+            (None, None) => return Err(format!("no automation `{id}`")),
+        }
+        #[derive(Deserialize)]
+        struct File {
+            #[serde(default)]
+            automation: Vec<AutomationConfig>,
+        }
+        let file: File = toml::from_str(&doc.to_string()).map_err(|e| e.to_string())?;
+        check(&file.automation)
+    })
+}
+
+/// An automation as a `[[automation]]` table, its triggers, conditions and actions on one line
+/// each, as written by hand.
+fn automation_table(automation: &AutomationConfig) -> Result<toml_edit::Table, String> {
+    use toml_edit::{Item, Value};
+
+    #[derive(Serialize)]
+    struct File<'a> {
+        automation: [&'a AutomationConfig; 1],
+    }
+    let text = toml::to_string(&File { automation: [automation] }).map_err(|e| e.to_string())?;
+    let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| e.to_string())?;
+    let mut table = doc["automation"].as_array_of_tables_mut().and_then(|t| t.get_mut(0)).ok_or("no automation written")?.clone();
+    // No position of its own: printed right after what comes before it, children after parent.
+    table.set_position(None);
+    for list in ["trigger", "condition", "action"] {
+        for item in table.get_mut(list).and_then(Item::as_array_of_tables_mut).into_iter().flat_map(|t| t.iter_mut()) {
+            item.set_position(None);
+            item.decor_mut().set_prefix("");
+            for (mut key, value) in item.iter_mut() {
+                if let Some(sub) = value.as_table() {
+                    *value = Item::Value(Value::InlineTable(sub.clone().into_inline_table()));
+                    key.leaf_decor_mut().clear();
+                }
+            }
+        }
+    }
+    table.decor_mut().clear();
+    Ok(table)
+}
+
 /// Finds (or appends) the table of `[[array]]` whose `key` is `id`, lets [fill] set or remove
 /// (`None`) its fields, and writes the file back.
 fn save_table(
@@ -407,6 +478,46 @@ mod tests {
         let rooms = load(&path).unwrap().rooms;
         fs::remove_file(&path).unwrap();
         assert_eq!(rooms.len(), 8, "{rooms:?}");
+    }
+
+    #[test]
+    fn automations_are_saved_replaced_and_removed_keeping_the_rest() {
+        use crate::automations::Automations;
+
+        let path = std::env::temp_dir().join(format!("homemaid-automation-test-{}.toml", std::process::id()));
+        fs::write(&path, "# mine\n[core] # here\nbind = \"0.0.0.0:8123\"\ndata_dir = \"data\"\ntoken = \"0123456789abcdef\"\n\n# by hand\n[[automation]]\nid = \"kept\"\n[[automation.trigger]]\nat = \"07:00\"\n[[automation.action]]\nset = { select = \"room:Salon\", cap = \"on_off\", value = true }\n").unwrap();
+        let check = |all: &[AutomationConfig]| Automations::new(all, None).map(|_| all.len());
+        let mut dusk: AutomationConfig = serde_json::from_value(serde_json::json!({
+            "id": "dusk", "name": "Soir",
+            "trigger": [{ "at": "19:30", "days": ["mon", "fri"] }],
+            "condition": [{ "state": { "select": "room:Salon", "cap": "on_off", "is": false } }],
+            "action": [{ "set": { "select": "room:Salon & cap:on_off", "cap": "on_off", "value": true } },
+                       { "invoke": { "select": "plugin:pc", "action": "play_pause" } }],
+        })).unwrap();
+
+        assert_eq!(save_automation(&path, "dusk", Some(&dusk), check), Ok(2));
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# mine\n[core] # here\n") && text.contains("# by hand\n[[automation]]\nid = \"kept\""), "{text}");
+        assert!(text.contains(r#"set = { select = "room:Salon & cap:on_off", cap = "on_off", value = true }"#), "one line each: {text}");
+        assert!(!text.contains("enabled"), "defaults are left out: {text}");
+
+        dusk.name = Some("Crépuscule".into());
+        assert_eq!(save_automation(&path, "dusk", Some(&dusk), check), Ok(2), "replaced, not added");
+        let loaded = load(&path).unwrap().automations;
+        assert_eq!((loaded.len(), loaded[1].name.as_deref()), (2, Some("Crépuscule")));
+
+        let before = fs::read_to_string(&path).unwrap();
+        let broken = AutomationConfig { triggers: vec![], ..dusk.clone() };
+        assert!(save_automation(&path, "dusk", Some(&broken), check).unwrap_err().contains("trigger"));
+        let twin = AutomationConfig { id: "kept".into(), ..dusk.clone() };
+        assert!(save_automation(&path, "other", Some(&twin), check).unwrap_err().contains("two automations"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), before, "refused: the file is untouched");
+
+        assert_eq!(save_automation(&path, "dusk", None, check), Ok(1));
+        assert!(save_automation(&path, "dusk", None, check).is_err(), "already gone");
+        let text = fs::read_to_string(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        assert!(!text.contains("dusk") && text.contains("id = \"kept\""), "{text}");
     }
 
     #[test]

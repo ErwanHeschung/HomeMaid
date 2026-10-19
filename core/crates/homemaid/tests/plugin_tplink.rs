@@ -285,6 +285,6 @@ async fn schedules_become_rules_on_the_strip_next_to_the_users() {
     assert_eq!((rules[2]["s_type"].as_str(), rules[2]["s_min"].as_i64()), (Some("normal"), Some(450)));
     assert!(device.lock().unwrap().rules.get("CHILD2").is_none_or(Vec::is_empty), "not this outlet's automation");
 
-    let list = core.automations.get().unwrap().list(&core, &jiff::Zoned::now());
+    let list = core.automations().list(&core, &jiff::Zoned::now());
     assert_eq!(list[0]["delegated"], json!(["Lampe"]));
 }

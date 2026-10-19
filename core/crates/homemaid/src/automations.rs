@@ -37,19 +37,20 @@ const MAX_SUN_OFFSET: i16 = 360;
 
 // ------------------------------------------------------------------------------------- config
 
-#[derive(Debug, Clone, Deserialize)]
+// Also written back (the app edits automations): unset options are left out, as a person would.
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AutomationConfig {
     pub id: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    #[serde(default = "yes")]
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub enabled: bool,
-    #[serde(default, rename = "trigger")]
+    #[serde(default, rename = "trigger", skip_serializing_if = "Vec::is_empty")]
     pub triggers: Vec<TriggerConfig>,
-    #[serde(default, rename = "condition")]
+    #[serde(default, rename = "condition", skip_serializing_if = "Vec::is_empty")]
     pub conditions: Vec<ConditionConfig>,
-    #[serde(default, rename = "action")]
+    #[serde(default, rename = "action", skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<ActionConfig>,
 }
 
@@ -57,47 +58,67 @@ fn yes() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Deserialize)]
+fn is_true(b: &bool) -> bool {
+    *b
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TriggerConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub days: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub when: Option<TestConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConditionConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub between: Option<[String; 2]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub days: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<TestConfig>,
 }
 
 /// `{ select, cap, ... }` with one test: `becomes`/`is` (a value), `above`, `below`, `changes`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TestConfig {
     pub select: String,
     pub cap: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub becomes: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub is: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub above: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub below: Option<f64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub changes: bool,
     /// For conditions: every selected entity must pass (default: any).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub all: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActionConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub set: Option<SetConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub invoke: Option<InvokeConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SetConfig {
     pub select: String,
@@ -105,12 +126,12 @@ pub struct SetConfig {
     pub value: Value,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct InvokeConfig {
     pub select: String,
     pub action: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Value::is_null")]
     pub params: Value,
 }
 
@@ -315,6 +336,8 @@ pub struct Automation {
     triggers: Vec<Trigger>,
     conditions: Vec<Condition>,
     actions: Vec<Action>,
+    /// As written, for the app's editor.
+    config: AutomationConfig,
 }
 
 fn state_test(c: &TestConfig, trigger: bool) -> Result<StateTest, String> {
@@ -405,7 +428,15 @@ impl Automation {
             };
             actions.push(action);
         }
-        Ok(Self { id: c.id.clone(), name: c.name.clone().unwrap_or_else(|| c.id.clone()), enabled: c.enabled, triggers, conditions, actions })
+        Ok(Self {
+            id: c.id.clone(),
+            name: c.name.clone().unwrap_or_else(|| c.id.clone()),
+            enabled: c.enabled,
+            triggers,
+            conditions,
+            actions,
+            config: c.clone(),
+        })
     }
 
     /// The next time one of its `at` triggers fires, strictly after `after`.
@@ -559,12 +590,14 @@ fn describe_action(a: &Action) -> Value {
 struct History {
     runs: VecDeque<Run>,
     recent: VecDeque<Instant>,
-    /// Stopped by the loop guard, until the core restarts.
+    /// Stopped by the loop guard, until the core restarts or the automations are edited.
     stopped: Option<String>,
 }
 
 pub struct Automations {
     list: Vec<Automation>,
+    /// Kept to compile edited automations the same way.
+    pub location: Option<Location>,
     history: Mutex<HashMap<String, History>>,
     /// Last observed value per entity and capability, to see edges.
     observed: Mutex<HashMap<(Uuid, CapKind), CapValue>>,
@@ -582,7 +615,7 @@ impl Automations {
             }
             list.push(Automation::compile(c, location)?);
         }
-        Ok(Self { list, history: Mutex::default(), observed: Mutex::default(), delegated: Mutex::default() })
+        Ok(Self { list, location, history: Mutex::default(), observed: Mutex::default(), delegated: Mutex::default() })
     }
 
     /// What the device of `entity` can run itself, from the automations simple enough for it:
@@ -634,6 +667,23 @@ impl Automations {
         }
     }
 
+    /// No automation (before the config is read, or none written).
+    pub fn none() -> Self {
+        Self::new(&[], None).expect("an empty list has nothing to refuse")
+    }
+
+    /// Keeps the runs of `old` for the automations still here (by id). An edited automation
+    /// stopped by the loop guard starts again.
+    pub(crate) fn carry_runs(&self, old: &Automations) {
+        let old = old.history.lock().unwrap();
+        let mut history = self.history.lock().unwrap();
+        for a in &self.list {
+            if let Some(h) = old.get(&a.id) {
+                history.entry(a.id.clone()).or_default().runs.clone_from(&h.runs);
+            }
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.list.is_empty()
     }
@@ -670,6 +720,7 @@ impl Automations {
                     // These devices run it themselves too: it still happens while the hub is off.
                     "delegated": delegated,
                     "runs": h.map(|h| h.runs.iter().rev().cloned().collect::<Vec<_>>()).unwrap_or_default(),
+                    "config": a.config,
                 })
             })
             .collect();
