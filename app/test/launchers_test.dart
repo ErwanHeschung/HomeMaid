@@ -2,7 +2,9 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:homemaid/connections.dart';
 import 'package:homemaid/demo.dart';
+import 'package:homemaid/screens/remote.dart';
 import 'package:homemaid/screens/launchers.dart';
 
 import 'automation_editor_test.dart' show pump;
@@ -73,5 +75,13 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
     await tester.pumpAndSettle();
     expect(agent.shortcuts.map((s) => s.name), isNot(contains('Netflix')));
+  });
+
+  testWidgets('a long press on the key itself removes it, not just on its name', (tester) async {
+    final agent = demoAgent();
+    await pump(tester, RemoteScreen(agents: [agent], connections: Connections.memory([]), onPair: () {}));
+    await tester.longPress(find.byTooltip('Open Netflix'));
+    await tester.pumpAndSettle();
+    expect(find.text('Remove \u201cNetflix\u201d from the remote?'), findsOneWidget);
   });
 }

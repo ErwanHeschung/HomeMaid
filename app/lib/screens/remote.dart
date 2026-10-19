@@ -302,6 +302,7 @@ class _Launchers extends StatelessWidget {
             width: 64,
             child: Column(children: [
               _Round(
+                onLongPress: enabled ? () => removeLauncher(context, agent, name, site: site) : null,
                 label: l.launchApp(name),
                 size: 56,
                 selected: active,
@@ -537,6 +538,7 @@ class _Round extends StatelessWidget {
     required this.label,
     required this.onPressed,
     this.onActivate,
+    this.onLongPress,
     this.size = 56,
     this.primary = false,
     this.selected = false,
@@ -550,6 +552,9 @@ class _Round extends StatelessWidget {
 
   /// For accessibility activation when taps are handled elsewhere (the volume stepper).
   final VoidCallback? onActivate;
+
+  /// A second action (a launcher's removal): it takes the long press from the tooltip.
+  final VoidCallback? onLongPress;
   final double size;
   final bool primary, selected;
   final Color? color;
@@ -565,9 +570,12 @@ class _Round extends StatelessWidget {
       enabled: enabled,
       label: label,
       onTap: onActivate,
+      onLongPress: onLongPress,
       child: Tooltip(
         message: label,
         excludeFromSemantics: true,
+        // Its own long press otherwise wins over the key's.
+        triggerMode: onLongPress != null ? TooltipTriggerMode.manual : null,
         child: SizedBox.square(
           dimension: max(size, 48),
           child: Center(
@@ -576,6 +584,7 @@ class _Round extends StatelessWidget {
               color: selected || primary ? Hm.select.withValues(alpha: enabled ? 0.12 : 0.04) : Colors.transparent,
               clipBehavior: Clip.antiAlias,
               child: InkWell(
+                onLongPress: onLongPress,
                 onTap: onPressed == null
                     ? null
                     : () {
