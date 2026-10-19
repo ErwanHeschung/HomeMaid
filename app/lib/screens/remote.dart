@@ -569,7 +569,8 @@ class _Round extends StatelessWidget {
       button: true,
       enabled: enabled,
       label: label,
-      onTap: onActivate,
+      // Said outright: with a long press as well, the ink's own tap is no longer merged in.
+      onTap: onActivate ?? onPressed,
       onLongPress: onLongPress,
       child: Tooltip(
         message: label,

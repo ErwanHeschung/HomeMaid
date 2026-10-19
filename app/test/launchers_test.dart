@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:homemaid/connections.dart';
 import 'package:homemaid/demo.dart';
@@ -80,6 +81,11 @@ void main() {
   testWidgets('a long press on the key itself removes it, not just on its name', (tester) async {
     final agent = demoAgent();
     await pump(tester, RemoteScreen(agents: [agent], connections: Connections.memory([]), onPair: () {}));
+    final semantics = tester.ensureSemantics();
+    final key = tester.getSemantics(find.bySemanticsLabel('Open Netflix'));
+    expect(key.getSemanticsData().hasAction(SemanticsAction.tap), isTrue, reason: 'still opens with a screen reader');
+    expect(key.getSemanticsData().hasAction(SemanticsAction.longPress), isTrue);
+    semantics.dispose();
     await tester.longPress(find.byTooltip('Open Netflix'));
     await tester.pumpAndSettle();
     expect(find.text('Remove \u201cNetflix\u201d from the remote?'), findsOneWidget);
