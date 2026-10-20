@@ -12,7 +12,7 @@ token = "change-me"
 # longitude = 2.35
 # Where the app finds plugins to install (an index.json); the official registry by default.
 # Read only when you browse or install, never to run.
-# registry = "https://raw.githubusercontent.com/ErwanHeschung/homemaid-plugins/main/index.json"
+# registry = "https://raw.githubusercontent.com/ErwanHeschung/HomeMaid-plugins/main/index.json"
 
 # PC agent (run with --agent, in the user's session): remote control of this PC.
 # On the phone: http://<this PC's IP>:8124/remote#token=<agent.token>

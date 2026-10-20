@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Publishes an official plugin: release build, minisign signature with your own key (never in
 # CI), a GitHub release on this repo, then prints the version entry to add to index.json in a PR
-# on homemaid-plugins.
+# on HomeMaid-plugins.
 #
 #   tools/publish-plugin.sh <crate> <id> <permission>...    (from core/)
 #   tools/publish-plugin.sh tplink-plugin tplink local-network

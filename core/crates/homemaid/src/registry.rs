@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 
 use crate::plugins::{API_MAJOR, API_MINOR};
 
-pub const DEFAULT_URL: &str = "https://raw.githubusercontent.com/ErwanHeschung/homemaid-plugins/main/index.json";
+pub const DEFAULT_URL: &str = "https://raw.githubusercontent.com/ErwanHeschung/HomeMaid-plugins/main/index.json";
 const INDEX_LIMIT: u64 = 1 << 20;
 const WASM_LIMIT: u64 = 32 << 20;
 

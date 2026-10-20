@@ -118,7 +118,7 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
 - SDK Rust pour écrire un plugin, plus un **template** `cargo generate` (dans le repo du registre, `template/`) donnant un plugin fonctionnel en quelques minutes.
 
 ### Registre de plugins
-- Repo `ErwanHeschung/homemaid-plugins` : `index.json`, `check.py` + CI, et le template (`cargo generate --git … --subfolder template`, construit chaque semaine contre `main` de HomeMaid).
+- Repo `ErwanHeschung/HomeMaid-plugins` : `index.json`, `check.py` + CI, et le template (`cargo generate --git … --subfolder template`, construit chaque semaine contre `main` de HomeMaid).
 - `index.json` (`format: 1`) : par plugin `id`, `name`, `description`, `repo`, `key` (clé publique minisign de l'auteur), `settings` (`key`, `label`, `secret`, `required` : ce que l'app demande à l'installation), et `versions` (`version`, `api` = plugin-api minimale `1.x`, `permissions`, `url` du `.wasm` en release GitHub, `sha256`, `signature` = le `.minisig` entier).
 - Pour publier un plugin : une PR sur `index.json`. Plugins officiels : `core/tools/publish-plugin.sh <crate> <id> <permission>…` (build release, signature locale, `gh release`, imprime l'entrée).
 - **Confiance** : clé de l'auteur **épinglée à l'installation** (`key` dans le `[[plugin]]`) ; une mise à jour signée par une autre clé est refusée même si l'index change. La CI du registre refuse un changement de clé sans le label `key-change`.
@@ -239,7 +239,7 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
 4. **Agent PC** (Windows) + écran télécommande dans l'app. Mode combiné `--core --agent`, et service Windows.
 5. **App Flutter** : liste par pièce, contrôle des capacités de base.
 6. **Automatisations** typées + dry-run, avec **délégation des plannings** aux appareils qui le supportent. *(Faite : automatisations, sélecteurs, dry-run, actions ponctuelles, soleil, plannings confiés aux appareils ; reste à vérifier sur la P300 réelle.)*
-7. **Registre de plugins** (index GitHub, vérification de signature). *(Fait côté core et app ; reste à créer le repo `homemaid-plugins` et à y publier `tplink`.)*
+7. **Registre de plugins** (index GitHub, vérification de signature). *(Fait côté core et app ; reste à créer le repo `HomeMaid-plugins` et à y publier `tplink`.)*
 8. Historique avec downsampling.
 9. (Plus tard) Mode dégradé de l'app sans core, et migration vers un host dédié.
 
@@ -248,7 +248,7 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
 - `core` : serveur, `plugin-api` (WIT + SDK), plugins officiels dans `plugins/`.
 - `app` : application Flutter.
 - `agent` : agent PC.
-- `homemaid-plugins` : le registre (`index.json`) et le template `cargo generate` (`template/`).
+- `HomeMaid-plugins` : le registre (`index.json`) et le template `cargo generate` (`template/`).
 
 Un monorepo est acceptable au début. Seul le registre est séparé : son URL est inscrite dans chaque core installé, et les PR de publication ne touchent pas le code du hub.
 
