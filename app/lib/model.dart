@@ -260,3 +260,108 @@ class DryRun {
   final List<({bool ok, String reason})> conditions;
   final List<({Map<String, dynamic> action, List<({String name, bool changes, String? error})> targets})> actions;
 }
+
+/// Something a plugin needs from the user (an address, a password), as its registry entry declares.
+class PluginSetting {
+  const PluginSetting({required this.key, required this.label, this.secret = false, this.required = false});
+
+  factory PluginSetting.fromJson(Map<String, dynamic> j) => PluginSetting(
+        key: j['key'] as String,
+        label: j['label'] as String,
+        secret: j['secret'] as bool? ?? false,
+        required: j['required'] as bool? ?? false,
+      );
+
+  final String key;
+  final String label;
+
+  /// Kept in the hub's secrets.toml, never sent back to the app.
+  final bool secret;
+  final bool required;
+}
+
+List<PluginSetting> _settings(Object? list) => [for (final s in list as List? ?? const []) PluginSetting.fromJson((s as Map).cast())];
+
+/// A plugin of the hub (`plugins.list`).
+class InstalledPlugin {
+  const InstalledPlugin({
+    required this.id,
+    required this.name,
+    this.description,
+    required this.fromRegistry,
+    this.version,
+    this.error,
+    this.permissions = const [],
+    this.settings = const {},
+    this.secrets = const [],
+    this.declared = const [],
+  });
+
+  factory InstalledPlugin.fromJson(Map<String, dynamic> j) => InstalledPlugin(
+        id: j['id'] as String,
+        name: j['name'] as String,
+        description: j['description'] as String?,
+        fromRegistry: j['source'] == 'registry',
+        version: j['version'] as String?,
+        error: j['error'] as String?,
+        permissions: [for (final p in j['permissions'] as List? ?? const []) p as String],
+        settings: (j['settings'] as Map? ?? const {}).cast<String, String>(),
+        secrets: [for (final s in j['secrets'] as List? ?? const []) s as String],
+        declared: _settings(j['declared']),
+      );
+
+  final String id;
+  final String name;
+  final String? description;
+
+  /// Installed from the app; otherwise written by hand in homemaid.toml, and managed there.
+  final bool fromRegistry;
+  final String? version;
+
+  /// Why it is not running; null when it runs.
+  final String? error;
+  final List<String> permissions;
+  final Map<String, String> settings;
+
+  /// The secrets that are set, by key (never their values).
+  final List<String> secrets;
+  final List<PluginSetting> declared;
+}
+
+/// A plugin the registry offers (`registry.list`).
+class RegistryPlugin {
+  const RegistryPlugin({
+    required this.id,
+    required this.name,
+    this.description = '',
+    this.settings = const [],
+    this.version,
+    this.permissions = const [],
+    this.installed,
+    this.update = false,
+  });
+
+  factory RegistryPlugin.fromJson(Map<String, dynamic> j) => RegistryPlugin(
+        id: j['id'] as String,
+        name: j['name'] as String,
+        description: j['description'] as String? ?? '',
+        settings: _settings(j['settings']),
+        version: j['version'] as String?,
+        permissions: [for (final p in j['permissions'] as List? ?? const []) p as String],
+        installed: j['installed'] as String?,
+        update: j['update'] as bool? ?? false,
+      );
+
+  final String id;
+  final String name;
+  final String description;
+  final List<PluginSetting> settings;
+
+  /// The newest version the hub can run; null when it needs a newer HomeMaid.
+  final String? version;
+  final List<String> permissions;
+
+  /// The installed version (`local` when set by hand in homemaid.toml), or null.
+  final String? installed;
+  final bool update;
+}

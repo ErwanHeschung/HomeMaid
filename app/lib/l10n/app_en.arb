@@ -557,5 +557,48 @@
       }
     }
   },
-  "removeLauncherBody": "It is removed from homemaid.toml on the PC."
+  "removeLauncherBody": "It is removed from homemaid.toml on the PC.",
+  "plugins": "Plugins",
+  "pluginsHint": "Add brands and devices to the home.",
+  "pluginsInstalled": "Installed",
+  "pluginsAvailable": "Available",
+  "pluginsNone": "No plugins yet.",
+  "pluginsAllInstalled": "Everything the registry offers is installed.",
+  "pluginRunning": "Running",
+  "pluginStarting": "Starting…",
+  "pluginLocal": "Set in homemaid.toml on the hub",
+  "pluginInstall": "Install",
+  "pluginUpdate": "Update to {version}",
+  "@pluginUpdate": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "pluginNeedsNewer": "Needs a newer HomeMaid",
+  "pluginSettings": "Settings",
+  "pluginRemove": "Remove {name}?",
+  "@pluginRemove": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "pluginRemoveBody": "Its devices leave the home. Its passwords stay on the hub, for a reinstall.",
+  "pluginAllowed": "It will be allowed to:",
+  "permLocalNetwork": "Talk to devices on your home network",
+  "permLoopback": "Talk to programs on the hub's PC",
+  "pluginSigned": "The hub downloads it from the registry and checks its author's signature.",
+  "pluginKeep": "Leave empty to keep",
+  "registryUnreachable": "The registry can't be reached: {error}",
+  "@registryUnreachable": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "retry": "Retry"
 }

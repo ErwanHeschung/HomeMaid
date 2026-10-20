@@ -843,4 +843,79 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get removeLauncherBody =>
       'It is removed from homemaid.toml on the PC.';
+
+  @override
+  String get plugins => 'Plugins';
+
+  @override
+  String get pluginsHint => 'Add brands and devices to the home.';
+
+  @override
+  String get pluginsInstalled => 'Installed';
+
+  @override
+  String get pluginsAvailable => 'Available';
+
+  @override
+  String get pluginsNone => 'No plugins yet.';
+
+  @override
+  String get pluginsAllInstalled =>
+      'Everything the registry offers is installed.';
+
+  @override
+  String get pluginRunning => 'Running';
+
+  @override
+  String get pluginStarting => 'Starting…';
+
+  @override
+  String get pluginLocal => 'Set in homemaid.toml on the hub';
+
+  @override
+  String get pluginInstall => 'Install';
+
+  @override
+  String pluginUpdate(String version) {
+    return 'Update to $version';
+  }
+
+  @override
+  String get pluginNeedsNewer => 'Needs a newer HomeMaid';
+
+  @override
+  String get pluginSettings => 'Settings';
+
+  @override
+  String pluginRemove(String name) {
+    return 'Remove $name?';
+  }
+
+  @override
+  String get pluginRemoveBody =>
+      'Its devices leave the home. Its passwords stay on the hub, for a reinstall.';
+
+  @override
+  String get pluginAllowed => 'It will be allowed to:';
+
+  @override
+  String get permLocalNetwork => 'Talk to devices on your home network';
+
+  @override
+  String get permLoopback => 'Talk to programs on the hub\'s PC';
+
+  @override
+  String get pluginSigned =>
+      'The hub downloads it from the registry and checks its author\'s signature.';
+
+  @override
+  String get pluginKeep => 'Leave empty to keep';
+
+  @override
+  String registryUnreachable(String error) {
+    return 'The registry can\'t be reached: $error';
+  }
+
+  @override
+  String get retry => 'Retry';
 }

@@ -843,4 +843,79 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get removeLauncherBody => 'Il est retiré de homemaid.toml sur le PC.';
+
+  @override
+  String get plugins => 'Plugins';
+
+  @override
+  String get pluginsHint => 'Ajoutez des marques et des appareils à la maison.';
+
+  @override
+  String get pluginsInstalled => 'Installés';
+
+  @override
+  String get pluginsAvailable => 'Disponibles';
+
+  @override
+  String get pluginsNone => 'Aucun plugin pour l\'instant.';
+
+  @override
+  String get pluginsAllInstalled =>
+      'Tout ce que propose le registre est installé.';
+
+  @override
+  String get pluginRunning => 'En marche';
+
+  @override
+  String get pluginStarting => 'Démarrage…';
+
+  @override
+  String get pluginLocal => 'Réglé dans homemaid.toml sur le hub';
+
+  @override
+  String get pluginInstall => 'Installer';
+
+  @override
+  String pluginUpdate(String version) {
+    return 'Mettre à jour en $version';
+  }
+
+  @override
+  String get pluginNeedsNewer => 'Demande un HomeMaid plus récent';
+
+  @override
+  String get pluginSettings => 'Réglages';
+
+  @override
+  String pluginRemove(String name) {
+    return 'Retirer $name ?';
+  }
+
+  @override
+  String get pluginRemoveBody =>
+      'Ses appareils quittent la maison. Ses mots de passe restent sur le hub, pour une réinstallation.';
+
+  @override
+  String get pluginAllowed => 'Il pourra :';
+
+  @override
+  String get permLocalNetwork => 'Parler aux appareils de votre réseau local';
+
+  @override
+  String get permLoopback => 'Parler aux programmes du PC du hub';
+
+  @override
+  String get pluginSigned =>
+      'Le hub le télécharge depuis le registre et vérifie la signature de son auteur.';
+
+  @override
+  String get pluginKeep => 'Laisser vide pour garder';
+
+  @override
+  String registryUnreachable(String error) {
+    return 'Registre injoignable : $error';
+  }
+
+  @override
+  String get retry => 'Réessayer';
 }

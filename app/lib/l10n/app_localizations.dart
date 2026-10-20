@@ -1555,6 +1555,138 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'It is removed from homemaid.toml on the PC.'**
   String get removeLauncherBody;
+
+  /// No description provided for @plugins.
+  ///
+  /// In en, this message translates to:
+  /// **'Plugins'**
+  String get plugins;
+
+  /// No description provided for @pluginsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Add brands and devices to the home.'**
+  String get pluginsHint;
+
+  /// No description provided for @pluginsInstalled.
+  ///
+  /// In en, this message translates to:
+  /// **'Installed'**
+  String get pluginsInstalled;
+
+  /// No description provided for @pluginsAvailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Available'**
+  String get pluginsAvailable;
+
+  /// No description provided for @pluginsNone.
+  ///
+  /// In en, this message translates to:
+  /// **'No plugins yet.'**
+  String get pluginsNone;
+
+  /// No description provided for @pluginsAllInstalled.
+  ///
+  /// In en, this message translates to:
+  /// **'Everything the registry offers is installed.'**
+  String get pluginsAllInstalled;
+
+  /// No description provided for @pluginRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'Running'**
+  String get pluginRunning;
+
+  /// No description provided for @pluginStarting.
+  ///
+  /// In en, this message translates to:
+  /// **'Starting…'**
+  String get pluginStarting;
+
+  /// No description provided for @pluginLocal.
+  ///
+  /// In en, this message translates to:
+  /// **'Set in homemaid.toml on the hub'**
+  String get pluginLocal;
+
+  /// No description provided for @pluginInstall.
+  ///
+  /// In en, this message translates to:
+  /// **'Install'**
+  String get pluginInstall;
+
+  /// No description provided for @pluginUpdate.
+  ///
+  /// In en, this message translates to:
+  /// **'Update to {version}'**
+  String pluginUpdate(String version);
+
+  /// No description provided for @pluginNeedsNewer.
+  ///
+  /// In en, this message translates to:
+  /// **'Needs a newer HomeMaid'**
+  String get pluginNeedsNewer;
+
+  /// No description provided for @pluginSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Settings'**
+  String get pluginSettings;
+
+  /// No description provided for @pluginRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove {name}?'**
+  String pluginRemove(String name);
+
+  /// No description provided for @pluginRemoveBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Its devices leave the home. Its passwords stay on the hub, for a reinstall.'**
+  String get pluginRemoveBody;
+
+  /// No description provided for @pluginAllowed.
+  ///
+  /// In en, this message translates to:
+  /// **'It will be allowed to:'**
+  String get pluginAllowed;
+
+  /// No description provided for @permLocalNetwork.
+  ///
+  /// In en, this message translates to:
+  /// **'Talk to devices on your home network'**
+  String get permLocalNetwork;
+
+  /// No description provided for @permLoopback.
+  ///
+  /// In en, this message translates to:
+  /// **'Talk to programs on the hub\'s PC'**
+  String get permLoopback;
+
+  /// No description provided for @pluginSigned.
+  ///
+  /// In en, this message translates to:
+  /// **'The hub downloads it from the registry and checks its author\'s signature.'**
+  String get pluginSigned;
+
+  /// No description provided for @pluginKeep.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave empty to keep'**
+  String get pluginKeep;
+
+  /// No description provided for @registryUnreachable.
+  ///
+  /// In en, this message translates to:
+  /// **'The registry can\'t be reached: {error}'**
+  String registryUnreachable(String error);
+
+  /// No description provided for @retry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get retry;
 }
 
 class _AppLocalizationsDelegate

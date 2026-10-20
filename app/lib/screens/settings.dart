@@ -5,6 +5,7 @@ import '../connections.dart';
 import '../l10n/app_localizations.dart';
 import '../theme.dart';
 import 'common.dart';
+import 'plugins.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key, required this.connections, required this.core, required this.onPair});
@@ -70,6 +71,15 @@ class SettingsScreen extends StatelessWidget {
             ),
             trailing: const Icon(Icons.edit_outlined),
             onTap: () => editLocation(context, core),
+          ),
+          SectionHeader(l.plugins),
+          ListTile(
+            contentPadding: const EdgeInsets.only(left: 20, right: 8),
+            leading: const Icon(Icons.extension_outlined),
+            title: Text(l.plugins, style: theme.textTheme.bodyLarge),
+            subtitle: Text(l.pluginsHint, style: theme.textTheme.bodyMedium?.copyWith(color: Hm.textDim)),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => showPlugins(context, core),
           ),
         ],
         SectionHeader(l.remoteSection),

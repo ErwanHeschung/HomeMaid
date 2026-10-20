@@ -170,6 +170,108 @@ class DemoCore extends CoreClient {
     );
     notifyListeners();
   }
+
+  // Plugins, kept in memory: what the registry offers and what is installed.
+  late final _offered = [
+    RegistryPlugin(
+      id: 'tplink',
+      name: 'TP-Link Tapo',
+      description: _fr ? 'Multiprises et prises Tapo, en local.' : 'Tapo power strips and plugs, locally.',
+      settings: [
+        PluginSetting(key: 'hosts', label: _fr ? 'Adresses IP (séparées par des virgules)' : 'IP addresses (comma-separated)', required: true),
+        PluginSetting(key: 'username', label: _fr ? 'E-mail du compte TP-Link' : 'TP-Link account e-mail', secret: true, required: true),
+        PluginSetting(key: 'password', label: _fr ? 'Mot de passe TP-Link' : 'TP-Link password', secret: true, required: true),
+      ],
+      version: '0.2.0',
+      permissions: const ['local-network'],
+    ),
+    RegistryPlugin(
+      id: 'wake-on-lan',
+      name: 'Wake-on-LAN',
+      description: _fr ? 'Allume les PC du réseau.' : 'Turns on the PCs of the network.',
+      settings: [PluginSetting(key: 'macs', label: _fr ? 'Adresses MAC' : 'MAC addresses', required: true)],
+      version: '1.0.0',
+      permissions: const ['local-network'],
+    ),
+    RegistryPlugin(id: 'future', name: _fr ? 'Plugin du futur' : 'Plugin from the future', description: _fr ? 'Fait pour une version plus récente.' : 'Built for a newer version.'),
+  ];
+
+  late final _installed = <String, InstalledPlugin>{
+    'tplink': InstalledPlugin(
+      id: 'tplink',
+      name: 'TP-Link Tapo',
+      fromRegistry: true,
+      version: '0.1.0',
+      permissions: const ['local-network'],
+      settings: const {'hosts': '192.168.1.50'},
+      secrets: const ['username', 'password'],
+      declared: _offered[0].settings,
+    ),
+    'pc': const InstalledPlugin(id: 'pc', name: 'pc', fromRegistry: false, version: '0.1.0', permissions: ['local-network', 'loopback']),
+  };
+
+  @override
+  Future<void> refreshPlugins() async {
+    plugins = _installed.values.toList();
+    notifyListeners();
+  }
+
+  @override
+  Future<List<RegistryPlugin>> registry() async {
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    return [
+      for (final p in _offered)
+        RegistryPlugin(
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          settings: p.settings,
+          version: p.version,
+          permissions: p.permissions,
+          installed: _installed[p.id]?.version,
+          update: _installed[p.id] != null && _installed[p.id]!.version != p.version,
+        ),
+    ];
+  }
+
+  @override
+  Future<void> installPlugin(RegistryPlugin plugin, Map<String, String> settings) async {
+    await Future<void>.delayed(const Duration(milliseconds: 1200));
+    final old = _installed[plugin.id];
+    for (final s in plugin.settings.where((s) => s.required)) {
+      final kept = s.secret ? old?.secrets.contains(s.key) == true : old?.settings[s.key] != null;
+      if ((settings[s.key] ?? '').trim().isEmpty && !kept) throw '${s.label} ${_fr ? 'est obligatoire' : 'is required'}';
+    }
+    _installed[plugin.id] = InstalledPlugin(
+      id: plugin.id,
+      name: plugin.name,
+      description: plugin.description,
+      fromRegistry: true,
+      version: plugin.version,
+      permissions: plugin.permissions,
+      settings: {...?old?.settings, for (final s in plugin.settings.where((s) => !s.secret && settings[s.key] != null)) s.key: settings[s.key]!},
+      secrets: {...?old?.secrets, for (final s in plugin.settings.where((s) => s.secret && settings[s.key] != null)) s.key}.toList(),
+      declared: plugin.settings,
+    );
+    await refreshPlugins();
+  }
+
+  @override
+  Future<void> configurePlugin(String id, Map<String, String> settings) async {
+    final p = _installed[id]!;
+    await installPlugin(
+      RegistryPlugin(id: id, name: p.name, description: p.description ?? '', settings: p.declared, version: p.version, permissions: p.permissions),
+      settings,
+    );
+  }
+
+  @override
+  Future<void> removePlugin(String id) async {
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    _installed.remove(id);
+    await refreshPlugins();
+  }
+
 }
 
 Map<String, dynamic> _slot(Object? observed, {Object? desired, String state = 'confirmed', String? reason, Map<String, dynamic> meta = const {}}) => {

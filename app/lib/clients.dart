@@ -151,7 +151,9 @@ class CoreClient extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<Object?> call(String method, [Object? params]) {
+  Future<Object?> call(String method, [Object? params]) => _call(method, params, const Duration(seconds: 10));
+
+  Future<Object?> _call(String method, Object? params, Duration timeout) {
     final id = ++_nextId;
     final completer = Completer<Object?>();
     _calls[id] = completer;
@@ -159,7 +161,7 @@ class CoreClient extends ChangeNotifier {
       _calls.remove(id);
       return Future.error(const LinkException(LinkError.notConnected));
     }
-    return completer.future.timeout(const Duration(seconds: 10), onTimeout: () {
+    return completer.future.timeout(timeout, onTimeout: () {
       _calls.remove(id);
       throw const LinkException(LinkError.timeout);
     });
@@ -206,6 +208,44 @@ class CoreClient extends ChangeNotifier {
     return run;
   }
 
+  /// The hub's plugins; read when the Plugins screen opens, and again on `plugins.changed`.
+  List<InstalledPlugin> plugins = const [];
+
+  Future<void> refreshPlugins() async {
+    final list = await call('plugins.list') as List;
+    plugins = [for (final p in list) InstalledPlugin.fromJson((p as Map).cast())];
+    notifyListeners();
+  }
+
+  /// What the registry offers: the hub reads it on the Internet.
+  Future<List<RegistryPlugin>> registry() async {
+    final list = await _call('registry.list', null, const Duration(seconds: 70)) as List;
+    return [for (final p in list) RegistryPlugin.fromJson((p as Map).cast())];
+  }
+
+  /// Installs or updates `plugin` at the version and with the permissions the user was shown.
+  /// The hub downloads it and checks its signature; settings left out keep their value.
+  Future<void> installPlugin(RegistryPlugin plugin, Map<String, String> settings) async {
+    await _call(
+      'plugin.install',
+      {'id': plugin.id, 'version': plugin.version, 'permissions': plugin.permissions, 'settings': settings},
+      const Duration(minutes: 3),
+    );
+    await refreshPlugins();
+  }
+
+  /// New settings, the plugin restarts with them; an empty secret keeps the old one.
+  Future<void> configurePlugin(String id, Map<String, String> settings) async {
+    await _call('plugin.configure', {'id': id, 'settings': settings}, const Duration(seconds: 90));
+    await refreshPlugins();
+  }
+
+  /// Uninstalls it; its devices go with it.
+  Future<void> removePlugin(String id) async {
+    await _call('plugin.remove', {'id': id}, const Duration(seconds: 90));
+    await refreshPlugins();
+  }
+
   /// Saved in homemaid.toml; an empty kind goes back to the inferred one.
   Future<void> updateRoom(String name, String kind) => call('room.update', {'name': name, 'kind': kind});
 
@@ -226,15 +266,7 @@ class CoreClient extends ChangeNotifier {
   Future<void> _resync() async {
     try {
       await call('subscribe');
-      final list = await call('entities.list') as List;
-      // Applied at once: the changes notified from here on are newer than this list.
-      entities
-        ..clear()
-        ..addEntries(list.map((json) {
-          final entity = Entity.fromJson((json as Map).cast<String, dynamic>());
-          return MapEntry(entity.id, entity);
-        }));
-      notifyListeners();
+      await _reloadEntities();
       final rooms = await call('rooms.list').catchError((Object _) => <Object?>[]) as List;
       roomKinds
         ..clear()
@@ -246,6 +278,18 @@ class CoreClient extends ChangeNotifier {
     } catch (_) {
       // Lost again: the socket reconnects and resyncs.
     }
+  }
+
+  Future<void> _reloadEntities() async {
+    final list = await call('entities.list') as List;
+    // Applied at once: the changes notified from here on are newer than this list.
+    entities
+      ..clear()
+      ..addEntries(list.map((json) {
+        final entity = Entity.fromJson((json as Map).cast<String, dynamic>());
+        return MapEntry(entity.id, entity);
+      }));
+    notifyListeners();
   }
 
   void _onMessage(Map<String, dynamic> message) {
@@ -277,6 +321,11 @@ class CoreClient extends ChangeNotifier {
         // Edited, maybe from another phone, or the location changed.
         refreshAutomations().catchError((Object _) {});
         refreshLocation().catchError((Object _) {});
+        return;
+      case 'plugins.changed':
+        // Installed, updated, removed (its devices with it), started or failed.
+        refreshPlugins().catchError((Object _) {});
+        _reloadEntities().catchError((Object _) {});
         return;
       case 'room.changed':
         final name = params['name'] as String;
