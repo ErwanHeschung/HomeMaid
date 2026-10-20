@@ -83,21 +83,8 @@ permissions = ["local-network"]
 [plugin.settings]
 # crash_once = "true"
 
-# TP-Link Tapo P300: cargo build -p tplink-plugin --target wasm32-wasip2
-# Simple automations on its outlets (`at` triggers, days only) also become schedules on the strip,
-# which keeps switching with the hub off; set its location and time zone in the Tapo app.
-# Needs "Third-Party Compatibility" in the Tapo app (Me > Third-Party Services) and, in
-# <data_dir>/secrets.toml, the TP-Link account:
-#   [tplink]
-#   username = "you@example.com"
-#   password = "..."
-# [[plugin]]
-# id = "tplink"
-# path = "target/wasm32-wasip2/debug/tplink_plugin.wasm"
-# permissions = ["local-network"]
-#
-# [plugin.settings]
-# hosts = "192.168.1.50"   # comma-separated, ip or ip:port; reserve the IP on your router
+# Brands (TP-Link Tapo...) are installed from the app: Settings > Plugins. They are written here
+# as [[plugin]] tables like the ones above. Their code: github.com/ErwanHeschung/HomeMaid-plugins.
 
 # Optional user metadata over discovered entities, by stable UUID (see entities.list).
 [[entity]]

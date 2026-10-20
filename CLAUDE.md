@@ -118,10 +118,10 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
 - SDK Rust pour écrire un plugin, plus un **template** `cargo generate` (dans le repo du registre, `template/`) donnant un plugin fonctionnel en quelques minutes.
 
 ### Registre de plugins
-- Repo `ErwanHeschung/HomeMaid-plugins` (clone local `~/projects/HomeMaid-plugins`) : `index.json`, `check.py` + CI, `sync.py`, et le template (`cargo generate --git … --subfolder template`, construit chaque semaine contre `main` de HomeMaid).
+- Repo `ErwanHeschung/HomeMaid-plugins` (clone local `~/projects/HomeMaid-plugins`) : les **plugins officiels** (`plugins/<id>`, workspace Cargo), `index.json`, `check.py` + CI, `tools/release.py`, et le template (`cargo generate --git … --subfolder template`).
 - `index.json` (`format: 1`) : par plugin `id`, `name`, `description`, `repo`, `key` (clé publique minisign de l'auteur), `settings` (`key`, `label`, `secret`, `required` : ce que l'app demande à l'installation), et `versions` (`version`, `api` = plugin-api minimale `1.x`, `permissions`, `url` du `.wasm` en release GitHub, `sha256`, `signature` = le `.minisig` entier).
 - Pour publier un plugin : une PR sur `index.json` (le template a un workflow de release sur tag `v*` qui produit `.wasm`, `.minisig` et `entry.json`).
-- **Plugins officiels, publiés par la CI** : chaque plugin avec un `core/plugins/<dir>/registry.json` (sa fiche : nom, description, permissions, réglages) dont la version de `Cargo.toml` n'a pas de release est construit, signé et publié par `.github/workflows/release-plugins.yml` (`core/tools/release_plugins.py`, aussi en local avec `--dry-run` ou `--pending`), en release `<id>-v<version>` avec `entry.json`. La signature attend ton approbation (environnement GitHub `release`, branche `main` seulement). Clé de la CI sans mot de passe, dans le secret `MINISIGN_KEY` de cet environnement ; clé publique dans `core/plugins/minisign.pub` ; copie de secours dans `~/.minisign/homemaid-ci.key` sur le PC de l'auteur. Puis `sync.py` (HomeMaid-plugins, toutes les heures) propose la nouvelle version en PR sur l'index, vérifiée par `check.py`. Publier = monter la version dans `Cargo.toml`, pousser, approuver, fusionner la PR.
+- **Plugins officiels** : dans HomeMaid-plugins, publiés indépendamment du hub et de l'app. Chacun a un `registry.json` (sa fiche : nom, description, permissions, réglages). Ils épinglent le SDK sur un **tag de HomeMaid** (`plugin-api-v1.2.0`), et leurs tests les font tourner sur un vrai hub au même tag (crate `homemaid` en dépendance git). Publier = monter la version dans `Cargo.toml` et fusionner : `release.yml` liste les versions absentes de `index.json`, attend ton approbation (environnement GitHub `release`, `main` seulement), puis construit, signe avec la clé de la CI (sans mot de passe, secret `MINISIGN_KEY` ; clé publique `minisign.pub` ; copie de secours `~/.minisign/homemaid-ci.key`), publie la release `<id>-v<version>` et ajoute la version à l'index. HomeMaid ne garde que `pc` (le pont vers son propre agent, livré avec l'exe) et `mock` (tests du hub).
 - **Confiance** : la signature garantit « publié par la CI de HomeMaid », donc par qui contrôle le compte GitHub (plus l'approbation de l'environnement). Clé de l'auteur **épinglée à l'installation** (`key` dans le `[[plugin]]`) ; une mise à jour signée par une autre clé est refusée même si l'index change. La CI du registre refuse un changement de clé sans le label `key-change`.
 - Implémenté dans `core/crates/homemaid/src/registry.rs` (`ureq`, `minisign-verify`) et `api.rs`. **Le local d'abord** : Internet n'est lu que par `registry.list` et `plugin.install`, sur demande. URL par défaut `registry::DEFAULT_URL`, remplaçable par `[core] registry`.
   - `plugins.list` (sans réseau) : plugins du `homemaid.toml`, `source` (`registry` ou `local` = écrit à la main, géré à la main), version, erreur, réglages ; les secrets ne ressortent jamais (seulement leurs clés).
@@ -205,7 +205,7 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
   - Contrôle local. Les appareils Tapo récents utilisent le protocole chiffré **KLAP**, avec les identifiants du compte TP-Link pour l'auth locale. Référence d'implémentation : la librairie Python `python-kasa`, qui supporte la P300.
   - Une entité par prise, capacité `OnOff`.
   - Attention : certaines mises à jour firmware TP-Link ont déjà cassé l'accès local.
-  - Implémenté dans `core/plugins/tplink`, en **KLAP v2** (`lv: 2`), avec des hôtes configurés par IP (`hosts`).
+  - Implémenté dans `HomeMaid-plugins/plugins/tplink`, en **KLAP v2** (`lv: 2`), avec des hôtes configurés par IP (`hosts`).
     - **Prérequis** : activer « Compatibilité tierce » dans l'app Tapo (Moi → Services tiers, FAQ TP-Link 4416). Sinon, les firmwares récents (1.4.x) parlent **TPAP** (SPAKE2+), non supporté. Seule référence connue : le crate Rust `tapo` 0.11.1.
     - Prévoir une réservation DHCP pour l'IP. La découverte UDP 20002 n'est pas faite.
 - **Ampoules connectées** : modèle à préciser.
@@ -230,7 +230,7 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
   - **Cibles** : une pièce (ou toute la maison) et une capacité, `room:"Salon" & cap:on_off` (`lib/selectors.dart`), jamais un nom ni un UUID ; l'appli montre les appareils concernés. Un sélecteur écrit à la main reste modifiable en texte. L'id d'une nouvelle automatisation vient de son nom (`slug`) et ne change plus.
   - Paramètres d'une action : un menu quand son schéma a un `enum` (le plugin `pc` y met les applis et services de l'agent, que son état `{"type":"state"}` liste désormais), un champ sinon ; la phrase les dit (« Lancer notepad sur PC »). L'action proposée par défaut est une que la maison sait faire.
   - Essayer = `automation.dry_run { automation }` sur le brouillon ; Enregistrer = `automation.save`, dont le refus s'affiche dans le formulaire sans rien perdre. L'appli lit `config` (les automatisations telles qu'écrites) ; la démo enregistre en mémoire.
-- **Phase B, faite** : soleil, et plannings confiés aux appareils (plugin-api 1.2). Le plugin `tplink` les pose en règles de planning sur chaque prise de la P300 (`control_child` + `add_schedule_rule`, format du crate `tapo`, mesuré sur P110). Il ne retire que ses propres règles (ids dans son KV), réessaie quand la multiprise revient, et la P300 calcule lever et coucher d'après la localisation et le fuseau réglés dans l'app Tapo. **Non vérifié sur une vraie P300** : lancer `cargo run -p tplink-plugin --example probe` (voir l'exemple) et ajuster si besoin.
+- **Phase B, faite** : soleil, et plannings confiés aux appareils (plugin-api 1.2). Le plugin `tplink` les pose en règles de planning sur chaque prise de la P300 (`control_child` + `add_schedule_rule`, format du crate `tapo`, mesuré sur P110). Il ne retire que ses propres règles (ids dans son KV), réessaie quand la multiprise revient, et la P300 calcule lever et coucher d'après la localisation et le fuseau réglés dans l'app Tapo. **Non vérifié sur une vraie P300** : lancer `cargo run -p tplink-plugin --example probe` dans HomeMaid-plugins (voir l'exemple) et ajuster si besoin.
 
 ## Roadmap MVP
 
@@ -240,18 +240,18 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
 4. **Agent PC** (Windows) + écran télécommande dans l'app. Mode combiné `--core --agent`, et service Windows.
 5. **App Flutter** : liste par pièce, contrôle des capacités de base.
 6. **Automatisations** typées + dry-run, avec **délégation des plannings** aux appareils qui le supportent. *(Faite : automatisations, sélecteurs, dry-run, actions ponctuelles, soleil, plannings confiés aux appareils ; reste à vérifier sur la P300 réelle.)*
-7. **Registre de plugins** (index GitHub, vérification de signature). *(Fait côté core et app ; reste à créer le repo `HomeMaid-plugins` et à y publier `tplink`.)*
+7. **Registre de plugins** (index GitHub, vérification de signature). *(Fait : HomeMaid-plugins avec `tplink` 0.1.0, installation depuis l'app, publication signée par la CI.)*
 8. Historique avec downsampling.
 9. (Plus tard) Mode dégradé de l'app sans core, et migration vers un host dédié.
 
 ## Organisation des repos
 
-- `core` : serveur, `plugin-api` (WIT + SDK), plugins officiels dans `plugins/`.
+- `core` : serveur, `plugin-api` (WIT + SDK), plugins `pc` et `mock` dans `plugins/`.
 - `app` : application Flutter.
 - `agent` : agent PC.
-- `HomeMaid-plugins` : le registre (`index.json`) et le template `cargo generate` (`template/`).
+- `HomeMaid-plugins` : les plugins officiels (`plugins/`), le registre (`index.json`) et le template `cargo generate` (`template/`).
 
-Un monorepo est acceptable au début. Seul le registre est séparé : son URL est inscrite dans chaque core installé, et les PR de publication ne touchent pas le code du hub.
+Un monorepo est acceptable au début. Les plugins et leur registre sont à part : leurs releases ne dépendent pas de celles du hub et de l'app, l'URL du registre est inscrite dans chaque core installé, et les PR de publication ne touchent pas le code du hub.
 
 Disposition actuelle du monorepo :
 - `core/` : workspace Cargo. Lancer `cargo` depuis ce dossier.
@@ -287,7 +287,7 @@ Le développement se fait sous **WSL2 (Ubuntu)** sur le PC Windows de l'auteur.
 
 - **Vérifier les versions actuelles** des crates et outils (tokio, axum, wasmtime, wit-bindgen, Flutter…) avant de les ajouter, sans se fier à la mémoire.
 - Ne jamais ajouter de logique spécifique à une marque dans le core.
-- Toute évolution de `plugin-api` doit être explicitement versionnée et signalée.
+- Toute évolution de `plugin-api` doit être explicitement versionnée et signalée, avec un tag `plugin-api-vX.Y.Z` sur HomeMaid (ce que les plugins épinglent).
 - Tests : tests unitaires sur le réconciliateur et le modèle de capacités, et un plugin mock pour les tests d'intégration.
 - Le code et les commentaires sont en anglais. La documentation utilisateur peut être en français.
 - En cas de choix d'architecture non tranché (marqué « à trancher »), proposer les options et demander avant d'implémenter.

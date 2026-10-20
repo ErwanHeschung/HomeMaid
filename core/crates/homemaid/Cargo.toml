@@ -56,8 +56,6 @@ windows = { version = "0.62.2", features = [
 ] }
 
 [dev-dependencies]
-# The fake P300 of tests/plugin_tplink.rs reuses the plugin's KLAP implementation.
-tplink-plugin = { path = "../../plugins/tplink" }
 # WebSocket client for tests/agent.rs; same versions axum already pulls in.
 futures-util = "0.3.34"
 tokio-tungstenite = "0.29.0"

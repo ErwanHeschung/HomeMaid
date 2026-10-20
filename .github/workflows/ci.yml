@@ -34,7 +34,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: Clippy, plugins as wasm
-        run: cargo clippy -p homemaid-plugin -p mock-plugin -p pc-plugin -p tplink-plugin --target wasm32-wasip2 -- -D warnings
+        run: cargo clippy -p homemaid-plugin -p mock-plugin -p pc-plugin --target wasm32-wasip2 -- -D warnings
       - name: Tests
         run: cargo test 2>&1 | tee test.log; exit ${PIPESTATUS[0]}
       # Annotations are readable without access to the logs.
@@ -65,13 +65,13 @@ jobs:
       - name: Build
         run: |
           cargo build --release -p homemaid-bin --target x86_64-pc-windows-gnu
-          cargo build --release -p pc-plugin -p tplink-plugin --target wasm32-wasip2
+          cargo build --release -p pc-plugin --target wasm32-wasip2
       - name: Package (copy the folder, double-click homemaid.exe)
         run: |
           mkdir -p dist/HomeMaid/plugins
           cp target/x86_64-pc-windows-gnu/release/homemaid.exe dist/HomeMaid/
           cp "$(find target/x86_64-pc-windows-gnu/release/build -path '*webview2-com-sys-*/out/x64/WebView2Loader.dll' | head -1)" dist/HomeMaid/
-          cp target/wasm32-wasip2/release/pc_plugin.wasm target/wasm32-wasip2/release/tplink_plugin.wasm dist/HomeMaid/plugins/
+          cp target/wasm32-wasip2/release/pc_plugin.wasm dist/HomeMaid/plugins/
           cp homemaid.example.toml dist/HomeMaid/
           ls -lR dist
       - uses: actions/upload-artifact@v7
