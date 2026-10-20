@@ -73,12 +73,20 @@ never a wish), **pink** is a command still waiting for the device, **red** is a 
 - **Hub** (`core/`): entities and typed capabilities, desired/observed state with a reconciler,
   JSON-RPC 2.0 over WebSocket, declarative TOML config that the app edits without losing your
   comments, mDNS discovery.
-- **Plugins** (`core/plugins/`): WebAssembly components (`wasm32-wasip2`) behind a versioned WIT
-  interface, [`plugin-api`](core/plugin-api/wit/plugin.wit) v1.1. Official plugins use the same
-  public API as third-party ones.
-  - `tplink`: TP-Link Tapo P300 power strip, local KLAP v2 protocol, one entity per outlet.
-  - `pc`: your PC as a device of the home (volume, mute, CPU, memory, active window) with one-shot
-    actions (play/pause, next, lock, sleep, shut down, open a service).
+- **Plugins**: WebAssembly components (`wasm32-wasip2`) behind a versioned WIT interface,
+  [`plugin-api`](core/plugin-api/wit/plugin.wit) v1.2. Official plugins use the same public API
+  as third-party ones, and are installed, updated and removed **from the app**, without
+  restarting the hub.
+  - `pc` (here, in `core/plugins/`): your PC as a device of the home (volume, mute, CPU, memory,
+    active window) with one-shot actions (play/pause, next, lock, sleep, shut down, open a
+    service). It ships with the Windows exe.
+  - The brands live in [**HomeMaid-plugins**](https://github.com/ErwanHeschung/HomeMaid-plugins),
+    released on their own: today `tplink`, the TP-Link Tapo P300 power strip (local KLAP v2, one
+    entity per outlet, its schedules kept by the strip itself).
+- **Plugin registry**: the app lists what
+  [HomeMaid-plugins](https://github.com/ErwanHeschung/HomeMaid-plugins) offers, shows the
+  permissions a plugin asks in plain words and the settings it needs, then the hub downloads it.
+  Every `.wasm` must match its checksum and be signed by its author's key, pinned at install.
 - **Automations**: time and state triggers, conditions, actions on selectors, dry run, the last 20
   runs, a loop guard.
 - **PC agent**: mouse, keyboard, media keys, volume (Core Audio), power, streaming services
@@ -95,7 +103,7 @@ never a wish), **pink** is a command still waiting for the device, **red** is a 
 
 > [!IMPORTANT]
 > **Not representative yet.** HomeMaid is at an early stage and does far less than Home Assistant:
-> one plugin here, no history, no web dashboard, no voice. These numbers show where it starts, not
+> one device plugin, no history, no web dashboard, no voice. These numbers show where it starts, not
 > a fair fight. They will be measured again as it grows.
 
 Both ran side by side in Docker on the same machine, at idle, sampled every 10 s for 5 minutes:
@@ -120,6 +128,7 @@ flowchart LR
     core -- "WIT · wasmtime" --> plugins["🧩 WASM plugins<br/>tplink · pc · yours"]
     plugins -- "local network" --> devices["💡 Devices"]
     plugins -. "pc plugin" .-> agent
+    registry["📦 HomeMaid-plugins<br/>index · signed .wasm"] -. "install from the app" .-> core
 ```
 
 One binary, several roles, set by flags: `--core`, `--agent`, or both. On Windows without flags it
@@ -136,7 +145,8 @@ move to a Raspberry Pi or a mini-PC without code changes.
 | `core/crates/bin` | The `homemaid` executable |
 | `core/crates/caps` | Typed capabilities, shared with the plugin SDK |
 | `core/plugin-api` | WIT interface and Rust SDK for plugins |
-| `core/plugins` | Official plugins (`tplink`, `pc`) and the `mock` used by tests |
+| `core/plugins` | The `pc` plugin and the `mock` used by tests |
+| [HomeMaid-plugins](https://github.com/ErwanHeschung/HomeMaid-plugins) | The brands' plugins (`tplink`), the registry index and the plugin template |
 | `app` | The Flutter app |
 | `DESIGN.md`, `PRODUCT.md` | Design system and product context |
 
@@ -153,10 +163,13 @@ move to a Raspberry Pi or a mini-PC without code changes.
 2. Double-click `homemaid.exe`. Allow it on private networks when Windows asks (ports 8123 and 8124).
 3. Install the app from the **HomeMaid-android** artifact (`app-real-release.apk`), then in the app:
    *Settings → Pair*, and scan the QR codes shown in the HomeMaid window.
+4. Add your devices: *Settings → Plugins*, pick a plugin under *Available* (TP-Link Tapo…), check
+   what it may do, fill in its settings, *Install*. Its devices appear in the home.
 
 The first start writes `homemaid.toml` next to the exe. See
 [`homemaid.example.toml`](core/homemaid.example.toml) for every option: plugins, rooms, automations,
-streaming services.
+streaming services. Plugins installed from the app are written there too, their `.wasm` in
+`data/plugins`, their passwords in `data/secrets.toml`.
 
 > [!TIP]
 > Just curious? Install `app-demo-release.apk`: it runs a synthetic home covering every device and
@@ -169,7 +182,7 @@ streaming services.
 cd core
 rustup target add wasm32-wasip2
 cargo test
-cargo build --release -p pc-plugin -p tplink-plugin --target wasm32-wasip2
+cargo build --release -p pc-plugin --target wasm32-wasip2
 
 # The Windows exe, cross-compiled from Linux or WSL
 sudo apt install mingw-w64 && rustup target add x86_64-pc-windows-gnu
@@ -205,11 +218,34 @@ between = ["18:00", "23:30"]
 set = { select = "room:Salon & model:lamp", cap = "brightness", value = 40 }
 ```
 
+## Plugins
+
+The app installs plugins from [HomeMaid-plugins](https://github.com/ErwanHeschung/HomeMaid-plugins),
+a registry (`index.json`) the hub reads only when you browse or install: it never needs the
+Internet to run.
+
+- **What you accept is what runs.** The install sheet says what a plugin may do ("talk to devices
+  on your home network") and asks its settings; the hub refuses a version or permissions other
+  than the ones you saw, and a plugin asking for more than you granted.
+- **Signed.** Every `.wasm` must match its sha256 and be signed (minisign) by its author's key. The
+  key is pinned at install: an update signed by another key is refused, even if the index changes.
+- **Hot.** Installing, updating, changing settings or removing a plugin happens while the hub runs.
+  An update keeps the devices, their names, rooms and automations.
+- **Sandboxed.** No files, no Internet, the local network at most, 64 MiB of memory, 60 s per call,
+  restarted on crash.
+
+Hub API: `plugins.list`, `registry.list`, `plugin.install`, `plugin.configure`, `plugin.remove`,
+and the `plugins.changed` notification. `[core] registry` points the hub at another index.
+
 ## Writing a plugin
 
 A plugin is a Rust crate compiled to `wasm32-wasip2` with the SDK in `core/plugin-api`. It
 declares its entities and capabilities, applies desired states and reports what it observes; the
-core does the rest (retries, pending/confirmed/failed, the UI).
+core does the rest (retries, pending/confirmed/failed, the UI). Start from the template:
+
+```sh
+cargo generate --git https://github.com/ErwanHeschung/HomeMaid-plugins --subfolder template
+```
 
 ```rust
 use homemaid_plugin::{CapKind, CapMeta, CapValue, DiscoveredEntity, Manifest, Plugin, LOCAL_NETWORK, report_state};
@@ -241,8 +277,11 @@ homemaid_plugin::export!(Lamp with_types_in homemaid_plugin::bindings);
 ```
 
 The [`mock`](core/plugins/mock/src/lib.rs) plugin is a complete small example, and
-[`tplink`](core/plugins/tplink/src/lib.rs) a real one. Plugins get only what their manifest asks
-and the config grants: no files, no internet, the local network at most.
+[`tplink`](https://github.com/ErwanHeschung/HomeMaid-plugins/blob/main/plugins/tplink/src/lib.rs)
+a real one. Plugins get only what their manifest asks and the user grants: no files, no Internet,
+the local network at most. Plugins pin the SDK to a tag of this repo (`plugin-api-v1.2.0`); each
+plugin-api change gets a new one. To publish yours, see
+[HomeMaid-plugins](https://github.com/ErwanHeschung/HomeMaid-plugins#publish-a-plugin).
 
 ## Roadmap
 
@@ -253,7 +292,7 @@ and the config grants: no files, no internet, the local network at most.
 - [x] Flutter app with the 3D home, the design system and a demo mode
 - [x] Typed automations with dry run, one-shot actions (plugin API 1.1)
 - [x] Sunrise/sunset triggers, schedules pushed to the devices that support them (P300, still to check on a real strip)
-- [ ] Plugin registry on GitHub, with signed plugins
+- [x] Plugin registry on GitHub, with signed plugins installed from the app
 - [ ] History with downsampling
 - [ ] App fallback mode when the hub is unreachable
 
