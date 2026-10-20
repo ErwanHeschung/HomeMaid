@@ -11,7 +11,7 @@ use std::{
     net::IpAddr,
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, RecvTimeoutError},
     },
@@ -19,6 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use serde::Serialize;
 use uuid::Uuid;
 use wasmtime::{
     Engine, Store, StoreLimits, StoreLimitsBuilder,
@@ -96,7 +97,9 @@ enum Job {
     Reschedule,
 }
 
-const API_MAJOR: &str = "1.";
+pub const API_MAJOR: &str = "1.";
+/// The newest 1.x this host implements.
+pub const API_MINOR: u32 = 2;
 const LOCAL_NETWORK: &str = "local-network";
 /// Granted in the config only (`permissions`), for a plugin whose device runs on this PC (`pc`):
 /// the core, the agent and their pairing pages listen on loopback.
@@ -117,7 +120,25 @@ const MAX_RESTART: Duration = Duration::from_secs(60);
 type Secrets = BTreeMap<String, BTreeMap<String, String>>;
 
 pub struct Plugins {
-    senders: HashMap<String, mpsc::Sender<Job>>,
+    engine: Engine,
+    core: Arc<Core>,
+    kv_dir: PathBuf,
+    running: Mutex<HashMap<String, Running>>,
+}
+
+struct Running {
+    jobs: mpsc::Sender<Job>,
+    thread: thread::JoinHandle<()>,
+    state: Arc<Mutex<PluginState>>,
+}
+
+/// How a plugin is doing, for `plugins.list`.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct PluginState {
+    /// From its manifest, once started.
+    pub version: Option<String>,
+    /// Why it is not running (cannot load, refused, crashed); `None` once started again.
+    pub error: Option<String>,
 }
 
 impl Plugins {
@@ -126,7 +147,7 @@ impl Plugins {
         core: Arc<Core>,
         configs: Vec<PluginConfig>,
         data_dir: &Path,
-        secrets: Secrets,
+        mut secrets: Secrets,
     ) -> Result<Self, String> {
         let mut config = wasmtime::Config::new();
         config.epoch_interruption(true);
@@ -141,29 +162,65 @@ impl Plugins {
 
         let kv_dir = data_dir.join("plugins");
         fs::create_dir_all(&kv_dir).map_err(|e| format!("{}: {e}", kv_dir.display()))?;
-        let mut senders = HashMap::new();
+        let plugins = Self { engine, core, kv_dir, running: Mutex::default() };
         for cfg in configs {
-            let (tx, rx) = mpsc::channel();
-            let runner = Runner {
-                engine: engine.clone(),
-                core: core.clone(),
-                secrets: secrets.get(&cfg.id).cloned().unwrap_or_default(),
-                kv_path: kv_dir.join(format!("{}.kv.json", cfg.id)),
-                cfg,
-            };
-            senders.insert(runner.cfg.id.clone(), tx);
-            thread::Builder::new()
-                .name(format!("plugin-{}", runner.cfg.id))
-                .spawn(move || runner.supervise(&rx))
-                .map_err(|e| e.to_string())?;
+            let secrets = secrets.remove(&cfg.id).unwrap_or_default();
+            plugins.spawn(cfg, secrets)?;
         }
-        Ok(Self { senders })
+        Ok(plugins)
+    }
+
+    /// Starts one more plugin, or restarts it with a new config. Blocks while the old instance
+    /// finishes its call (60 s at worst), so the two never write its KV store at once.
+    pub fn spawn(&self, cfg: PluginConfig, secrets: BTreeMap<String, String>) -> Result<(), String> {
+        self.stop(&cfg.id);
+        let (jobs, rx) = mpsc::channel();
+        let state = Arc::new(Mutex::new(PluginState::default()));
+        let runner = Runner {
+            engine: self.engine.clone(),
+            core: self.core.clone(),
+            secrets,
+            kv_path: self.kv_dir.join(format!("{}.kv.json", cfg.id)),
+            state: state.clone(),
+            cfg,
+        };
+        let id = runner.cfg.id.clone();
+        let thread = thread::Builder::new()
+            .name(format!("plugin-{id}"))
+            .spawn(move || runner.supervise(&rx))
+            .map_err(|e| e.to_string())?;
+        self.running.lock().unwrap().insert(id, Running { jobs, thread, state });
+        Ok(())
+    }
+
+    /// Stops a plugin, waiting for its thread (see [`Plugins::spawn`]). Its entities go offline.
+    pub fn stop(&self, id: &str) {
+        let Some(running) = self.running.lock().unwrap().remove(id) else { return };
+        drop(running.jobs);
+        let _ = running.thread.join();
+    }
+
+    /// Stops a plugin for good: its entities and KV store go too.
+    pub fn remove(&self, id: &str) {
+        self.stop(id);
+        self.core.with(|r| r.entities.retain(|_, e| e.plugin != id));
+        self.core.dirty.notify_one();
+        let _ = fs::remove_file(self.kv_dir.join(format!("{id}.kv.json")));
+    }
+
+    /// The running plugins and how they are doing, by id.
+    pub fn states(&self) -> BTreeMap<String, PluginState> {
+        self.running.lock().unwrap().iter().map(|(id, r)| (id.clone(), r.state.lock().unwrap().clone())).collect()
+    }
+
+    fn sender(&self, plugin: &str) -> Option<mpsc::Sender<Job>> {
+        self.running.lock().unwrap().get(plugin).map(|r| r.jobs.clone())
     }
 
     /// Routes a reconciler command to the plugin driving its entity.
     pub fn dispatch(&self, core: &Core, command: Command) {
         let target = core.with(|r| r.entities.get(&command.entity).map(|e| (e.plugin.clone(), e.local_id.clone())));
-        match target.and_then(|(plugin, local_id)| Some((self.senders.get(&plugin)?, local_id))) {
+        match target.and_then(|(plugin, local_id)| Some((self.sender(&plugin)?, local_id))) {
             // A stopped plugin drops the command; the reconciler fails it after its retries.
             Some((tx, local_id)) => drop(tx.send(Job::Apply(local_id, command))),
             None => tracing::warn!(?command, "no plugin for entity, command dropped"),
@@ -172,8 +229,8 @@ impl Plugins {
 
     /// Every plugin hands its devices their schedules again, as they now are.
     pub fn reschedule(&self) {
-        for tx in self.senders.values() {
-            let _ = tx.send(Job::Reschedule);
+        for running in self.running.lock().unwrap().values() {
+            let _ = running.jobs.send(Job::Reschedule);
         }
     }
 
@@ -193,7 +250,7 @@ impl Plugins {
             return Err(format!("`{action}` takes no parameters"));
         }
         // ponytail: params are not checked against their JSON schema; add a validator when a plugin needs it.
-        let tx = self.senders.get(&plugin).ok_or_else(|| format!("plugin `{plugin}` is not running"))?;
+        let tx = self.sender(&plugin).ok_or_else(|| format!("plugin `{plugin}` is not running"))?;
         let (reply, answer) = tokio::sync::oneshot::channel();
         let params = if params.is_null() { "{}".into() } else { params.to_string() };
         tx.send(Job::Invoke { local_id, name: action.into(), params, reply }).map_err(|_| format!("plugin `{plugin}` stopped"))?;
@@ -216,6 +273,7 @@ struct Runner {
     core: Arc<Core>,
     secrets: BTreeMap<String, String>,
     kv_path: PathBuf,
+    state: Arc<Mutex<PluginState>>,
 }
 
 impl Runner {
@@ -225,6 +283,7 @@ impl Runner {
             Ok(component) => component,
             Err(e) => {
                 tracing::error!(plugin = %self.cfg.id, "cannot load {}: {e:#}", self.cfg.path.display());
+                self.failed(format!("cannot load {}: {e:#}", self.cfg.path.display()));
                 return;
             }
         };
@@ -235,12 +294,18 @@ impl Runner {
                 Ok(Exit::Disabled(reason)) => {
                     tracing::error!(plugin = %self.cfg.id, "plugin disabled: {reason}");
                     self.set_offline();
+                    self.failed(reason);
                     return;
                 }
                 Err(e) => {
                     tracing::error!(plugin = %self.cfg.id, "plugin failed, restart in {delay:?}: {e:?}");
                     self.set_offline();
-                    thread::sleep(delay);
+                    self.failed(format!("{e:#}"));
+                    // Waits on the jobs to stop at once when told to. A job arriving meanwhile is
+                    // dropped: the reconciler retries, and a restart sends the desired state anyway.
+                    if let Err(RecvTimeoutError::Disconnected) = rx.recv_timeout(delay) {
+                        return;
+                    }
                     delay = (delay * 2).min(MAX_RESTART);
                 }
             }
@@ -300,6 +365,8 @@ impl Runner {
                 self.to_entity(e, mine)
             }).collect();
         tracing::info!(plugin = %self.cfg.id, version = %manifest.version, "started with {} entities", entities.len());
+        *self.state.lock().unwrap() = PluginState { version: Some(manifest.version.clone()), error: None };
+        let _ = self.core.changes.send(crate::Event::Plugins);
         if let Instance::Schedules(p) = &plugin {
             self.hand_schedules(p, &mut store, &entities)?;
         }
@@ -459,6 +526,11 @@ impl Runner {
             o.apply(&mut entity);
         }
         entity
+    }
+
+    fn failed(&self, error: String) {
+        self.state.lock().unwrap().error = Some(error);
+        let _ = self.core.changes.send(crate::Event::Plugins);
     }
 
     fn set_offline(&self) {

@@ -10,6 +10,9 @@ token = "change-me"
 # nothing leaves this PC).
 # latitude = 48.86
 # longitude = 2.35
+# Where the app finds plugins to install (an index.json); the official registry by default.
+# Read only when you browse or install, never to run.
+# registry = "https://raw.githubusercontent.com/ErwanHeschung/homemaid-plugins/main/index.json"
 
 # PC agent (run with --agent, in the user's session): remote control of this PC.
 # On the phone: http://<this PC's IP>:8124/remote#token=<agent.token>
@@ -64,6 +67,9 @@ keys = { restart = "0", next_episode = "shift+n", skip_intro = "s" }
 #
 # [plugin.settings]
 # agent = "127.0.0.1:8124"
+
+# Plugins installed from the app (Settings > Plugins) are written here too, with their `.wasm` in
+# <data_dir>/plugins, their `version`, and the author's `key` every update must be signed with.
 
 # Mock plugin, build it first: cargo build -p mock-plugin --target wasm32-wasip2
 [[plugin]]

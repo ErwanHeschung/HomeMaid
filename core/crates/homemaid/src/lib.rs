@@ -6,6 +6,7 @@ pub mod model;
 pub mod pairing;
 pub mod plugins;
 pub mod reconciler;
+pub mod registry;
 pub mod selector;
 pub mod server;
 pub mod store;
@@ -32,6 +33,8 @@ pub enum Event {
     Automation { id: String, run: automations::Run },
     /// Automations were added, edited or removed.
     Automations,
+    /// A plugin was installed, configured or removed, started or failed.
+    Plugins,
 }
 
 /// Shared runtime around the reconciler: routes its outputs to the driver and the API subscribers.

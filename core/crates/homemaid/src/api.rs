@@ -10,10 +10,20 @@
 //! `room.changed { name, kind }`, `automation.ran { id, run }` and `automations.changed`
 //! notifications), `home.location` and `home.set_location { latitude, longitude }` (where the
 //! home is, for sunrise and sunset; saved to the config file).
+//! Plugins: `plugins.list` (installed ones), `registry.list` (what the registry offers; the only
+//! methods with `plugin.install` that use the Internet), `plugin.install { id, version, permissions,
+//! settings? }` (the version and permissions the user accepted; an update keeps the settings),
+//! `plugin.configure { id, settings }` and `plugin.remove { id }`, then `plugins.changed`.
 //! `/pair` serves the pairing QR code to the PC itself; `/hello?nonce=` proves this host knows
 //! the token (see [`pairing::proof`]).
 
-use std::{collections::HashMap, net::SocketAddr, path::Path, sync::Arc, time::Instant};
+use std::{
+    collections::{BTreeMap, HashMap},
+    net::SocketAddr,
+    path::Path,
+    sync::Arc,
+    time::Instant,
+};
 
 use axum::{
     Router,
@@ -33,9 +43,9 @@ use uuid::Uuid;
 use crate::{
     Core, Event,
     automations::{AutomationConfig, Automations, Location},
-    config::{self, EntityOverride, RoomConfig},
+    config::{self, EntityOverride, PluginConfig, RoomConfig},
     model::{CapKind, CapValue},
-    pairing,
+    pairing, registry, store,
 };
 
 #[derive(Clone)]
@@ -43,6 +53,8 @@ struct AppState {
     core: Arc<Core>,
     token: Arc<str>,
     config_path: Arc<Path>,
+    data_dir: Arc<Path>,
+    registry: Arc<str>,
     pair_page: Arc<str>,
 }
 
@@ -54,7 +66,14 @@ pub fn router(core: Arc<Core>, config: &config::CoreConfig, config_path: &Path) 
         .route("/ws", get(ws))
         .route("/pair", get(pair))
         .route("/hello", get(prove))
-        .with_state(AppState { core, token: config.token.as_str().into(), config_path: config_path.into(), pair_page: pair_page.into() })
+        .with_state(AppState {
+            core,
+            token: config.token.as_str().into(),
+            config_path: config_path.into(),
+            data_dir: config.data_dir.as_path().into(),
+            registry: config.registry.as_deref().unwrap_or(registry::DEFAULT_URL).into(),
+            pair_page: pair_page.into(),
+        })
 }
 
 /// Also used by the agent.
@@ -107,10 +126,10 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// Methods that wait for a plugin (an action: ms usually, 70 s at worst). They run aside so the
+/// Methods that wait for a plugin (an action: ms usually, 70 s at worst) or the registry. They run aside so the
 /// notifications keep flowing; the others answer in order with them, so `entities.list` is never
 /// overtaken by an older change.
-const SLOW: [&str; 2] = ["entity.invoke", "automation.run"];
+const SLOW: [&str; 6] = ["entity.invoke", "automation.run", "registry.list", "plugin.install", "plugin.configure", "plugin.remove"];
 
 async fn session(mut socket: WebSocket, app: AppState) {
     let mut changes = app.core.changes.subscribe();
@@ -144,6 +163,7 @@ async fn session(mut socket: WebSocket, app: AppState) {
                     json!({ "jsonrpc": "2.0", "method": "automation.ran", "params": { "id": id, "run": run } })
                 }
                 Ok(Event::Automations) if subscribed => json!({ "jsonrpc": "2.0", "method": "automations.changed", "params": {} }),
+                Ok(Event::Plugins) if subscribed => json!({ "jsonrpc": "2.0", "method": "plugins.changed", "params": {} }),
                 Ok(_) => continue,
                 // Changes were lost: closing makes the client reconnect and read everything again.
                 Err(RecvError::Lagged(n)) => {
@@ -197,6 +217,26 @@ struct SetLocation {
 #[derive(Deserialize)]
 struct SaveAutomation {
     automation: AutomationConfig,
+}
+
+#[derive(Deserialize)]
+struct Install {
+    id: String,
+    version: String,
+    permissions: Vec<String>,
+    #[serde(default)]
+    settings: BTreeMap<String, String>,
+}
+
+#[derive(Deserialize)]
+struct Configure {
+    id: String,
+    settings: BTreeMap<String, String>,
+}
+
+#[derive(Deserialize)]
+struct PluginId {
+    id: String,
 }
 
 #[derive(Deserialize)]
@@ -269,6 +309,20 @@ async fn handle(app: &AppState, req: Request) -> Value {
         "automation.delete" => match serde_json::from_value::<AutomationId>(req.params) {
             Err(e) => Err((-32602, e.to_string())),
             Ok(p) => blocking(app, move |app| save_automation(app, &p.id, None)).await.map_err(|e| (-32000, e)),
+        },
+        "plugins.list" => blocking(app, list_plugins).await.map_err(|e| (-32000, e)),
+        "registry.list" => blocking(app, list_registry).await.map_err(|e| (-32000, e)),
+        "plugin.install" => match serde_json::from_value::<Install>(req.params) {
+            Err(e) => Err((-32602, e.to_string())),
+            Ok(p) => blocking(app, move |app| install_plugin(app, p)).await.map_err(|e| (-32000, e)),
+        },
+        "plugin.configure" => match serde_json::from_value::<Configure>(req.params) {
+            Err(e) => Err((-32602, e.to_string())),
+            Ok(p) => blocking(app, move |app| configure_plugin(app, p)).await.map_err(|e| (-32000, e)),
+        },
+        "plugin.remove" => match serde_json::from_value::<PluginId>(req.params) {
+            Err(e) => Err((-32602, e.to_string())),
+            Ok(p) => blocking(app, move |app| remove_plugin(app, &p.id)).await.map_err(|e| (-32000, e)),
         },
         _ => Err((-32601, format!("unknown method `{}`", req.method))),
     };
@@ -343,6 +397,189 @@ fn update_room(app: &AppState, mut room: RoomConfig) -> Result<Value, String> {
     };
     let _ = app.core.changes.send(Event::Room(room));
     reschedule(app);
+    Ok(json!(true))
+}
+
+/// Where an installed plugin's files are: `<id>.wasm`, and `<id>.json` (its registry entry, for
+/// its name and settings without the Internet).
+fn plugin_file(app: &AppState, id: &str, ext: &str) -> std::path::PathBuf {
+    app.data_dir.join("plugins").join(format!("{id}.{ext}"))
+}
+
+fn installed_entry(app: &AppState, id: &str) -> Option<registry::Entry> {
+    serde_json::from_slice(&std::fs::read(plugin_file(app, id, "json")).ok()?).ok()
+}
+
+fn secrets_path(app: &AppState) -> std::path::PathBuf {
+    app.data_dir.join("secrets.toml")
+}
+
+/// The plugins of the config file, with how they are doing. Secret values are never sent back:
+/// only which ones are set.
+fn list_plugins(app: &AppState) -> Result<Value, String> {
+    let states = app.core.plugins.get().map(|p| p.states()).unwrap_or_default();
+    let secrets = config::load_secrets(&secrets_path(app))?;
+    let list: Vec<Value> = config::load(&app.config_path)?
+        .plugins
+        .into_iter()
+        .map(|cfg| {
+            let entry = cfg.key.is_some().then(|| installed_entry(app, &cfg.id)).flatten();
+            let state = states.get(&cfg.id).cloned().unwrap_or_default();
+            let set: Vec<&String> = secrets.get(&cfg.id).map(|s| s.keys().collect()).unwrap_or_default();
+            json!({
+                "id": cfg.id,
+                "name": entry.as_ref().map_or(&cfg.id, |e| &e.name),
+                "description": entry.as_ref().map(|e| &e.description),
+                "source": if cfg.key.is_some() { "registry" } else { "local" },
+                "version": cfg.version.or(state.version),
+                "error": state.error,
+                "permissions": cfg.permissions,
+                "settings": cfg.settings,
+                "secrets": set,
+                "declared": entry.map(|e| e.settings).unwrap_or_default(),
+            })
+        })
+        .collect();
+    Ok(json!(list))
+}
+
+/// What the registry offers this core: each plugin with the newest version it can run (none: it
+/// needs a newer HomeMaid), and what is installed.
+fn list_registry(app: &AppState) -> Result<Value, String> {
+    let index = registry::fetch(&app.registry)?;
+    let installed: HashMap<String, PluginConfig> = config::load(&app.config_path)?.plugins.into_iter().map(|c| (c.id.clone(), c)).collect();
+    let list: Vec<Value> = index
+        .plugins
+        .iter()
+        .map(|e| {
+            let version = e.compatible();
+            let mine = installed.get(&e.id);
+            json!({
+                "id": e.id,
+                "name": e.name,
+                "description": e.description,
+                "repo": e.repo,
+                "settings": e.settings,
+                "version": version.map(|v| &v.version),
+                "permissions": version.map(|v| &v.permissions),
+                "installed": mine.map(|c| c.version.as_deref().unwrap_or("local")),
+                "update": matches!((mine.and_then(|c| c.version.as_deref()), version), (Some(have), Some(v)) if registry::compare(&v.version, have).is_gt()),
+            })
+        })
+        .collect();
+    Ok(json!(list))
+}
+
+/// Downloads, checks and starts a plugin of the registry, or updates it. Nothing changes unless
+/// the file is the one its author signed, at the version and with the permissions the user saw.
+fn install_plugin(app: &AppState, p: Install) -> Result<Value, String> {
+    let index = registry::fetch(&app.registry)?;
+    let mut entry = index.plugins.into_iter().find(|e| e.id == p.id).ok_or(format!("no plugin `{}` in the registry", p.id))?;
+    let version = entry.compatible().cloned().ok_or(format!("{} needs a newer HomeMaid", entry.name))?;
+    if version.version != p.version {
+        return Err(format!("{} is now at version {}: look at it again", entry.name, version.version));
+    }
+    if let Some(more) = version.permissions.iter().find(|x| !p.permissions.contains(x)) {
+        return Err(format!("{} asks for `{more}`, which was not accepted", entry.name));
+    }
+    let current = config::load(&app.config_path)?.plugins.into_iter().find(|c| c.id == p.id);
+    if current.as_ref().is_some_and(|c| c.key.is_none()) {
+        return Err(format!("`{}` is already in the config, not from the registry: remove its [[plugin]] first", p.id));
+    }
+    let old_settings = current.as_ref().map(|c| c.settings.clone()).unwrap_or_default();
+    let (settings, secrets) = split_settings(app, &entry.settings, &p.id, p.settings, old_settings)?;
+    let wasm = registry::download(&entry, &version, current.as_ref().and_then(|c| c.key.as_deref()))?;
+
+    // The running instance compiled its own copy: the file can be replaced under it.
+    let file = plugin_file(app, &p.id, "wasm");
+    std::fs::create_dir_all(file.parent().expect("in the plugins dir")).map_err(|e| e.to_string())?;
+    store::write_atomic(&file, &wasm).map_err(|e| format!("{}: {e}", file.display()))?;
+    let key = std::mem::take(&mut entry.key);
+    entry.versions.clear();
+    store::write_atomic(&plugin_file(app, &p.id, "json"), &serde_json::to_vec(&entry).expect("serializable"))
+        .map_err(|e| e.to_string())?;
+    let cfg = PluginConfig {
+        id: p.id,
+        path: file,
+        permissions: version.permissions,
+        settings,
+        version: Some(version.version),
+        key: Some(key),
+    };
+    save_and_start(app, cfg, secrets)
+}
+
+/// New settings for an installed plugin; empty secrets are kept as they were.
+fn configure_plugin(app: &AppState, p: Configure) -> Result<Value, String> {
+    let cfg = config::load(&app.config_path)?.plugins.into_iter().find(|c| c.id == p.id).ok_or(format!("no plugin `{}`", p.id))?;
+    let entry = installed_entry(app, &p.id).filter(|_| cfg.key.is_some()).ok_or(format!("`{}` is set in homemaid.toml, not from the app", p.id))?;
+    let (settings, secrets) = split_settings(app, &entry.settings, &p.id, p.settings, cfg.settings.clone())?;
+    save_and_start(app, PluginConfig { settings, ..cfg }, secrets)
+}
+
+type Settings = BTreeMap<String, String>;
+
+/// Sorts what the user typed by the plugin's declared settings: secrets to `secrets.toml`, the
+/// rest to the config. A setting left out (or an empty secret) keeps its value; a required one
+/// with none is refused.
+fn split_settings(
+    app: &AppState,
+    declared: &[registry::Setting],
+    id: &str,
+    mut given: BTreeMap<String, String>,
+    old: BTreeMap<String, String>,
+) -> Result<(Settings, Settings), String> {
+    if let Some(unknown) = given.keys().find(|k| !declared.iter().any(|d| &d.key == *k)) {
+        return Err(format!("`{id}` has no setting `{unknown}`"));
+    }
+    let old_secrets = config::load_secrets(&secrets_path(app))?.remove(id).unwrap_or_default();
+    let (mut settings, mut secrets) = (BTreeMap::new(), BTreeMap::new());
+    for d in declared {
+        let value = given.remove(&d.key).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        let kept = if d.secret { old_secrets.get(&d.key) } else { old.get(&d.key) };
+        if d.required && value.is_none() && kept.is_none() {
+            return Err(format!("{} is required", d.label));
+        }
+        match (value, d.secret) {
+            (Some(v), true) => drop(secrets.insert(d.key.clone(), v)),
+            (Some(v), false) => drop(settings.insert(d.key.clone(), v)),
+            (None, false) => settings.extend(kept.map(|v| (d.key.clone(), v.clone()))),
+            (None, true) => {}
+        }
+    }
+    Ok((settings, secrets))
+}
+
+/// Writes the secrets and the `[[plugin]]`, then (re)starts the plugin with them.
+fn save_and_start(app: &AppState, cfg: PluginConfig, secrets: BTreeMap<String, String>) -> Result<Value, String> {
+    for (key, value) in &secrets {
+        config::set_secret(&secrets_path(app), &cfg.id, key, value)?;
+    }
+    let dir = app.config_path.parent().unwrap_or(Path::new("."));
+    let file = cfg.path.strip_prefix(dir).unwrap_or(&cfg.path).display().to_string();
+    config::save_plugin(&app.config_path, &cfg, &file)?;
+    let plugins = app.core.plugins.get().ok_or("plugins are not running")?;
+    let secrets = config::load_secrets(&secrets_path(app))?.remove(&cfg.id).unwrap_or_default();
+    plugins.spawn(cfg, secrets)?;
+    let _ = app.core.changes.send(Event::Plugins);
+    Ok(json!(true))
+}
+
+/// Uninstalls a plugin of the registry: its `[[plugin]]`, files, KV store and entities. Its
+/// secrets stay in `secrets.toml` (the user's), ready for a reinstall.
+fn remove_plugin(app: &AppState, id: &str) -> Result<Value, String> {
+    let cfg = config::load(&app.config_path)?.plugins.into_iter().find(|c| c.id == id).ok_or(format!("no plugin `{id}`"))?;
+    if cfg.key.is_none() {
+        return Err(format!("`{id}` is set in homemaid.toml, not from the app"));
+    }
+    config::delete_plugin(&app.config_path, id)?;
+    if let Some(plugins) = app.core.plugins.get() {
+        plugins.remove(id);
+    }
+    for ext in ["wasm", "json"] {
+        let _ = std::fs::remove_file(plugin_file(app, id, ext));
+    }
+    let _ = app.core.changes.send(Event::Plugins);
     Ok(json!(true))
 }
 

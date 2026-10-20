@@ -46,6 +46,9 @@ pub struct CoreConfig {
     pub latitude: Option<f64>,
     #[serde(default)]
     pub longitude: Option<f64>,
+    /// Where plugins are found (`index.json`); the official registry when absent.
+    #[serde(default)]
+    pub registry: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -123,6 +126,11 @@ pub struct PluginConfig {
     pub permissions: Vec<String>,
     #[serde(default)]
     pub settings: BTreeMap<String, String>,
+    /// Installed from the registry: its version, and the author's key it must stay signed with.
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub key: Option<String>,
 }
 
 /// Relative paths in the file are resolved against the directory of the file.
@@ -294,6 +302,36 @@ pub fn save_override(path: &Path, o: &EntityOverride) -> Result<(), String> {
 pub fn save_room(path: &Path, room: &RoomConfig) -> Result<(), String> {
     save_table(path, "room", "name", &room.name, |set| {
         set("kind", room.kind.as_ref().filter(|k| !k.is_empty()).map(toml_edit::value));
+    })
+}
+
+/// Writes a plugin installed from the registry into its `[[plugin]]` (found by id, added after the
+/// others when new), with its `[plugin.settings]`. `file` is its `.wasm`, as written in the config.
+pub fn save_plugin(path: &Path, plugin: &PluginConfig, file: &str) -> Result<(), String> {
+    use toml_edit::{Array, Item, Table, value};
+
+    save_table(path, "plugin", "id", &plugin.id, |set| {
+        set("path", Some(value(file)));
+        set("permissions", Some(value(plugin.permissions.iter().collect::<Array>())));
+        set("version", plugin.version.as_deref().map(value));
+        set("key", plugin.key.as_deref().map(value));
+        let mut settings = Table::new();
+        for (key, v) in &plugin.settings {
+            settings[key] = value(v);
+        }
+        set("settings", Some(Item::Table(settings)));
+    })
+}
+
+/// Removes the `[[plugin]]` of `id`.
+pub fn delete_plugin(path: &Path, id: &str) -> Result<(), String> {
+    use toml_edit::Item;
+
+    edit_toml(path, |doc| {
+        let tables = doc.get_mut("plugin").and_then(Item::as_array_of_tables_mut).ok_or(format!("no plugin `{id}`"))?;
+        let index = tables.iter().position(|t| t.get("id").and_then(Item::as_str) == Some(id)).ok_or(format!("no plugin `{id}`"))?;
+        tables.remove(index);
+        Ok(())
     })
 }
 
@@ -537,6 +575,40 @@ mod tests {
         assert_eq!(config.entities[0].name.as_deref(), Some("Lampe"));
         assert_eq!(config.entities[0].room, None, "an empty room removes it");
         assert_eq!(config.entities[0].model.as_deref(), Some("kettle"));
+    }
+
+    #[test]
+    fn an_installed_plugin_goes_with_the_others_and_keeps_its_settings_on_update() {
+        let path = std::env::temp_dir().join(format!("homemaid-plugin-test-{}.toml", std::process::id()));
+        let text = "[core]\nbind = \"0.0.0.0:8123\"\ndata_dir = \"data\"\ntoken = \"0123456789abcdef\"\n\n\
+                    # mine\n[[plugin]]\nid = \"pc\"\npath = \"pc.wasm\"\n[plugin.settings]\nagent = \"127.0.0.1:8124\"\n\n\
+                    [[automation]]\nid = \"a\"\n";
+        fs::write(&path, text).unwrap();
+        let mut plugin = PluginConfig {
+            id: "tplink".into(),
+            path: PathBuf::new(),
+            permissions: vec!["local-network".into()],
+            settings: BTreeMap::from([("hosts".into(), "192.168.1.20".into())]),
+            version: Some("0.1.0".into()),
+            key: Some("RWQkey".into()),
+        };
+        save_plugin(&path, &plugin, "data/plugins/tplink.wasm").unwrap();
+        plugin.version = Some("0.2.0".into());
+        save_plugin(&path, &plugin, "data/plugins/tplink.wasm").unwrap();
+        let config = load(&path).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert_eq!(written.matches("[[plugin]]").count(), 2, "{written}");
+        assert!(written.find("id = \"tplink\"") < written.find("[[automation]]"), "after the other plugin: {written}");
+        let t = &config.plugins[1];
+        assert_eq!((t.version.as_deref(), t.key.as_deref()), (Some("0.2.0"), Some("RWQkey")));
+        assert_eq!(t.settings["hosts"], "192.168.1.20");
+        assert!(t.path.ends_with("data/plugins/tplink.wasm"));
+
+        delete_plugin(&path, "tplink").unwrap();
+        let config = load(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        assert_eq!(config.plugins.len(), 1);
+        assert_eq!(config.plugins[0].settings["agent"], "127.0.0.1:8124");
     }
 
     #[test]

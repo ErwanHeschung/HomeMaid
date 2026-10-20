@@ -14,7 +14,7 @@ use std::{
 use homemaid::{Core, automations::Automations, config::PluginConfig, plugins::Plugins, reconciler::Reconciler};
 use tokio::sync::mpsc;
 
-fn build_plugin(package: &str) -> PathBuf {
+pub fn build_plugin(package: &str) -> PathBuf {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let status = Command::new(env!("CARGO"))
         .args(["build", "-q", "-p", package, "--target", "wasm32-wasip2"])
@@ -33,12 +33,14 @@ pub struct Plugin<'a> {
     pub secrets: &'a [(&'a str, &'a str)],
 }
 
+#[allow(dead_code)] // Not every test binary uses it.
 /// Runs the plugin on a fresh core. Keep the returned dir alive: it holds the plugin's KV store.
 pub fn start(plugin: Plugin) -> (Arc<Core>, TempDir) {
     let path = build_plugin(plugin.package);
     start_wasm(plugin, path)
 }
 
+#[allow(dead_code)]
 /// Same with an already built `.wasm` (an older plugin-api, for compatibility tests).
 pub fn start_wasm(plugin: Plugin, path: PathBuf) -> (Arc<Core>, TempDir) {
     start_on(plugin, path, None)
@@ -65,9 +67,29 @@ fn start_on(plugin: Plugin, path: PathBuf, automations: Option<Automations>) -> 
         path,
         permissions: plugin.permissions.iter().map(|p| p.to_string()).collect(),
         settings: pairs(plugin.settings),
+        version: None,
+        key: None,
     };
     let secrets = BTreeMap::from([(plugin.id.to_string(), pairs(plugin.secrets))]);
     let plugins = Arc::new(Plugins::start(core.clone(), vec![config], &data.0, secrets).unwrap());
+    let _ = core.plugins.set(plugins.clone());
+    let router = core.clone();
+    tokio::spawn(async move {
+        while let Some(command) = command_rx.recv().await {
+            plugins.dispatch(&router, command);
+        }
+    });
+    (core, data)
+}
+
+/// A hub with no plugin yet, as after a first start: plugins are installed through the API.
+#[allow(dead_code)] // Not every test binary uses it.
+pub fn hub() -> (Arc<Core>, TempDir) {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let data = TempDir::new();
+    let (commands, mut command_rx) = mpsc::unbounded_channel();
+    let core = Arc::new(Core::new(Reconciler::new(BTreeMap::new()), commands));
+    let plugins = Arc::new(Plugins::start(core.clone(), vec![], &data.0.join("data"), BTreeMap::new()).unwrap());
     let _ = core.plugins.set(plugins.clone());
     let router = core.clone();
     tokio::spawn(async move {

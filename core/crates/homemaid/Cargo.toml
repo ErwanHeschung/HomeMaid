@@ -35,6 +35,8 @@ wasmtime = { version = "49.0.3", default-features = false, features = [
     "std",
 ] }
 wasmtime-wasi = "49.0.3"
+ureq = "3.4.2"
+minisign-verify = "0.3.0"
 
 [target.'cfg(windows)'.dependencies]
 enigo = "0.6.1"
@@ -59,3 +61,4 @@ tplink-plugin = { path = "../../plugins/tplink" }
 # WebSocket client for tests/agent.rs; same versions axum already pulls in.
 futures-util = "0.3.34"
 tokio-tungstenite = "0.29.0"
+minisign = "0.10.0"

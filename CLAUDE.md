@@ -115,12 +115,20 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
     - Le core (`Automations::schedules_for`) ne confie que les automatisations dont tous les déclencheurs sont des `at` (heure ou soleil) et dont les seules conditions sont des jours, et seulement leurs actions `set`. Il continue de les exécuter lui-même : les deux mettent le même état. `automations.list` donne `delegated` (les appareils qui les tiennent aussi).
     - Les sélecteurs sont résolus au démarrage du plugin, puis de nouveau quand les automatisations changent et après `entity.update` ou `room.update` (`Job::Reschedule`). SDK : trait `Schedules` et `export_with_schedules!`. Un plugin 1.0 ou 1.1 se charge toujours.
   - **Sandbox** : pas de fichiers, d'env ni de DNS ; sockets vers le réseau local uniquement, **sans loopback** (le hub, l'agent et leurs pages `/pair` y écoutent) sauf permission `loopback` accordée dans la config (le plugin `pc` quand l'agent est sur le même PC) ; 64 MiB de mémoire, deux mémoires au plus ; KV de 1 MiB au plus, écrit une fois par appel ; 60 lignes de log par minute ; 60 s max par appel (temps réel, attente réseau comprise : ça attrape les plugins emballés, les timeouts réseau sont gérés par le plugin) ; redémarrage après crash avec un délai de 1 s à 60 s.
-- SDK Rust pour écrire un plugin, plus un **repo template** (`cargo generate`) donnant un plugin fonctionnel en quelques minutes.
+- SDK Rust pour écrire un plugin, plus un **template** `cargo generate` (dans le repo du registre, `template/`) donnant un plugin fonctionnel en quelques minutes.
 
 ### Registre de plugins
-- Un repo GitHub dédié contenant un `index.json` : id, description, repo source, versions, URL du `.wasm` en release GitHub, sha256, signature (minisign).
-- Pour publier un plugin : une PR sur `index.json`.
-- Le core télécharge, vérifie le checksum et la signature, affiche les permissions demandées, puis active le plugin sur validation de l'utilisateur.
+- Repo `ErwanHeschung/homemaid-plugins` : `index.json`, `check.py` + CI, et le template (`cargo generate --git … --subfolder template`, construit chaque semaine contre `main` de HomeMaid).
+- `index.json` (`format: 1`) : par plugin `id`, `name`, `description`, `repo`, `key` (clé publique minisign de l'auteur), `settings` (`key`, `label`, `secret`, `required` : ce que l'app demande à l'installation), et `versions` (`version`, `api` = plugin-api minimale `1.x`, `permissions`, `url` du `.wasm` en release GitHub, `sha256`, `signature` = le `.minisig` entier).
+- Pour publier un plugin : une PR sur `index.json`. Plugins officiels : `core/tools/publish-plugin.sh <crate> <id> <permission>…` (build release, signature locale, `gh release`, imprime l'entrée).
+- **Confiance** : clé de l'auteur **épinglée à l'installation** (`key` dans le `[[plugin]]`) ; une mise à jour signée par une autre clé est refusée même si l'index change. La CI du registre refuse un changement de clé sans le label `key-change`.
+- Implémenté dans `core/crates/homemaid/src/registry.rs` (`ureq`, `minisign-verify`) et `api.rs`. **Le local d'abord** : Internet n'est lu que par `registry.list` et `plugin.install`, sur demande. URL par défaut `registry::DEFAULT_URL`, remplaçable par `[core] registry`.
+  - `plugins.list` (sans réseau) : plugins du `homemaid.toml`, `source` (`registry` ou `local` = écrit à la main, géré à la main), version, erreur, réglages ; les secrets ne ressortent jamais (seulement leurs clés).
+  - `registry.list` : la version la plus récente que ce core peut faire tourner (`API_MINOR` dans `plugins.rs`), ce qui est installé, `update`.
+  - `plugin.install { id, version, permissions, settings? }` : la version et les permissions **que l'utilisateur a vues** (sinon refus). Téléchargé, sha256 et signature vérifiés, puis `<data_dir>/plugins/<id>.wasm` + `<id>.json` (l'entrée, pour le nom et les réglages hors ligne), secrets dans `secrets.toml`, `[[plugin]]` écrit (`config::save_plugin`, avec `version` et `key`), démarré **à chaud**. Une mise à jour garde les réglages.
+  - `plugin.configure { id, settings }` (un secret vide est gardé), `plugin.remove { id }` (entités, `.wasm`, KV retirés ; secrets gardés). Notification `plugins.changed`, aussi quand un plugin démarre ou échoue.
+  - Hôte : `Plugins::spawn` / `stop` / `remove` démarrent et arrêtent un plugin à chaud ; `stop` attend la fin de son thread (≤ 60 s) pour que deux instances n'écrivent jamais son KV en même temps.
+- App : Réglages → Plugins (`lib/screens/plugins.dart`) : installés (état, réglages, retirer), disponibles (installer, mettre à jour), feuille avec les permissions en mots et les réglages ; la démo en a en mémoire. Aucun changement de `plugin-api`.
 
 ### Agent PC (Rust)
 - Daemon léger. **Cible prioritaire : Windows** (le PC de l'auteur), Linux ensuite. Il s'annonce en mDNS.
@@ -231,7 +239,7 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
 4. **Agent PC** (Windows) + écran télécommande dans l'app. Mode combiné `--core --agent`, et service Windows.
 5. **App Flutter** : liste par pièce, contrôle des capacités de base.
 6. **Automatisations** typées + dry-run, avec **délégation des plannings** aux appareils qui le supportent. *(Faite : automatisations, sélecteurs, dry-run, actions ponctuelles, soleil, plannings confiés aux appareils ; reste à vérifier sur la P300 réelle.)*
-7. **Registre de plugins** (index GitHub, vérification de signature).
+7. **Registre de plugins** (index GitHub, vérification de signature). *(Fait côté core et app ; reste à créer le repo `homemaid-plugins` et à y publier `tplink`.)*
 8. Historique avec downsampling.
 9. (Plus tard) Mode dégradé de l'app sans core, et migration vers un host dédié.
 
@@ -240,10 +248,9 @@ Sous Windows, le binaire s'exécute nativement, pas dans WSL : WSL s'arrête qua
 - `core` : serveur, `plugin-api` (WIT + SDK), plugins officiels dans `plugins/`.
 - `app` : application Flutter.
 - `agent` : agent PC.
-- `plugin-registry` : `index.json`.
-- `plugin-template` : template `cargo generate`.
+- `homemaid-plugins` : le registre (`index.json`) et le template `cargo generate` (`template/`).
 
-Un monorepo est acceptable au début. Seuls `plugin-registry` et `plugin-template` doivent être séparés dès leur création.
+Un monorepo est acceptable au début. Seul le registre est séparé : son URL est inscrite dans chaque core installé, et les PR de publication ne touchent pas le code du hub.
 
 Disposition actuelle du monorepo :
 - `core/` : workspace Cargo. Lancer `cargo` depuis ce dossier.
