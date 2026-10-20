@@ -1,0 +1,12 @@
+{
+  "id": "tplink",
+  "name": "TP-Link Tapo",
+  "description": "Tapo P300 power strips, locally. Turn on \"Third-Party Compatibility\" in the Tapo app first (Me > Third-Party Services).",
+  "repo": "https://github.com/ErwanHeschung/HomeMaid",
+  "permissions": ["local-network"],
+  "settings": [
+    { "key": "hosts", "label": "IP addresses of the strips (comma-separated)", "required": true },
+    { "key": "username", "label": "TP-Link account e-mail", "secret": true, "required": true },
+    { "key": "password", "label": "TP-Link account password", "secret": true, "required": true }
+  ]
+}
