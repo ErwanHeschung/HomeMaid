@@ -3,7 +3,7 @@
 
 use std::sync::Mutex;
 
-use super::{Combo, Request};
+use super::{Combo, Foreground, NowPlaying, Request};
 
 const KEEP: usize = 1000;
 
@@ -61,7 +61,11 @@ impl Desktop {
         Some((self.volume, self.muted))
     }
 
-    pub fn active_window(&self) -> Option<String> {
+    pub fn foreground(&mut self) -> Foreground {
+        Foreground::default()
+    }
+
+    pub fn now_playing(&self, _front: &Foreground) -> Option<NowPlaying> {
         None
     }
 }

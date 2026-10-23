@@ -217,7 +217,7 @@ class _LauncherSheetState extends State<LauncherSheet> {
                     contentPadding: const EdgeInsets.only(left: 20, right: 8),
                     leading: _AppIcon(widget.agent, app),
                     title: Text(app, style: theme.textTheme.bodyLarge),
-                    onTap: widget.agent.connected ? () => widget.agent.send({'type': 'launch', 'app': app}) : null,
+                    onTap: widget.agent.connected ? () => widget.agent.launch(app) : null,
                     trailing: IconButton(
                       icon: Icon(on ? Icons.push_pin : Icons.push_pin_outlined, color: on ? Hm.select : Hm.textDim),
                       tooltip: on ? l.unpinApp(app) : l.pinApp(app),

@@ -32,7 +32,7 @@ class _RemoteScreenState extends State<RemoteScreen> {
   int _selected = 0;
   bool _typing = false;
 
-  /// Play/pause has no state to read on the PC: the icon follows the last press.
+  /// Without a media session on the PC, the play/pause icon follows the last press.
   bool _playing = false;
 
   @override
@@ -54,6 +54,15 @@ class _RemoteScreenState extends State<RemoteScreen> {
           if (_typing)
             _Keys(agent: agent, onClosed: () => setState(() => _typing = false))
           else ...[
+            // Always there, empty when nothing plays: the buttons do not jump.
+            Text(
+              [?agent.playing?.title, if (agent.playing?.artist case final a? when a.isNotEmpty) a].join(' · '),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Hm.textDim),
+            ),
+            const SizedBox(height: 12),
             _playback(context, agent),
             const SizedBox(height: 20),
             _volume(context, agent),
@@ -126,9 +135,8 @@ class _RemoteScreenState extends State<RemoteScreen> {
     final on = agent.connected;
     final service = agent.activeShortcut;
     void media(String action) => agent.send({'type': 'media', 'action': action});
-    void key(String key) => agent.send({'type': 'key', 'key': key});
-    // With a service open, each button sends that service's own keys; without one, media keys
-    // and the arrows most players seek with.
+    // With a service in front, each button sends that service's own keys; without one, media
+    // requests, which the PC sends to what plays (or as media keys and arrows).
     VoidCallback? act(String action, VoidCallback fallback) {
       if (!on) return null;
       if (service == null) return fallback;
@@ -137,13 +145,14 @@ class _RemoteScreenState extends State<RemoteScreen> {
     }
 
     final play = act('play_pause', () => media('play_pause'));
+    final shown = agent.playing?.playing ?? _playing;
     return Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
       service == null
           ? _Round(icon: Icons.skip_previous, label: l.previous, onPressed: act('restart', () => media('previous')))
           : _Round(icon: Icons.replay, label: l.restart, onPressed: act('restart', () {})),
-      _Round(icon: Icons.replay_5, label: l.back5, onPressed: act('back', () => key('left'))),
+      _Round(icon: Icons.replay_5, label: l.back5, onPressed: act('back', () => media('back'))),
       _Round(
-        icon: _playing ? Icons.pause : Icons.play_arrow,
+        icon: shown ? Icons.pause : Icons.play_arrow,
         label: l.playPause,
         size: 72,
         primary: true,
@@ -151,10 +160,13 @@ class _RemoteScreenState extends State<RemoteScreen> {
             ? null
             : () {
                 play();
-                setState(() => _playing = !_playing);
+                setState(() {
+                  _playing = !shown;
+                  agent.playing?.playing = !shown;
+                });
               },
       ),
-      _Round(icon: Icons.forward_5, label: l.forward5, onPressed: act('forward', () => key('right'))),
+      _Round(icon: Icons.forward_5, label: l.forward5, onPressed: act('forward', () => media('forward'))),
       _Round(
         icon: Icons.skip_next,
         label: service == null ? l.next : l.nextEpisode,
@@ -274,7 +286,7 @@ class _Launchers extends StatelessWidget {
     final theme = Theme.of(context);
     final items = [
       for (final s in agent.shortcuts) (s.name, logoFor(s.icon, s.name), s.name == agent.active, () => agent.open(s), true),
-      for (final app in agent.apps) (app, logoFor(null, app), false, () => agent.send({'type': 'launch', 'app': app}), false),
+      for (final app in agent.apps) (app, logoFor(null, app), app == agent.active, () => agent.launch(app), false),
     ];
     return SizedBox(
       height: 82,

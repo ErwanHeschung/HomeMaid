@@ -383,6 +383,8 @@ class AgentClient extends ChangeNotifier {
     this.volume,
     this.muted,
     List<String> startApps = const [],
+    this.active,
+    this.playing,
   })  : connected = true,
         discover = startApps.isNotEmpty,
         _startApps = startApps;
@@ -400,8 +402,13 @@ class AgentClient extends ChangeNotifier {
   bool discover = false;
   List<String>? discovered;
 
-  /// The service the playback buttons drive: the last one opened.
+  /// The launcher (a service or an app) the remote is on: the one in front on the PC, as the PC
+  /// reads it, or the last one opened. The playback buttons send its keys when it has some (a
+  /// service), otherwise media requests the PC sends to what plays.
   String? active;
+
+  /// What the PC's media sessions say plays; null when nothing does.
+  NowPlaying? playing;
   bool connected = false;
   LinkError? linkError;
 
@@ -433,6 +440,13 @@ class AgentClient extends ChangeNotifier {
   void open(Shortcut shortcut) {
     active = shortcut.name;
     send({'type': 'open', 'shortcut': shortcut.name});
+    notifyListeners();
+  }
+
+  /// Launches an app: the playback buttons send it the media keys and arrows.
+  void launch(String app) {
+    active = app;
+    send({'type': 'launch', 'app': app});
     notifyListeners();
   }
 
@@ -501,6 +515,10 @@ class AgentClient extends ChangeNotifier {
         final state = (message['state'] as Map?) ?? const {};
         volume = (state['volume'] as num?)?.round();
         muted = state['muted'] as bool?;
+        // The remote follows the PC: a window none of the launchers shows gets the generic keys.
+        if (state.containsKey('launcher')) active = state['launcher'] as String?;
+        final now = state['playing'] as Map?;
+        playing = now == null ? null : NowPlaying(now['title'] as String? ?? '', now['artist'] as String? ?? '', playing: now['playing'] == true);
       case 'apps':
         discovered = (message['apps'] as List?)?.cast<String>() ?? const [];
       case 'saved':
@@ -519,6 +537,17 @@ class AgentClient extends ChangeNotifier {
     _socket?.close();
     super.dispose();
   }
+}
+
+/// A media session on the PC: Spotify's song, a browser tab's video.
+class NowPlaying {
+  NowPlaying(this.title, this.artist, {required this.playing});
+
+  final String title;
+  final String artist;
+
+  /// Flipped at once on a press; the PC's next state says what really is.
+  bool playing;
 }
 
 /// `GET /icon?app=` on the PC's agent, with its token in the header (never in the address).

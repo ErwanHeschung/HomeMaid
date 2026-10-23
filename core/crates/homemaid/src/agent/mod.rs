@@ -130,6 +130,32 @@ pub enum Media {
     VolumeUp,
     VolumeDown,
     Mute,
+    /// 5 s back or forward: through the player's media session when it can seek, else the arrows.
+    Back,
+    Forward,
+}
+
+/// What is in front on the PC, to find the launcher the remote is on.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Foreground {
+    pub title: Option<String>,
+    /// The program's file name, lowercase (`vlc.exe`).
+    pub exe: Option<String>,
+    /// Its AppUserModelID (`Chrome`, `SpotifyAB.SpotifyMusic_…!Spotify`), what the Start menu
+    /// and the media sessions name apps by.
+    pub aumid: Option<String>,
+    /// The window is the default browser's; `url` is its active tab's address when it could be
+    /// read (not in fullscreen: the bar is hidden).
+    pub browser: bool,
+    pub url: Option<String>,
+}
+
+/// What a media session (Windows' media flyout) says is playing.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NowPlaying {
+    pub title: String,
+    pub artist: String,
+    pub playing: bool,
 }
 
 /// Answer to [`Request::State`], read by the `pc` plugin.
@@ -143,6 +169,10 @@ struct PcState {
     /// Percent.
     memory: f32,
     active_window: Option<String>,
+    /// The remote's launcher (`[[agent.shortcut]]` or `[agent.apps]`) in front; none is the
+    /// generic keys.
+    launcher: Option<String>,
+    playing: Option<NowPlaying>,
     /// Names of `[agent.apps]` and `[[agent.shortcut]]`: what `launch` and `open` accept.
     apps: Vec<String>,
     shortcuts: Vec<String>,
@@ -606,13 +636,16 @@ fn desktop(
                 system.refresh_cpu_usage();
                 system.refresh_memory();
                 let volume = desktop.volume();
+                let front = desktop.foreground();
                 let state = PcState {
                     hostname: hostname(),
                     volume: volume.map(|(level, _)| level),
                     muted: volume.map(|(_, muted)| muted),
                     cpu: system.global_cpu_usage(),
                     memory: (system.used_memory() as f64 * 100.0 / system.total_memory().max(1) as f64) as f32,
-                    active_window: desktop.active_window(),
+                    launcher: launcher_in(&front, &opens, &apps),
+                    playing: desktop.now_playing(&front),
+                    active_window: front.title,
                     // The automation editor offers them all.
                     apps: apps.keys().chain(discovered.read().unwrap().keys()).cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect(),
                     shortcuts: {
@@ -640,6 +673,65 @@ fn desktop(
         };
         let _ = reply.send(result);
     }
+}
+
+/// The launcher in front: the site of the browser's address (its host, or a subdomain of it; the
+/// longest wins, so music.youtube.com beats youtube.com), else the app of the program (its
+/// AppID or file name), else, last resort, the longest launcher name in the window title.
+fn launcher_in(front: &Foreground, opens: &HashMap<String, String>, apps: &BTreeMap<String, PathBuf>) -> Option<String> {
+    let site = front.url.as_deref().and_then(|url| host(url, false)).and_then(|at| {
+        opens
+            .iter()
+            .filter_map(|(name, open)| Some((name, host(open, true)?)))
+            .filter(|(_, h)| at == *h || at.ends_with(&format!(".{h}")))
+            .max_by_key(|(_, h)| h.len())
+            .map(|(name, _)| name.clone())
+    });
+    // A shortcut that opens a program is an app too.
+    let programs = || apps.iter().map(|(n, p)| (n, p.to_string_lossy().into_owned())).chain(opens.iter().filter(|(_, o)| host(o, true).is_none()).map(|(n, o)| (n, o.clone())));
+    let app = || programs().find(|(_, target)| same_app(target.strip_prefix("shell:AppsFolder\\").unwrap_or(target), front)).map(|(n, _)| n.clone());
+    let titled = || {
+        let title = front.title.as_deref()?.to_lowercase();
+        opens.keys().chain(apps.keys()).filter(|n| title.contains(&n.to_lowercase())).max_by_key(|n| n.len()).cloned()
+    };
+    // A browser whose address is unknown: its title names the site better than the browser.
+    if front.browser { site.or_else(titled).or_else(app) } else { site.or_else(app).or_else(titled) }
+}
+
+/// Whether a media session's source is the program in front: an app id, or one named after the
+/// program (Opera's `OperaSoftware.OperaGXWebBrowser.1788635019` for `opera.exe`).
+// ponytail: a name inside the id; a short program name could match another app's session, then
+// the session of the flyout (`GetCurrentSession`) is the safer pick.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn plays_in(source: &str, front: &Foreground) -> bool {
+    let stem = front.exe.as_deref().map(|e| e.strip_suffix(".exe").unwrap_or(e));
+    same_app(source, front) || stem.is_some_and(|stem| stem.len() >= 4 && source.to_lowercase().contains(stem))
+}
+
+/// Whether an app id (an AppUserModelID, a program path) is the program in front.
+fn same_app(id: &str, front: &Foreground) -> bool {
+    let file = id.rsplit(['\\', '/']).next().unwrap_or(id).to_lowercase();
+    front.aumid.as_deref().is_some_and(|a| a.eq_ignore_ascii_case(id))
+        || front.exe.as_deref().is_some_and(|exe| exe == file || exe.strip_suffix(".exe") == Some(&file))
+}
+
+/// The host of a web address, without `www.`: with `scheme`, only of an `http(s)://` one (a
+/// shortcut's `open`), otherwise also bare as browsers show them (`crunchyroll.com/watch/…`).
+fn host(address: &str, scheme: bool) -> Option<String> {
+    let rest = address.strip_prefix("https://").or_else(|| address.strip_prefix("http://"));
+    let rest = if scheme { rest? } else { rest.unwrap_or(address) };
+    let host = rest.split(['/', '?', '#', ':']).next()?.to_lowercase();
+    let host = host.strip_prefix("www.").unwrap_or(&host);
+    (host.contains('.') && !host.contains(|c: char| c.is_whitespace() || c == '\\')).then(|| host.to_string())
+}
+
+/// Where a 5 s seek lands, in the media sessions' 100 ns ticks: the position was read at
+/// `updated` and has moved on since if playing; kept within 0 and the end, when it has one.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn seek_to(position: i64, updated: i64, now: i64, playing: bool, delta: i64, end: i64) -> i64 {
+    let at = if playing { position + (now - updated).max(0) } else { position };
+    let to = (at + delta).max(0);
+    if end > 0 { to.min(end) } else { to }
 }
 
 /// Values come from the network: reject what the desktop APIs should never see.
@@ -710,6 +802,55 @@ mod tests {
         assert_eq!(launch_target("notepad", &written, &apps).as_deref(), Some("notepad.exe"));
         assert_eq!(launch_target("Steam", &written, &apps).as_deref(), Some("shell:AppsFolder\\Valve.Steam"));
         assert_eq!(launch_target("rm", &written, &apps), None);
+    }
+
+    #[test]
+    fn the_launcher_in_front_is_found_by_address_then_program_then_title() {
+        let opens = HashMap::from([
+            ("YouTube".to_string(), "https://www.youtube.com".to_string()),
+            ("YouTube Music".to_string(), "https://music.youtube.com".to_string()),
+            ("Crunchyroll".to_string(), "https://www.crunchyroll.com".to_string()),
+            ("Kodi".to_string(), "C:\\Program Files\\Kodi\\kodi.exe".to_string()),
+        ]);
+        let apps = BTreeMap::from([
+            ("VLC".to_string(), PathBuf::from("shell:AppsFolder\\{6D809377-6AF0-444B-8957-A3773F02200E}\\VideoLAN\\VLC\\vlc.exe")),
+            ("Spotify".to_string(), PathBuf::from("shell:AppsFolder\\SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify")),
+            ("notepad".to_string(), PathBuf::from("notepad.exe")),
+        ]);
+        let at = |front: Foreground| launcher_in(&front, &opens, &apps);
+        let browser = |url: &str| Foreground { exe: Some("chrome.exe".into()), aumid: Some("Chrome".into()), url: Some(url.into()), title: Some("Frieren".into()), browser: true };
+        assert_eq!(at(browser("crunchyroll.com/fr/watch/G0DUND0K2")).as_deref(), Some("Crunchyroll"), "bare, as Chrome shows it");
+        assert_eq!(at(browser("https://www.youtube.com/watch?v=x")).as_deref(), Some("YouTube"));
+        assert_eq!(at(browser("music.youtube.com/watch?v=x")).as_deref(), Some("YouTube Music"), "the longest host");
+        assert_eq!(at(browser("notyoutube.com")), None, "a host, not a suffix");
+        assert_eq!(at(Foreground { exe: Some("vlc.exe".into()), ..Default::default() }).as_deref(), Some("VLC"));
+        assert_eq!(at(Foreground { exe: Some("kodi.exe".into()), ..Default::default() }).as_deref(), Some("Kodi"), "a shortcut to a program");
+        assert_eq!(at(Foreground { exe: Some("notepad.exe".into()), ..Default::default() }).as_deref(), Some("notepad"));
+        let spotify = Foreground { exe: Some("spotify.exe".into()), aumid: Some("SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify".into()), title: Some("Daft Punk - One More Time".into()), ..Default::default() };
+        assert_eq!(at(spotify).as_deref(), Some("Spotify"), "by AppID: its title is the song");
+        assert_eq!(at(Foreground { title: Some("Frieren - Crunchyroll".into()), ..Default::default() }).as_deref(), Some("Crunchyroll"), "title, last");
+        assert_eq!(at(Foreground { exe: Some("code.exe".into()), title: Some("main.rs - Visual Studio Code".into()), ..Default::default() }), None);
+
+        let mut apps = apps;
+        apps.insert("Opera".into(), PathBuf::from("opera.exe"));
+        let fullscreen = Foreground { exe: Some("opera.exe".into()), title: Some("Wolverine - YouTube - Opera".into()), browser: true, ..Default::default() };
+        assert_eq!(launcher_in(&fullscreen, &opens, &apps).as_deref(), Some("YouTube"), "the title before the browser");
+
+        let opera = Foreground { exe: Some("opera.exe".into()), ..Default::default() };
+        assert!(plays_in("OperaSoftware.OperaGXWebBrowser.1788635019", &opera), "read on the user's PC");
+        assert!(plays_in("Spotify.exe", &Foreground { exe: Some("spotify.exe".into()), ..Default::default() }));
+        assert!(plays_in("Chrome", &Foreground { exe: Some("chrome.exe".into()), ..Default::default() }));
+        assert!(!plays_in("Spotify.exe", &opera));
+        assert!(!plays_in("Chrome", &Foreground::default()));
+    }
+
+    #[test]
+    fn seeking_counts_the_time_played_since_the_position_was_read() {
+        const S: i64 = 10_000_000;
+        assert_eq!(seek_to(60 * S, 0, 2 * S, true, 5 * S, 0), 67 * S);
+        assert_eq!(seek_to(60 * S, 0, 2 * S, false, -5 * S, 0), 55 * S, "paused: where it was");
+        assert_eq!(seek_to(2 * S, 0, 0, false, -5 * S, 0), 0);
+        assert_eq!(seek_to(98 * S, 0, 0, false, 5 * S, 100 * S), 100 * S);
     }
 
     #[test]

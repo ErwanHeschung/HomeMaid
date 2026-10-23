@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -54,6 +56,18 @@ class _ShellState extends State<Shell> {
   CoreClient? _core;
   final _agents = <String, AgentClient>{};
 
+  /// While the remote is on screen, the PC's state is read again: its foreground window picks the
+  /// service the playback buttons drive.
+  late final Timer _poll = Timer.periodic(const Duration(seconds: 3), (_) {
+    if (_tab == 2 && WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) _readStates();
+  });
+
+  void _readStates() {
+    for (final agent in _agents.values) {
+      agent.readState();
+    }
+  }
+
   Connections get _connections => widget.connections;
 
   @override
@@ -61,11 +75,13 @@ class _ShellState extends State<Shell> {
     super.initState();
     _connections.addListener(_sync);
     _sync();
+    _poll;
   }
 
   @override
   void dispose() {
     _connections.removeListener(_sync);
+    _poll.cancel();
     _core?.dispose();
     for (final agent in _agents.values) {
       agent.dispose();
@@ -127,7 +143,10 @@ class _ShellState extends State<Shell> {
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
-        onDestinationSelected: (i) => setState(() => _tab = i),
+        onDestinationSelected: (i) {
+          setState(() => _tab = i);
+          if (i == 2) _readStates();
+        },
         destinations: [
           NavigationDestination(icon: const Icon(Icons.view_in_ar_outlined), selectedIcon: const Icon(Icons.view_in_ar), label: l.navHome),
           NavigationDestination(icon: const Icon(Icons.schedule_outlined), selectedIcon: const Icon(Icons.schedule), label: l.navAutomations),
