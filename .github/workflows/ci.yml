@@ -169,22 +169,27 @@ jobs:
           mv HomeMaid-android/app-demo-release.apk "HomeMaid-demo-$GITHUB_REF_NAME.apk"
           ls -l
       - name: Notes
+        # The version's section of CHANGELOG.md (`## [0.2.0] - date` up to the next `## [`): no
+        # section, no release. Then how to install, and the commits since the previous version.
         run: |
+          version=${GITHUB_REF_NAME#v}
+          awk -v head="## [$version]" 'index($0, head) == 1 { on = 1; next } on && /^## \[/ { exit } on' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no section for [$version]: write it, then tag again"
+            exit 1
+          fi
           previous=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_REF_NAME^" 2>/dev/null || true)
           {
-            echo "## Changes"
             echo
-            git log --no-merges --format='- %s' ${previous:+$previous..}"$GITHUB_REF_NAME"
+            echo "### Install"
             echo
-            echo "## Install"
-            echo
-            echo "- **PC (Windows 10/11)**: unzip \`HomeMaid-windows-$GITHUB_REF_NAME.zip\` anywhere, double-click \`homemaid.exe\`."
-            echo "- **Phone (Android)**: \`HomeMaid-$GITHUB_REF_NAME.apk\`; \`HomeMaid-demo-$GITHUB_REF_NAME.apk\` is a synthetic home to try the app."
+            echo "- **PC** (Windows 10 or 11): unzip \`HomeMaid-windows-$GITHUB_REF_NAME.zip\` anywhere and double-click \`homemaid.exe\`. Its window shows the QR code to scan with the phone."
+            echo "- **Phone** (Android): \`HomeMaid-$GITHUB_REF_NAME.apk\`. \`HomeMaid-demo-$GITHUB_REF_NAME.apk\` installs next to it, with a sample home to look around."
             if [ -n "$previous" ]; then
               echo
               echo "**Full changelog**: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$previous...$GITHUB_REF_NAME"
             fi
-          } > notes.md
+          } >> notes.md
           cat notes.md
       - name: Publish
         env:
