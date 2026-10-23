@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+    # A version tag (v0.2.0) also publishes a GitHub release: see the release job.
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -143,3 +145,51 @@ jobs:
         with:
           name: HomeMaid-android
           path: app/build/app/outputs/flutter-apk/*.apk
+
+  release:
+    name: Release · Windows folder, APKs, notes
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [core, windows, apk]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The commits since the previous version tag make the notes.
+          fetch-depth: 0
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+      - name: Assets
+        run: |
+          cd dist
+          (cd HomeMaid-windows && zip -qr "../HomeMaid-windows-$GITHUB_REF_NAME.zip" .)
+          mv HomeMaid-android/app-real-release.apk "HomeMaid-$GITHUB_REF_NAME.apk"
+          mv HomeMaid-android/app-demo-release.apk "HomeMaid-demo-$GITHUB_REF_NAME.apk"
+          ls -l
+      - name: Notes
+        run: |
+          previous=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          {
+            echo "## Changes"
+            echo
+            git log --no-merges --format='- %s' ${previous:+$previous..}"$GITHUB_REF_NAME"
+            echo
+            echo "## Install"
+            echo
+            echo "- **PC (Windows 10/11)**: unzip \`HomeMaid-windows-$GITHUB_REF_NAME.zip\` anywhere, double-click \`homemaid.exe\`."
+            echo "- **Phone (Android)**: \`HomeMaid-$GITHUB_REF_NAME.apk\`; \`HomeMaid-demo-$GITHUB_REF_NAME.apk\` is a synthetic home to try the app."
+            if [ -n "$previous" ]; then
+              echo
+              echo "**Full changelog**: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$previous...$GITHUB_REF_NAME"
+            fi
+          } > notes.md
+          cat notes.md
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # A tag with a suffix (v0.1.0-alpha.1) is a pre-release.
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.zip dist/*.apk --title "HomeMaid $GITHUB_REF_NAME" --notes-file notes.md --verify-tag \
+            $([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease)
