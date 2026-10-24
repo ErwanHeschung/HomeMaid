@@ -951,4 +951,318 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get retry => 'Retry';
+
+  @override
+  String get kindDelay => 'Pause';
+
+  @override
+  String get kindWait => 'Wait until';
+
+  @override
+  String get kindIf => 'If';
+
+  @override
+  String get kindRepeat => 'Repeat';
+
+  @override
+  String get kindMerge => 'Join';
+
+  @override
+  String get kindStop => 'Stop';
+
+  @override
+  String get kindTrigger => 'Trigger';
+
+  @override
+  String get portNext => 'next';
+
+  @override
+  String get portError => 'if it fails';
+
+  @override
+  String get portTimeout => 'if too long';
+
+  @override
+  String get portThen => 'yes';
+
+  @override
+  String get portElse => 'no';
+
+  @override
+  String get portBody => 'each turn';
+
+  @override
+  String get flowStart => 'Start';
+
+  @override
+  String nodeDelay(String duration) {
+    return 'Wait $duration';
+  }
+
+  @override
+  String nodeWaitUntil(String condition) {
+    return 'Wait until: $condition';
+  }
+
+  @override
+  String nodeWaitFor(String trigger) {
+    return 'Wait for: $trigger';
+  }
+
+  @override
+  String nodeAtMost(String text, String duration) {
+    return '$text ($duration at most)';
+  }
+
+  @override
+  String conditionsAnd(String a, String b) {
+    return '$a and $b';
+  }
+
+  @override
+  String conditionsOr(String a, String b) {
+    return '$a or $b';
+  }
+
+  @override
+  String repeatCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count times',
+      one: 'Once',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String repeatWhile(String condition) {
+    return 'While: $condition';
+  }
+
+  @override
+  String repeatUntil(String condition) {
+    return 'Until: $condition';
+  }
+
+  @override
+  String repeatEach(String target) {
+    return 'For each: $target';
+  }
+
+  @override
+  String get mergeAll => 'When every branch is done';
+
+  @override
+  String get mergeAny => 'As soon as one branch arrives';
+
+  @override
+  String get stopOk => 'End here';
+
+  @override
+  String stopError(String error) {
+    return 'Fail: $error';
+  }
+
+  @override
+  String get targetTrigger => 'the device that started it';
+
+  @override
+  String get targetItem => 'this device';
+
+  @override
+  String get valueFromTrigger => 'its new value';
+
+  @override
+  String ifTrigger(String trigger) {
+    return 'Started by: $trigger';
+  }
+
+  @override
+  String get modeLabel => 'If triggered again while waiting';
+
+  @override
+  String get modeSingle => 'Let the current run finish';
+
+  @override
+  String get modeRestart => 'Start over';
+
+  @override
+  String get modeQueued => 'Run again afterwards';
+
+  @override
+  String get modeParallel => 'Run both at once';
+
+  @override
+  String get addStep => 'Add a step';
+
+  @override
+  String get addParallel => 'At the same time as what follows';
+
+  @override
+  String get joinStep => 'Or continue to an existing step';
+
+  @override
+  String get removeStep => 'Remove this step';
+
+  @override
+  String stepCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count steps',
+      one: '1 step',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get durationLabel => 'Duration';
+
+  @override
+  String get durationInvalid => 'A duration such as 45s, 10m or 1h30m';
+
+  @override
+  String get waitConditions => 'Conditions';
+
+  @override
+  String get waitEvent => 'Event';
+
+  @override
+  String get limitWait => 'Limit the wait';
+
+  @override
+  String get anyCondition => 'One condition is enough';
+
+  @override
+  String get repeatTimes => 'Times';
+
+  @override
+  String get repeatWhileKind => 'While';
+
+  @override
+  String get repeatUntilKind => 'Until';
+
+  @override
+  String get repeatEachKind => 'Each device';
+
+  @override
+  String get stopFails => 'End as a failure';
+
+  @override
+  String get stopWhy => 'Why';
+
+  @override
+  String get fromTrigger => 'The value that started it';
+
+  @override
+  String get showFlow => 'See the flow';
+
+  @override
+  String runningSince(String when) {
+    return 'Running since $when';
+  }
+
+  @override
+  String waitingAt(String steps) {
+    return 'At: $steps';
+  }
+
+  @override
+  String get stopRuns => 'Stop';
+
+  @override
+  String get runStopped => 'Stopped';
+
+  @override
+  String get stoppedByHand => 'by hand';
+
+  @override
+  String get stoppedRestarted => 'started again';
+
+  @override
+  String get stoppedEdited => 'the automation was edited';
+
+  @override
+  String runOf(String when) {
+    return 'Run of $when';
+  }
+
+  @override
+  String get runInProgress => 'Run in progress';
+
+  @override
+  String get notReached => 'Not reached';
+
+  @override
+  String stateIs(String target, String cap, String value) {
+    return '$target · $cap is $value';
+  }
+
+  @override
+  String stateAbove(String target, String cap, String value) {
+    return '$target · $cap is above $value';
+  }
+
+  @override
+  String stateBelow(String target, String cap, String value) {
+    return '$target · $cap is below $value';
+  }
+
+  @override
+  String get modeSingleHint => 'The new trigger is ignored.';
+
+  @override
+  String get modeRestartHint =>
+      'The wait starts again: a light that stays on while someone moves.';
+
+  @override
+  String get modeQueuedHint =>
+      'Every trigger runs, one after the other: a doorbell.';
+
+  @override
+  String get modeParallelHint => 'Each trigger runs on its own, side by side.';
+
+  @override
+  String get addThen => 'Then…';
+
+  @override
+  String get addOnError => 'If it fails…';
+
+  @override
+  String get addOnTimeout => 'If the wait is too long…';
+
+  @override
+  String get addEachTurn => 'Each turn…';
+
+  @override
+  String get addIfYes => 'If yes…';
+
+  @override
+  String get addIfNo => 'Otherwise…';
+
+  @override
+  String get kindSetHint => 'Turn on, off or adjust a device';
+
+  @override
+  String get kindInvokeHint => 'A one-off action: pause, lock, open an app';
+
+  @override
+  String get kindDelayHint => 'Pause for a set time';
+
+  @override
+  String get kindWaitHint => 'Until a device changes or a condition is true';
+
+  @override
+  String get kindIfHint => 'Do one thing or another, depending on the home';
+
+  @override
+  String get kindRepeatHint =>
+      'Do steps again: a number of times, or for each device';
+
+  @override
+  String get kindStopHint => 'End the automation here';
+
+  @override
+  String get flowHint => 'Tap a card to change it, + to add a step.';
 }

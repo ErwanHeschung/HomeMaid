@@ -231,6 +231,28 @@ async fn automations_are_edited_live_and_saved() {
     assert_eq!(config::load(&config_path).unwrap().core.unwrap().latitude, Some(48.86));
     rpc(ws, inbox, 26, "automation.delete", json!({ "id": "dusk" })).await;
 
+    // A workflow: dims, then waits an hour; stopped by hand meanwhile.
+    let night = json!({
+        "id": "night", "start": ["dim"],
+        "trigger": [{ "when": { "select": "plugin:mock", "cap": "on_off", "becomes": false } }],
+        "node": [
+            { "id": "dim", "set": { "select": "trigger", "cap": "brightness", "value": 10 }, "next": ["pause"] },
+            { "id": "pause", "delay": "1h" },
+        ],
+    });
+    assert_eq!(rpc(ws, inbox, 30, "automation.save", json!({ "automation": night })).await["result"], true);
+    assert!(std::fs::read_to_string(&config_path).unwrap().contains("[[automation.node]]\nid = \"pause\"\ndelay = \"1h\""));
+    set_on(false);
+    wait_for("the workflow dimmed", Duration::from_secs(5), || brightness() == Some(CapValue::Brightness(10))).await;
+    let list = rpc(ws, inbox, 31, "automations.list", json!(null)).await;
+    let listed = list["result"].as_array().unwrap().iter().find(|a| a["id"] == "night").unwrap().clone();
+    assert_eq!(listed["running"][0]["nodes"], json!(["pause"]), "{listed}");
+    assert_eq!(rpc(ws, inbox, 32, "automation.stop", json!({ "id": "night" })).await["result"], 1);
+    let list = rpc(ws, inbox, 33, "automations.list", json!(null)).await;
+    let run = &list["result"].as_array().unwrap().iter().find(|a| a["id"] == "night").unwrap()["runs"][0];
+    assert_eq!((run["stopped"].as_str(), run["steps"][0]["node"].as_str()), (Some("by hand"), Some("dim")), "{run}");
+    rpc(ws, inbox, 34, "automation.delete", json!({ "id": "night" })).await;
+
     let reply = rpc(ws, inbox, 8, "automation.delete", json!({ "id": "follow" })).await;
     assert_eq!(reply["result"], true, "{reply}");
     let list = rpc(ws, inbox, 9, "automations.list", json!(null)).await;

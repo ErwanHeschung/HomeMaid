@@ -202,6 +202,12 @@ class CoreClient extends ChangeNotifier {
     await refreshAutomations();
   }
 
+  /// Stops its runs not over yet.
+  Future<void> stopAutomation(String id) async {
+    await call('automation.stop', {'id': id});
+    await refreshAutomations();
+  }
+
   Future<Run> runAutomation(String id) async {
     final run = Run.fromJson((await call('automation.run', {'id': id}) as Map).cast());
     await refreshAutomations();

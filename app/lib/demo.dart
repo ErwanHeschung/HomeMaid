@@ -7,6 +7,7 @@ import 'dart:ui';
 
 import 'clients.dart';
 import 'connections.dart';
+import 'flow.dart';
 import 'model.dart';
 import 'selectors.dart';
 
@@ -81,7 +82,10 @@ class DemoCore extends CoreClient {
   @override
   Future<DryRun> dryRun(String id) async {
     await Future<void>.delayed(const Duration(milliseconds: 250));
-    return _dryRuns(_fr)[id] ?? DryRun(wouldRun: false);
+    final known = _dryRuns(_fr)[id];
+    if (known != null) return known;
+    final a = automations.where((a) => a.id == id).firstOrNull;
+    return a == null ? DryRun(wouldRun: false) : _walk(FlowGraph.of(a.config));
   }
 
   @override
@@ -94,6 +98,7 @@ class DemoCore extends CoreClient {
       results: dry.wouldRun
           ? [for (final a in dry.actions) for (final t in a.targets) RunResult(target: t.name, action: a.action.keys.first, ok: t.error == null, outcome: t.error ?? 'pending')]
           : const [],
+      steps: dry.wouldRun ? [for (final p in dry.path) (node: p.node, ok: true, outcome: p.outcome)] : const [],
     );
     automations = [for (final a in automations) a.id == id ? a.withRuns([run, ...a.runs].take(20).toList()) : a];
     notifyListeners();
@@ -113,13 +118,23 @@ class DemoCore extends CoreClient {
   @override
   Future<void> saveAutomation(Map<String, dynamic> config) async {
     await Future<void>.delayed(const Duration(milliseconds: 250));
-    if ((config['trigger'] as List?)?.isNotEmpty != true || (config['action'] as List?)?.isNotEmpty != true) {
-      throw 'automation `${config['id']}`: needs at least one [[automation.trigger]] and one [[automation.action]]';
+    if ((config['trigger'] as List?)?.isNotEmpty != true || FlowGraph.of(config).nodes.isEmpty) {
+      throw 'automation `${config['id']}`: needs at least one [[automation.trigger]] and one [[automation.node]]';
     }
     final id = config['id'] as String;
     final old = automations.where((a) => a.id == id).firstOrNull;
     final saved = Automation.fromConfig(config, runs: old?.runs ?? const []);
     automations = old == null ? [...automations, saved] : [for (final a in automations) a.id == id ? saved : a];
+    notifyListeners();
+  }
+
+  @override
+  Future<void> stopAutomation(String id) async {
+    final stopped = [
+      for (final r in automations.where((a) => a.id == id).expand((a) => a.running))
+        Run(at: r.at, trigger: r.trigger, stopped: 'by hand', steps: r.steps),
+    ];
+    automations = [for (final a in automations) a.id == id ? a.withRuns([...stopped, ...a.runs], running: const []) : a];
     notifyListeners();
   }
 
@@ -132,8 +147,31 @@ class DemoCore extends CoreClient {
   @override
   Future<DryRun> dryRunConfig(Map<String, dynamic> config) async {
     await Future<void>.delayed(const Duration(milliseconds: 250));
-    return DryRun(wouldRun: true, actions: [
-      for (final a in (config['action'] as List? ?? const []).cast<Map<String, dynamic>>())
+    return _walk(FlowGraph.of(config));
+  }
+
+  /// A dry run of a flow, roughly: every `if` takes its first way, every wait goes on at once.
+  DryRun _walk(FlowGraph graph) {
+    final path = <String>[];
+    final todo = [...graph.start.reversed];
+    while (todo.isNotEmpty) {
+      final id = todo.removeLast();
+      final node = graph.node(id);
+      if (node == null || path.contains(id)) continue;
+      path.add(id);
+      final kind = kindOf(node);
+      final ports = switch (kind) {
+        'if' => const ['then'],
+        'repeat' => const ['body', 'next'],
+        _ => const ['next'],
+      };
+      for (final port in ports.reversed) {
+        todo.addAll(graph.targets(id, port).reversed);
+      }
+    }
+    final actions = [for (final id in path) graph.node(id)!].where((n) => n.containsKey('set') || n.containsKey('invoke'));
+    return DryRun(wouldRun: true, path: [for (final id in path) (node: id, ok: true, outcome: '')], actions: [
+      for (final a in actions)
         (
           action: a,
           targets: [
@@ -475,7 +513,7 @@ List<Automation> _automations(bool fr) {
   DateTime next(int hour, int minute, {bool weekdays = false}) {
     var at = DateTime(now.year, now.month, now.day, hour, minute);
     while (!at.isAfter(now) || (weekdays && at.weekday > DateTime.friday)) {
-      at = at.add(const Duration(days: 1));
+      at = DateTime(at.year, at.month, at.day + 1, hour, minute);
     }
     return at;
   }
@@ -484,7 +522,7 @@ List<Automation> _automations(bool fr) {
   DateTime last(int hour, int minute, {bool weekdays = false}) {
     var at = DateTime(now.year, now.month, now.day, hour, minute);
     while (!at.isBefore(now) || (weekdays && at.weekday > DateTime.friday)) {
-      at = at.subtract(const Duration(days: 1));
+      at = DateTime(at.year, at.month, at.day - 1, hour, minute);
     }
     return at;
   }
@@ -553,6 +591,84 @@ List<Automation> _automations(bool fr) {
       triggers: [{'when': {'select': 'tag:garage-door', 'cap': 'custom:open', 'becomes': true}}],
       actions: [{'set': {'select': 'room:Garage & cap:on_off', 'cap': 'on_off', 'value': true}}],
       problems: const ['`tag:garage-door` matches no device', '`room:Garage & cap:on_off` matches no device'],
+    ),
+    // A workflow waiting now: on at sunset, then off once nobody moves, two hours at most.
+    Automation(
+      id: 'living-evening',
+      name: t('Salon le soir', 'Living room at night'),
+      enabled: true,
+      triggers: [{'at': 'sunset'}],
+      config: {
+        'id': 'living-evening',
+        'name': t('Salon le soir', 'Living room at night'),
+        'mode': 'restart',
+        'start': ['on'],
+        'trigger': [{'at': 'sunset'}],
+        'node': [
+          {'id': 'on', 'set': {'select': 'room:"$living" & cap:on_off', 'cap': 'on_off', 'value': true}, 'next': ['still']},
+          {
+            'id': 'still',
+            'wait': {'until': [{'state': {'select': 'cap:custom:motion', 'cap': 'custom:motion', 'is': false}}], 'timeout': '2h'},
+            'next': ['off'],
+            'timeout': ['off-late'],
+          },
+          {'id': 'off', 'set': {'select': 'room:"$living" & cap:on_off', 'cap': 'on_off', 'value': false}},
+          {'id': 'off-late', 'set': {'select': 'room:"$living" & cap:brightness', 'cap': 'brightness', 'value': 10}},
+        ],
+      },
+      running: [(at: ago(const Duration(minutes: 40)), trigger: 'sunset (18:47)', nodes: ['still'], steps: [(node: 'on', ok: true, outcome: 'pending')])],
+      runs: [
+        Run(at: ago(const Duration(days: 1, minutes: 30)), trigger: 'sunset (18:48)', results: [
+          RunResult(target: t('Lampadaire', 'Floor lamp'), action: 'set on_off true', ok: true, outcome: 'confirmed'),
+        ], steps: [
+          (node: 'on', ok: true, outcome: 'confirmed'),
+          (node: 'still', ok: true, outcome: 'passed'),
+          (node: 'off', ok: true, outcome: 'confirmed'),
+        ]),
+      ],
+    ),
+    // Branches side by side, joined, then a choice and a loop; its last run took the failure way.
+    Automation(
+      id: 'leaving',
+      name: t('Départ le matin', 'Leaving in the morning'),
+      enabled: true,
+      triggers: [{'at': '08:30', 'days': week}],
+      config: {
+        'id': 'leaving',
+        'name': t('Départ le matin', 'Leaving in the morning'),
+        'start': ['lights', 'pc'],
+        'trigger': [{'at': '08:30', 'days': week}],
+        'node': [
+          {'id': 'lights', 'set': {'select': 'cap:on_off', 'cap': 'on_off', 'value': false}, 'next': ['join']},
+          {'id': 'pc', 'invoke': {'select': 'plugin:pc', 'action': 'lock'}, 'next': ['join'], 'error': ['pc-failed']},
+          {'id': 'pc-failed', 'stop': {'error': t('le PC ne répond pas', 'the PC does not answer')}},
+          {'id': 'join', 'merge': 'all', 'next': ['heater']},
+          {
+            'id': 'heater',
+            'if': [{'state': {'select': 'room:$bedroom & model:radiator', 'cap': 'on_off', 'is': true}}],
+            'then': ['heater-off'],
+            'else': ['check'],
+          },
+          {'id': 'heater-off', 'set': {'select': 'room:$bedroom & model:radiator', 'cap': 'on_off', 'value': false}},
+          {
+            'id': 'check',
+            'repeat': {'until': [{'state': {'select': 'cap:on_off', 'cap': 'on_off', 'is': false, 'all': true}}]},
+            'body': ['pause'],
+          },
+          {'id': 'pause', 'delay': '1m'},
+        ],
+      },
+      nextRun: next(8, 30, weekdays: true),
+      runs: [
+        Run(at: last(8, 30, weekdays: true), trigger: '08:30', error: t('le PC ne répond pas', 'the PC does not answer'), results: [
+          RunResult(target: t('Lampadaire', 'Floor lamp'), action: 'set on_off false', ok: true, outcome: 'confirmed'),
+          const RunResult(target: 'DEMO-PC', action: 'invoke lock', ok: false, outcome: 'timed out'),
+        ], steps: [
+          (node: 'lights', ok: true, outcome: 'confirmed'),
+          (node: 'pc', ok: false, outcome: 'DEMO-PC: timed out'),
+          (node: 'pc-failed', ok: false, outcome: t('le PC ne répond pas', 'the PC does not answer')),
+        ]),
+      ],
     ),
     Automation(
       id: 'coffee',

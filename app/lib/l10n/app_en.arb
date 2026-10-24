@@ -617,5 +617,252 @@
       }
     }
   },
-  "retry": "Retry"
+  "retry": "Retry",
+  "kindDelay": "Pause",
+  "kindWait": "Wait until",
+  "kindIf": "If",
+  "kindRepeat": "Repeat",
+  "kindMerge": "Join",
+  "kindStop": "Stop",
+  "kindTrigger": "Trigger",
+  "portNext": "next",
+  "portError": "if it fails",
+  "portTimeout": "if too long",
+  "portThen": "yes",
+  "portElse": "no",
+  "portBody": "each turn",
+  "flowStart": "Start",
+  "nodeDelay": "Wait {duration}",
+  "@nodeDelay": {
+    "placeholders": {
+      "duration": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeWaitUntil": "Wait until: {condition}",
+  "@nodeWaitUntil": {
+    "placeholders": {
+      "condition": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeWaitFor": "Wait for: {trigger}",
+  "@nodeWaitFor": {
+    "placeholders": {
+      "trigger": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeAtMost": "{text} ({duration} at most)",
+  "@nodeAtMost": {
+    "placeholders": {
+      "text": {
+        "type": "String"
+      },
+      "duration": {
+        "type": "String"
+      }
+    }
+  },
+  "conditionsAnd": "{a} and {b}",
+  "@conditionsAnd": {
+    "placeholders": {
+      "a": {
+        "type": "String"
+      },
+      "b": {
+        "type": "String"
+      }
+    }
+  },
+  "conditionsOr": "{a} or {b}",
+  "@conditionsOr": {
+    "placeholders": {
+      "a": {
+        "type": "String"
+      },
+      "b": {
+        "type": "String"
+      }
+    }
+  },
+  "repeatCount": "{count, plural, =1{Once} other{{count} times}}",
+  "@repeatCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "repeatWhile": "While: {condition}",
+  "@repeatWhile": {
+    "placeholders": {
+      "condition": {
+        "type": "String"
+      }
+    }
+  },
+  "repeatUntil": "Until: {condition}",
+  "@repeatUntil": {
+    "placeholders": {
+      "condition": {
+        "type": "String"
+      }
+    }
+  },
+  "repeatEach": "For each: {target}",
+  "@repeatEach": {
+    "placeholders": {
+      "target": {
+        "type": "String"
+      }
+    }
+  },
+  "mergeAll": "When every branch is done",
+  "mergeAny": "As soon as one branch arrives",
+  "stopOk": "End here",
+  "stopError": "Fail: {error}",
+  "@stopError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "targetTrigger": "the device that started it",
+  "targetItem": "this device",
+  "valueFromTrigger": "its new value",
+  "ifTrigger": "Started by: {trigger}",
+  "@ifTrigger": {
+    "placeholders": {
+      "trigger": {
+        "type": "String"
+      }
+    }
+  },
+  "modeLabel": "If triggered again while waiting",
+  "modeSingle": "Let the current run finish",
+  "modeRestart": "Start over",
+  "modeQueued": "Run again afterwards",
+  "modeParallel": "Run both at once",
+  "addStep": "Add a step",
+  "addParallel": "At the same time as what follows",
+  "joinStep": "Or continue to an existing step",
+  "removeStep": "Remove this step",
+  "stepCount": "{count, plural, =1{1 step} other{{count} steps}}",
+  "@stepCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "durationLabel": "Duration",
+  "durationInvalid": "A duration such as 45s, 10m or 1h30m",
+  "waitConditions": "Conditions",
+  "waitEvent": "Event",
+  "limitWait": "Limit the wait",
+  "anyCondition": "One condition is enough",
+  "repeatTimes": "Times",
+  "repeatWhileKind": "While",
+  "repeatUntilKind": "Until",
+  "repeatEachKind": "Each device",
+  "stopFails": "End as a failure",
+  "stopWhy": "Why",
+  "fromTrigger": "The value that started it",
+  "showFlow": "See the flow",
+  "runningSince": "Running since {when}",
+  "@runningSince": {
+    "placeholders": {
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "waitingAt": "At: {steps}",
+  "@waitingAt": {
+    "placeholders": {
+      "steps": {
+        "type": "String"
+      }
+    }
+  },
+  "stopRuns": "Stop",
+  "runStopped": "Stopped",
+  "stoppedByHand": "by hand",
+  "stoppedRestarted": "started again",
+  "stoppedEdited": "the automation was edited",
+  "runOf": "Run of {when}",
+  "@runOf": {
+    "placeholders": {
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "runInProgress": "Run in progress",
+  "notReached": "Not reached",
+  "stateIs": "{target} · {cap} is {value}",
+  "@stateIs": {
+    "placeholders": {
+      "target": {
+        "type": "String"
+      },
+      "cap": {
+        "type": "String"
+      },
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "stateAbove": "{target} · {cap} is above {value}",
+  "@stateAbove": {
+    "placeholders": {
+      "target": {
+        "type": "String"
+      },
+      "cap": {
+        "type": "String"
+      },
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "stateBelow": "{target} · {cap} is below {value}",
+  "@stateBelow": {
+    "placeholders": {
+      "target": {
+        "type": "String"
+      },
+      "cap": {
+        "type": "String"
+      },
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "modeSingleHint": "The new trigger is ignored.",
+  "modeRestartHint": "The wait starts again: a light that stays on while someone moves.",
+  "modeQueuedHint": "Every trigger runs, one after the other: a doorbell.",
+  "modeParallelHint": "Each trigger runs on its own, side by side.",
+  "addThen": "Then…",
+  "addOnError": "If it fails…",
+  "addOnTimeout": "If the wait is too long…",
+  "addEachTurn": "Each turn…",
+  "addIfYes": "If yes…",
+  "addIfNo": "Otherwise…",
+  "kindSetHint": "Turn on, off or adjust a device",
+  "kindInvokeHint": "A one-off action: pause, lock, open an app",
+  "kindDelayHint": "Pause for a set time",
+  "kindWaitHint": "Until a device changes or a condition is true",
+  "kindIfHint": "Do one thing or another, depending on the home",
+  "kindRepeatHint": "Do steps again: a number of times, or for each device",
+  "kindStopHint": "End the automation here",
+  "flowHint": "Tap a card to change it, + to add a step."
 }

@@ -951,4 +951,322 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get retry => 'Réessayer';
+
+  @override
+  String get kindDelay => 'Patienter';
+
+  @override
+  String get kindWait => 'Attendre que';
+
+  @override
+  String get kindIf => 'Si';
+
+  @override
+  String get kindRepeat => 'Répéter';
+
+  @override
+  String get kindMerge => 'Rejoindre';
+
+  @override
+  String get kindStop => 'Arrêter';
+
+  @override
+  String get kindTrigger => 'Déclencheur';
+
+  @override
+  String get portNext => 'ensuite';
+
+  @override
+  String get portError => 'si échec';
+
+  @override
+  String get portTimeout => 'si trop long';
+
+  @override
+  String get portThen => 'oui';
+
+  @override
+  String get portElse => 'non';
+
+  @override
+  String get portBody => 'à chaque tour';
+
+  @override
+  String get flowStart => 'Départ';
+
+  @override
+  String nodeDelay(String duration) {
+    return 'Attendre $duration';
+  }
+
+  @override
+  String nodeWaitUntil(String condition) {
+    return 'Attendre que : $condition';
+  }
+
+  @override
+  String nodeWaitFor(String trigger) {
+    return 'Attendre : $trigger';
+  }
+
+  @override
+  String nodeAtMost(String text, String duration) {
+    return '$text ($duration au plus)';
+  }
+
+  @override
+  String conditionsAnd(String a, String b) {
+    return '$a et $b';
+  }
+
+  @override
+  String conditionsOr(String a, String b) {
+    return '$a ou $b';
+  }
+
+  @override
+  String repeatCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count fois',
+      one: 'Une fois',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String repeatWhile(String condition) {
+    return 'Tant que : $condition';
+  }
+
+  @override
+  String repeatUntil(String condition) {
+    return 'Jusqu\'à : $condition';
+  }
+
+  @override
+  String repeatEach(String target) {
+    return 'Pour chaque : $target';
+  }
+
+  @override
+  String get mergeAll => 'Quand toutes les branches ont fini';
+
+  @override
+  String get mergeAny => 'Dès qu\'une branche arrive';
+
+  @override
+  String get stopOk => 'Terminer ici';
+
+  @override
+  String stopError(String error) {
+    return 'Échouer : $error';
+  }
+
+  @override
+  String get targetTrigger => 'l\'appareil déclencheur';
+
+  @override
+  String get targetItem => 'cet appareil';
+
+  @override
+  String get valueFromTrigger => 'sa nouvelle valeur';
+
+  @override
+  String ifTrigger(String trigger) {
+    return 'Déclenché par : $trigger';
+  }
+
+  @override
+  String get modeLabel => 'S\'il se redéclenche pendant une attente';
+
+  @override
+  String get modeSingle => 'Laisser finir l\'exécution en cours';
+
+  @override
+  String get modeRestart => 'Recommencer depuis le début';
+
+  @override
+  String get modeQueued => 'Refaire ensuite';
+
+  @override
+  String get modeParallel => 'Les deux en même temps';
+
+  @override
+  String get addStep => 'Ajouter une étape';
+
+  @override
+  String get addParallel => 'En même temps que la suite';
+
+  @override
+  String get joinStep => 'Ou continuer vers une étape existante';
+
+  @override
+  String get removeStep => 'Retirer cette étape';
+
+  @override
+  String stepCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count étapes',
+      one: '1 étape',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get durationLabel => 'Durée';
+
+  @override
+  String get durationInvalid => 'Une durée comme 45s, 10m ou 1h30m';
+
+  @override
+  String get waitConditions => 'Conditions';
+
+  @override
+  String get waitEvent => 'Événement';
+
+  @override
+  String get limitWait => 'Limiter l\'attente';
+
+  @override
+  String get anyCondition => 'Une seule condition suffit';
+
+  @override
+  String get repeatTimes => 'Fois';
+
+  @override
+  String get repeatWhileKind => 'Tant que';
+
+  @override
+  String get repeatUntilKind => 'Jusqu\'à';
+
+  @override
+  String get repeatEachKind => 'Chaque appareil';
+
+  @override
+  String get stopFails => 'Terminer en échec';
+
+  @override
+  String get stopWhy => 'Pourquoi';
+
+  @override
+  String get fromTrigger => 'La valeur du déclencheur';
+
+  @override
+  String get showFlow => 'Voir le schéma';
+
+  @override
+  String runningSince(String when) {
+    return 'En cours depuis $when';
+  }
+
+  @override
+  String waitingAt(String steps) {
+    return 'En attente : $steps';
+  }
+
+  @override
+  String get stopRuns => 'Arrêter';
+
+  @override
+  String get runStopped => 'Arrêté';
+
+  @override
+  String get stoppedByHand => 'à la main';
+
+  @override
+  String get stoppedRestarted => 'relancé';
+
+  @override
+  String get stoppedEdited => 'l\'automatisation a été modifiée';
+
+  @override
+  String runOf(String when) {
+    return 'Exécution de $when';
+  }
+
+  @override
+  String get runInProgress => 'Exécution en cours';
+
+  @override
+  String get notReached => 'Pas atteinte';
+
+  @override
+  String stateIs(String target, String cap, String value) {
+    return '$target · $cap est $value';
+  }
+
+  @override
+  String stateAbove(String target, String cap, String value) {
+    return '$target · $cap est au-dessus de $value';
+  }
+
+  @override
+  String stateBelow(String target, String cap, String value) {
+    return '$target · $cap est en dessous de $value';
+  }
+
+  @override
+  String get modeSingleHint => 'Le nouveau déclenchement est ignoré.';
+
+  @override
+  String get modeRestartHint =>
+      'L\'attente repart de zéro : une lumière qui reste allumée tant que quelqu\'un bouge.';
+
+  @override
+  String get modeQueuedHint =>
+      'Chaque déclenchement passe, l\'un après l\'autre : une sonnette.';
+
+  @override
+  String get modeParallelHint =>
+      'Chaque déclenchement tourne de son côté, en même temps.';
+
+  @override
+  String get addThen => 'Ensuite…';
+
+  @override
+  String get addOnError => 'Si ça échoue…';
+
+  @override
+  String get addOnTimeout => 'Si l\'attente est trop longue…';
+
+  @override
+  String get addEachTurn => 'À chaque tour…';
+
+  @override
+  String get addIfYes => 'Si oui…';
+
+  @override
+  String get addIfNo => 'Sinon…';
+
+  @override
+  String get kindSetHint => 'Allumer, éteindre ou régler un appareil';
+
+  @override
+  String get kindInvokeHint =>
+      'Une action ponctuelle : pause, verrouiller, ouvrir une appli';
+
+  @override
+  String get kindDelayHint => 'Patienter un temps donné';
+
+  @override
+  String get kindWaitHint =>
+      'Jusqu\'à ce qu\'un appareil change ou qu\'une condition soit vraie';
+
+  @override
+  String get kindIfHint => 'Faire une chose ou une autre, selon la maison';
+
+  @override
+  String get kindRepeatHint =>
+      'Refaire des étapes : plusieurs fois, ou pour chaque appareil';
+
+  @override
+  String get kindStopHint => 'Terminer le scénario ici';
+
+  @override
+  String get flowHint =>
+      'Touchez une carte pour la modifier, + pour ajouter une étape.';
 }

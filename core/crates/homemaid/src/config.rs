@@ -550,10 +550,10 @@ fn last_position(table: &toml_edit::Table) -> isize {
         .unwrap_or(0)
 }
 
-/// An automation as a `[[automation]]` table, its triggers, conditions and actions on one line
-/// each, as written by hand.
+/// An automation as a `[[automation]]` table, its triggers, conditions, nodes and actions with
+/// their settings on one line each, as written by hand.
 fn automation_table(automation: &AutomationConfig) -> Result<toml_edit::Table, String> {
-    use toml_edit::{Item, Value};
+    use toml_edit::Item;
 
     #[derive(Serialize)]
     struct File<'a> {
@@ -564,14 +564,23 @@ fn automation_table(automation: &AutomationConfig) -> Result<toml_edit::Table, S
     let mut table = doc["automation"].as_array_of_tables_mut().and_then(|t| t.get_mut(0)).ok_or("no automation written")?.clone();
     // No position of its own: printed right after what comes before it, children after parent.
     table.set_position(None);
-    for list in ["trigger", "condition", "action"] {
+    for list in ["trigger", "condition", "node", "action"] {
         for item in table.get_mut(list).and_then(Item::as_array_of_tables_mut).into_iter().flat_map(|t| t.iter_mut()) {
             item.set_position(None);
             item.decor_mut().set_prefix("");
             for (mut key, value) in item.iter_mut() {
-                if let Some(sub) = value.as_table() {
-                    *value = Item::Value(Value::InlineTable(sub.clone().into_inline_table()));
+                // A table, or a list of them (an `if`'s conditions): inline.
+                if !value.is_value()
+                    && let Ok(inline) = std::mem::take(value).into_value()
+                {
+                    *value = Item::Value(inline);
                     key.leaf_decor_mut().clear();
+                }
+            }
+            // A node's ports after what it does (written first, being plain values).
+            for port in ["any", "next", "error", "timeout", "then", "else", "body"] {
+                if let Some(value) = item.remove(port) {
+                    item.insert(port, value);
                 }
             }
         }
@@ -764,6 +773,27 @@ mod tests {
         assert!(text.contains(r#"set = { select = "room:Salon & cap:on_off", cap = "on_off", value = true }"#), "one line each: {text}");
         assert!(!text.contains("enabled"), "defaults are left out: {text}");
         assert!(text.find("id = \"dusk\"") > text.find("[[room]]"), "a new one goes at the end of the file: {text}");
+
+        let mut flow: AutomationConfig = serde_json::from_value(serde_json::json!({
+            "id": "flow", "start": ["on"],
+            "trigger": [{ "at": "19:30" }],
+            "node": [
+                { "id": "on", "set": { "select": "room:Salon", "cap": "on_off", "value": true }, "next": ["check"] },
+                { "id": "check", "if": [{ "state": { "select": "room:Salon", "cap": "on_off", "is": true } }, { "days": ["mon"] }], "any": true,
+                  "then": ["wait"] },
+                { "id": "wait", "wait": { "until": [{ "between": ["22:00", "23:00"] }], "timeout": "2h" } },
+            ],
+        })).unwrap();
+        assert_eq!(save_automation(&path, "flow", Some(&flow), check), Ok(3));
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains(r#"if = [{ state = { select = "room:Salon", cap = "on_off", is = true } }, { days = ["mon"] }]"#), "{text}");
+        assert!(text.contains(r#"wait = { timeout = "2h", until = [{ between = ["22:00", "23:00"] }] }"#), "{text}");
+        assert!(text.contains("id = \"on\"\nset = { select = \"room:Salon\", cap = \"on_off\", value = true }\nnext = [\"check\"]\n"), "ports last: {text}");
+        assert!(text.contains("days = [\"mon\"] }]\nany = true\nthen = [\"wait\"]"), "{text}");
+        assert_eq!(load(&path).unwrap().automations[2], flow, "read back as written");
+        flow.nodes.pop();
+        assert!(save_automation(&path, "flow", Some(&flow), check).unwrap_err().contains("`wait`, which is no node"));
+        assert_eq!(save_automation(&path, "flow", None, check), Ok(2));
 
         dusk.name = Some("Crépuscule".into());
         assert_eq!(save_automation(&path, "dusk", Some(&dusk), check), Ok(2), "replaced, not added");

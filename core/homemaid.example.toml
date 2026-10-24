@@ -124,3 +124,45 @@ tags = ["lumiere"]
 # when = { select = "plugin:pc", cap = "mute", becomes = true }   # or above = / below = / changes = true
 # [[automation.action]]
 # invoke = { select = "plugin:pc", action = "play_pause" }         # params = { ... } when the action takes some
+#
+# Steps can also be a workflow: nodes linked by their ports, as in n8n (the app draws them).
+# A node does one thing: set, invoke, delay, wait, if, repeat, merge or stop. Its ports say what
+# comes next: next (and error for set/invoke), then/else (if), next/timeout (wait), body/next
+# (repeat). Several nodes on a port run side by side; a merge joins them back (mode all or any).
+# A failed set/invoke without an error port goes on through next. No loop but `repeat`.
+# [[automation]]
+# id = "living-at-night"
+# mode = "restart"                               # started again while running: single (skip, default), restart, queued, parallel
+# start = ["on"]                                 # the first node(s)
+# [[automation.trigger]]
+# id = "dusk"                                    # named: a condition can say `trigger = "dusk"`
+# at = "sunset"
+# [[automation.node]]
+# id = "on"
+# set = { select = 'room:"Salon" & cap:on_off', cap = "on_off", value = true }
+# next = ["still"]
+# [[automation.node]]
+# id = "still"
+# wait = { until = [{ state = { select = "cap:custom:motion", cap = "custom:motion", is = false } }], timeout = "2h" }
+# next = ["off"]                                 # passed
+# timeout = ["dim"]                              # 2 h went by first (no timeout port: goes on through next)
+# [[automation.node]]
+# id = "off"
+# set = { select = 'room:"Salon" & cap:on_off', cap = "on_off", value = false }
+# [[automation.node]]
+# id = "dim"
+# if = [{ state = { select = 'room:"Salon" & cap:brightness', cap = "brightness", above = 20 } }]   # any = true: one is enough
+# then = ["each"]
+# [[automation.node]]
+# id = "each"
+# repeat = { for_each = 'room:"Salon" & cap:brightness' }   # or count = 3, while = [...], until = [...]
+# body = ["dim-one"]
+# [[automation.node]]
+# id = "dim-one"
+# set = { select = "item", cap = "brightness", value = 10 }   # item: the device of this turn; trigger: the one that started it
+# next = ["pause"]
+# [[automation.node]]
+# id = "pause"
+# delay = "2s"                                   # 45s, 10m, 1h30m
+# Also: merge = "all" or "any", and stop = {} or stop = { error = "why" }.
+# In a set, from = "trigger" replaces value: the value that started the run (a `when` trigger).

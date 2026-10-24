@@ -142,6 +142,7 @@ class Automation {
     this.nextRun,
     this.problems = const [],
     this.delegated = const [],
+    this.running = const [],
     this.runs = const [],
   }) : config = config ??
             {
@@ -168,6 +169,15 @@ class Automation {
         nextRun: j['next_run'] == null ? null : DateTime.tryParse(j['next_run'] as String)?.toLocal(),
         problems: (j['problems'] as List?)?.cast<String>() ?? const [],
         delegated: (j['delegated'] as List?)?.cast<String>() ?? const [],
+        running: [
+          for (final r in (j['running'] as List?) ?? const [])
+            (
+              at: DateTime.tryParse((r as Map)['at'] as String? ?? '')?.toLocal() ?? DateTime.now(),
+              trigger: r['trigger'] as String? ?? '',
+              nodes: ((r['nodes'] as List?) ?? const []).cast<String>(),
+              steps: _steps(r['steps']),
+            ),
+        ],
         runs: [for (final r in (j['runs'] as List?) ?? const []) Run.fromJson((r as Map).cast())],
       );
   }
@@ -185,12 +195,15 @@ class Automation {
   /// The devices that run it themselves too, so it happens even with the hub off.
   final List<String> delegated;
 
+  /// Its runs not over yet (a wait, a delay), with the nodes they are at.
+  final List<RunningRun> running;
+
   /// Newest first.
   final List<Run> runs;
 
-  Automation withRuns(List<Run> runs) => Automation(
+  Automation withRuns(List<Run> runs, {List<RunningRun>? running}) => Automation(
         id: id, name: name, enabled: enabled, triggers: triggers, conditions: conditions, actions: actions, config: config,
-        nextRun: nextRun, problems: problems, delegated: delegated, runs: runs);
+        nextRun: nextRun, problems: problems, delegated: delegated, running: running ?? this.running, runs: runs);
 
   /// One just written (the demo saves it itself), keeping its runs if it existed.
   factory Automation.fromConfig(Map<String, dynamic> config, {List<Run> runs = const []}) => Automation(
@@ -206,14 +219,29 @@ class Automation {
 
 List<Map<String, dynamic>> _maps(Object? list) => [for (final m in (list as List?) ?? const []) (m as Map).cast<String, dynamic>()];
 
+/// A run not over yet: the nodes it is at (a wait, a delay), and those it went through.
+typedef RunningRun = ({DateTime at, String trigger, List<String> nodes, List<RunStep> steps});
+
+/// A node a run went through.
+typedef RunStep = ({String node, bool ok, String outcome});
+
+List<RunStep> _steps(Object? list) => [
+      for (final s in (list as List?) ?? const [])
+        (node: (s as Map)['node'] as String? ?? '', ok: s['ok'] as bool? ?? false, outcome: s['outcome'] as String? ?? ''),
+    ];
+
 /// What an automation did, or why it did nothing.
 class Run {
-  Run({required this.at, required this.trigger, this.skipped, this.results = const []});
+  Run({required this.at, required this.trigger, this.skipped, this.error, this.stopped, this.results = const [], this.steps = const [], this.running = false});
 
   factory Run.fromJson(Map<String, dynamic> j) => Run(
         at: DateTime.tryParse(j['at'] as String? ?? '')?.toLocal() ?? DateTime.now(),
         trigger: j['trigger'] as String? ?? '',
         skipped: j['skipped'] as String?,
+        error: j['error'] as String?,
+        stopped: j['stopped'] as String?,
+        running: j['running'] as bool? ?? false,
+        steps: _steps(j['steps']),
         results: [
           for (final r in (j['results'] as List?) ?? const [])
             RunResult(
@@ -228,9 +256,21 @@ class Run {
   final DateTime at;
   final String trigger;
   final String? skipped;
+
+  /// Why it failed before its end (a `stop` with an error, a limit).
+  final String? error;
+
+  /// Why it was stopped before its end: by hand, started again, edited.
+  final String? stopped;
   final List<RunResult> results;
 
-  bool get failed => skipped == null && results.any((r) => !r.ok);
+  /// The nodes it went through, in the order they ended.
+  final List<RunStep> steps;
+
+  /// Not over yet.
+  final bool running;
+
+  bool get failed => skipped == null && (error != null || results.any((r) => !r.ok));
 }
 
 class RunResult {
@@ -242,10 +282,14 @@ class RunResult {
 
 /// What an automation would do now, without doing it.
 class DryRun {
-  DryRun({required this.wouldRun, this.conditions = const [], this.actions = const []});
+  DryRun({required this.wouldRun, this.conditions = const [], this.path = const [], this.actions = const []});
 
   factory DryRun.fromJson(Map<String, dynamic> j) => DryRun(
         wouldRun: j['would_run'] as bool? ?? false,
+        path: [
+          for (final p in (j['path'] as List?) ?? const [])
+            (node: (p as Map)['node'] as String? ?? '', ok: p['ok'] as bool? ?? false, outcome: p['reason'] as String? ?? ''),
+        ],
         conditions: [
           for (final c in (j['conditions'] as List?) ?? const []) (ok: (c as Map)['ok'] as bool? ?? false, reason: c['reason'] as String? ?? ''),
         ],
@@ -263,6 +307,9 @@ class DryRun {
 
   final bool wouldRun;
   final List<({bool ok, String reason})> conditions;
+
+  /// The nodes it would go through; `ok` false: a wait that would wait, an `if` that takes else.
+  final List<RunStep> path;
   final List<({Map<String, dynamic> action, List<({String name, bool changes, String? error})> targets})> actions;
 }
 

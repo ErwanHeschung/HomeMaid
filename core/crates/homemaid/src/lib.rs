@@ -76,12 +76,13 @@ impl Core {
         self.automations.read().unwrap().clone()
     }
 
-    /// Puts `next` in force: their runs carry over by id, the engine restarts from now (missed
-    /// times are not caught up), devices get their new schedules, and subscribers are told.
+    /// Puts `next` in force: their runs carry over by id (those not over go on when their
+    /// automation did not change), the engine restarts from now (missed times are not caught
+    /// up), devices get their new schedules, and subscribers are told.
     /// Needs a tokio runtime.
-    pub fn set_automations(self: &Arc<Self>, next: automations::Automations) {
+    pub fn set_automations(self: &Arc<Self>, mut next: automations::Automations) {
+        next.carry(&self.automations(), self);
         let next = Arc::new(next);
-        next.carry_runs(&self.automations());
         *self.automations.write().unwrap() = next.clone();
         let mut engine = self.engine.lock().unwrap();
         if let Some(old) = engine.take() {

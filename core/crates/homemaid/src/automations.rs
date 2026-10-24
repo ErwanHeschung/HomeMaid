@@ -1,15 +1,24 @@
 //! Typed automations: `[[automation]]` in homemaid.toml, checked when the config loads.
 //!
-//! A trigger (a time of day, sunrise or sunset included, or an observed state crossing a value) runs the automation; its
-//! conditions decide; its actions set desired states (the reconciler does the rest) or invoke
-//! one-shot actions. Entities are chosen by selectors, never by name. A dry run tells what would
-//! happen without doing it. Each automation keeps its last runs in memory.
+//! A trigger (a time of day, sunrise or sunset included, or an observed state crossing a value)
+//! runs the automation; its conditions decide; then its nodes run, a workflow (see [flow]): set
+//! desired states (the reconciler does the rest), invoke one-shot actions, wait, branch, repeat.
+//! Entities are chosen by selectors, never by name. A dry run tells what would happen without
+//! doing it. Each automation keeps its last runs in memory, with the path they took.
+
+mod flow;
 
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
+
+pub use flow::{MergeMode, NodeConfig, PathStep, RepeatConfig, Step, StopConfig, WaitConfig};
+use flow::{Exec, Fired, Flow, Halt, Trace};
 
 use jiff::{
     Zoned,
@@ -34,11 +43,15 @@ const MAX_RUNS_PER_MINUTE: usize = 10;
 const GRACE: Duration = Duration::from_secs(5 * 60);
 /// Largest sunrise/sunset offset, in minutes: what the devices that run schedules accept.
 const MAX_SUN_OFFSET: i16 = 360;
+/// Runs of one automation at the same time, waiting ones included (`queued`, `parallel`).
+const MAX_RUNNING: usize = 10;
+/// `automation.run` answers when the run ends, or after this with where it is.
+const ANSWER_WITHIN: Duration = Duration::from_secs(10);
 
 // ------------------------------------------------------------------------------------- config
 
 // Also written back (the app edits automations): unset options are left out, as a person would.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AutomationConfig {
     pub id: String,
@@ -46,12 +59,41 @@ pub struct AutomationConfig {
     pub name: Option<String>,
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Mode::is_single")]
+    pub mode: Mode,
+    /// The first node(s).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub start: Vec<String>,
     #[serde(default, rename = "trigger", skip_serializing_if = "Vec::is_empty")]
     pub triggers: Vec<TriggerConfig>,
     #[serde(default, rename = "condition", skip_serializing_if = "Vec::is_empty")]
     pub conditions: Vec<ConditionConfig>,
+    #[serde(default, rename = "node", skip_serializing_if = "Vec::is_empty")]
+    pub nodes: Vec<NodeConfig>,
+    /// Before nodes: a list run in order, still read (a chain of nodes).
     #[serde(default, rename = "action", skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<ActionConfig>,
+}
+
+/// What a trigger does while a run is not over (a wait, a delay).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    /// Nothing: the new run is skipped.
+    #[default]
+    Single,
+    /// The run is stopped, and a new one starts.
+    Restart,
+    /// The new run starts when the others have ended.
+    Queued,
+    /// The new run starts beside it.
+    Parallel,
+}
+
+impl Mode {
+    fn is_single(&self) -> bool {
+        *self == Mode::Single
+    }
 }
 
 fn yes() -> bool {
@@ -66,9 +108,12 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TriggerConfig {
+    /// For the `trigger` condition: which one started the run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -77,7 +122,7 @@ pub struct TriggerConfig {
     pub when: Option<TestConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConditionConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -86,10 +131,13 @@ pub struct ConditionConfig {
     pub days: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<TestConfig>,
+    /// The `id` of the trigger that started the run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<String>,
 }
 
 /// `{ select, cap, ... }` with one test: `becomes`/`is` (a value), `above`, `below`, `changes`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TestConfig {
     pub select: String,
@@ -109,7 +157,7 @@ pub struct TestConfig {
     pub all: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActionConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -118,15 +166,20 @@ pub struct ActionConfig {
     pub invoke: Option<InvokeConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// `select = "trigger"` is the device that started the run, `"item"` the one of a `for_each`.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SetConfig {
     pub select: String,
     pub cap: String,
-    pub value: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<Value>,
+    /// `"trigger"`: the value that started the run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct InvokeConfig {
     pub select: String,
@@ -320,12 +373,7 @@ enum Condition {
     Between(TimeOf, TimeOf),
     Days(Days),
     State(StateTest),
-}
-
-#[derive(Debug, Clone)]
-enum Action {
-    Set { target: Target, cap: CapKind, value: CapValue },
-    Invoke { target: Target, action: String, params: Value },
+    Trigger(String),
 }
 
 #[derive(Debug, Clone)]
@@ -333,9 +381,12 @@ pub struct Automation {
     pub id: String,
     pub name: String,
     pub enabled: bool,
+    mode: Mode,
     triggers: Vec<Trigger>,
+    /// By trigger.
+    trigger_ids: Vec<Option<String>>,
     conditions: Vec<Condition>,
-    actions: Vec<Action>,
+    flow: Flow,
     /// As written, for the app's editor.
     config: AutomationConfig,
 }
@@ -375,66 +426,76 @@ fn state_test(c: &TestConfig, trigger: bool) -> Result<StateTest, String> {
     Ok(StateTest { target: Target::parse(&c.select)?, cap, test, all: c.all })
 }
 
+fn trigger(t: &TriggerConfig, location: Option<Location>) -> Result<Trigger, String> {
+    match (&t.at, &t.when) {
+        (Some(at), None) => Ok(Trigger::At { time: TimeOf::parse(at, location)?, days: t.days.as_deref().map(Days::parse).transpose()?.unwrap_or(Days::ALL) }),
+        (None, Some(when)) if t.days.is_none() => Ok(Trigger::When(state_test(when, true)?)),
+        (None, Some(_)) => Err("`days` goes with `at`".into()),
+        _ => Err("give either `at` or `when`".into()),
+    }
+}
+
+fn condition(k: &ConditionConfig, location: Option<Location>, trigger_ids: &[Option<String>]) -> Result<Condition, String> {
+    let time = |text: &str| TimeOf::parse(text, location);
+    match (&k.between, &k.days, &k.state, &k.trigger) {
+        (Some([from, to]), None, None, None) => Ok(Condition::Between(time(from)?, time(to)?)),
+        (None, Some(days), None, None) => Ok(Condition::Days(Days::parse(days)?)),
+        (None, None, Some(state), None) => Ok(Condition::State(state_test(state, false)?)),
+        (None, None, None, Some(id)) if trigger_ids.iter().flatten().any(|t| t == id) => Ok(Condition::Trigger(id.clone())),
+        (None, None, None, Some(id)) => Err(format!("no trigger has the id `{id}`")),
+        _ => Err("give one of `between`, `days`, `state`, `trigger`".into()),
+    }
+}
+
 impl Automation {
     /// Checks everything that can be checked without the devices; errors stop the core.
     pub fn compile(c: &AutomationConfig, location: Option<Location>) -> Result<Self, String> {
-        let time = |text: &str| TimeOf::parse(text, location);
-        let at = |what: String, i: usize, e: String| format!("automation `{}`, {what} {}: {e}", c.id, i + 1);
+        let at = |what: &str, i: usize, e: String| format!("automation `{}`, {what} {}: {e}", c.id, i + 1);
         if c.id.is_empty() {
             return Err("an automation needs an `id`".into());
         }
-        if c.triggers.is_empty() || c.actions.is_empty() {
-            return Err(format!("automation `{}`: needs at least one [[automation.trigger]] and one [[automation.action]]", c.id));
+        if c.triggers.is_empty() || (c.nodes.is_empty() && c.actions.is_empty()) {
+            return Err(format!("automation `{}`: needs at least one [[automation.trigger]] and one [[automation.node]]", c.id));
         }
         let mut triggers = vec![];
+        let mut trigger_ids: Vec<Option<String>> = vec![];
         for (i, t) in c.triggers.iter().enumerate() {
-            let trigger = match (&t.at, &t.when) {
-                (Some(at_time), None) => {
-                    let time = time(at_time).map_err(|e| at("trigger".into(), i, e))?;
-                    Trigger::At { time, days: t.days.as_deref().map(Days::parse).transpose()?.unwrap_or(Days::ALL) }
-                }
-                (None, Some(when)) if t.days.is_none() => Trigger::When(state_test(when, true)?),
-                (None, Some(_)) => return Err(at("trigger".into(), i, "`days` goes with `at`".into())),
-                _ => return Err(at("trigger".into(), i, "give either `at` or `when`".into())),
-            };
-            triggers.push(trigger);
+            triggers.push(trigger(t, location).map_err(|e| at("trigger", i, e))?);
+            if t.id.as_ref().is_some_and(|id| id.is_empty() || trigger_ids.contains(&Some(id.clone()))) {
+                return Err(at("trigger", i, "its `id` is empty or another trigger's".into()));
+            }
+            trigger_ids.push(t.id.clone());
         }
-        let triggers = triggers;
-        let mut conditions = vec![];
-        for (i, k) in c.conditions.iter().enumerate() {
-            let condition = match (&k.between, &k.days, &k.state) {
-                (Some([from, to]), None, None) => Condition::Between(time(from).map_err(|e| at("condition".into(), i, e))?, time(to).map_err(|e| at("condition".into(), i, e))?),
-                (None, Some(days), None) => Condition::Days(Days::parse(days)?),
-                (None, None, Some(state)) => Condition::State(state_test(state, false).map_err(|e| at("condition".into(), i, e))?),
-                _ => return Err(at("condition".into(), i, "give one of `between`, `days`, `state`".into())),
-            };
-            conditions.push(condition);
+        let conditions = c
+            .conditions
+            .iter()
+            .enumerate()
+            .map(|(i, k)| condition(k, location, &trigger_ids).map_err(|e| at("condition", i, e)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let compilers = flow::Compilers {
+            condition: &|k| condition(k, location, &trigger_ids),
+            trigger: &|t| trigger(t, location),
+            fired_by_device: triggers.iter().any(|t| matches!(t, Trigger::When(_))),
+        };
+        let flow = match (c.nodes.is_empty(), c.actions.is_empty()) {
+            (false, false) => return Err(format!("automation `{}`: write [[automation.node]] or [[automation.action]], not both", c.id)),
+            (true, _) if !c.start.is_empty() => return Err(format!("automation `{}`: `start` names nodes, and there are none", c.id)),
+            (true, _) => {
+                let (nodes, start) = Flow::legacy(&c.actions);
+                Flow::compile(&nodes, &start, &compilers)
+            }
+            (false, _) => Flow::compile(&c.nodes, &c.start, &compilers),
         }
-        let mut actions = vec![];
-        for (i, a) in c.actions.iter().enumerate() {
-            let action = match (&a.set, &a.invoke) {
-                (Some(set), None) => {
-                    let cap: CapKind = set.cap.parse().map_err(|e| at("action".into(), i, e))?;
-                    let value = CapValue::from_plain(&cap, set.value.clone()).map_err(|e| at("action".into(), i, e))?;
-                    Action::Set { target: Target::parse(&set.select)?, cap, value }
-                }
-                (None, Some(inv)) => {
-                    if !(inv.params.is_null() || inv.params.is_object()) {
-                        return Err(at("action".into(), i, "`params` must be a table".into()));
-                    }
-                    Action::Invoke { target: Target::parse(&inv.select)?, action: inv.action.clone(), params: inv.params.clone() }
-                }
-                _ => return Err(at("action".into(), i, "give either `set` or `invoke`".into())),
-            };
-            actions.push(action);
-        }
+        .map_err(|e| format!("automation `{}`, {e}", c.id))?;
         Ok(Self {
             id: c.id.clone(),
             name: c.name.clone().unwrap_or_else(|| c.id.clone()),
             enabled: c.enabled,
+            mode: c.mode,
             triggers,
+            trigger_ids,
             conditions,
-            actions,
+            flow,
             config: c.clone(),
         })
     }
@@ -444,15 +505,16 @@ impl Automation {
         self.next_trigger(after).map(|(at, _)| at)
     }
 
-    /// Same, with how the run is labelled: `19:30`, or `sunset (21:58)`.
-    fn next_trigger(&self, after: &Zoned) -> Option<(Zoned, String)> {
+    /// Same, with what fired: labelled `19:30`, or `sunset (21:58)`.
+    fn next_trigger(&self, after: &Zoned) -> Option<(Zoned, Fired)> {
         self.triggers
             .iter()
-            .filter_map(|t| match t {
+            .zip(&self.trigger_ids)
+            .filter_map(|(t, id)| match t {
                 Trigger::At { time, days } => next_at(*time, *days, after).map(|at| {
                     let clock = at.strftime("%H:%M").to_string();
                     let label = if matches!(time, TimeOf::Clock(_)) { clock } else { format!("{time} ({clock})") };
-                    (at, label)
+                    (at, Fired { label, id: id.clone(), ..Fired::default() })
                 }),
                 Trigger::When(_) => None,
             })
@@ -502,12 +564,27 @@ fn passes(test: &Test, value: &CapValue) -> bool {
 /// What an automation did, or why it did nothing.
 #[derive(Debug, Clone, Serialize)]
 pub struct Run {
-    /// RFC 3339, local time.
+    /// RFC 3339, local time: when it started.
     pub at: String,
     /// What started it: `"19:30"`, `"Lampe du salon on_off"`, `"manual"`.
     pub trigger: String,
     pub skipped: Option<String>,
+    /// Why it failed before its last node: a `stop` with an error, a limit.
+    pub error: Option<String>,
+    /// Why it was stopped before its end: by hand, started again, its automation edited.
+    pub stopped: Option<String>,
     pub results: Vec<ActionResult>,
+    /// The nodes it went through, in the order they ended.
+    pub steps: Vec<Step>,
+    /// Not over yet (`automation.run` answered before the end).
+    #[serde(skip_serializing_if = "is_false")]
+    pub running: bool,
+}
+
+impl Run {
+    fn skipped(at: String, trigger: String, why: String) -> Self {
+        Run { at, trigger, skipped: Some(why), error: None, stopped: None, results: vec![], steps: vec![], running: false }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -525,6 +602,8 @@ pub struct ActionResult {
 #[derive(Debug, Serialize)]
 pub struct DryRun {
     pub conditions: Vec<Check>,
+    /// The nodes it would go through.
+    pub path: Vec<PathStep>,
     pub actions: Vec<Planned>,
     /// Would it run now (every condition passes)?
     pub would_run: bool,
@@ -574,13 +653,7 @@ fn describe_condition(c: &Condition) -> Value {
         Condition::Between(from, to) => json!({ "between": [from.to_string(), to.to_string()] }),
         Condition::Days(days) => json!({ "days": days.names() }),
         Condition::State(test) => json!({ "state": describe_test(test) }),
-    }
-}
-
-fn describe_action(a: &Action) -> Value {
-    match a {
-        Action::Set { target, cap, value } => json!({ "set": { "select": target.text, "cap": cap.to_string(), "value": value.plain() } }),
-        Action::Invoke { target, action, params } => json!({ "invoke": { "select": target.text, "action": action, "params": params } }),
+        Condition::Trigger(id) => json!({ "trigger": id }),
     }
 }
 
@@ -594,15 +667,61 @@ struct History {
     stopped: Option<String>,
 }
 
+/// A run not over yet.
+struct Running {
+    seq: u64,
+    at: String,
+    trigger: String,
+    trace: Arc<Mutex<Trace>>,
+    abort: tokio::task::AbortHandle,
+    /// Who waits for its end (`automation.run`).
+    done: Option<tokio::sync::oneshot::Sender<Run>>,
+}
+
+impl Running {
+    /// The run as it is: ended with `end` (a failure, or why it was stopped), or still `running`.
+    fn so_far(&self, end: End, running: bool) -> Run {
+        let trace = self.trace.lock().unwrap();
+        let (error, stopped) = match end {
+            End::Done => (None, None),
+            End::Failed(e) => (Some(e), None),
+            End::Stopped(why) => (None, Some(why.to_string())),
+        };
+        Run { at: self.at.clone(), trigger: self.trigger.clone(), skipped: None, error, stopped, results: trace.results.clone(), steps: trace.steps.clone(), running }
+    }
+}
+
+enum End {
+    Done,
+    Failed(String),
+    Stopped(&'static str),
+}
+
+static SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Shared by the versions of the automations an edit replaces: a run that goes on (its
+/// automation did not change) ends in the same history.
+#[derive(Default)]
+struct Shared {
+    history: Mutex<HashMap<String, History>>,
+    running: Mutex<HashMap<String, Vec<Running>>>,
+    /// One at a time, by automation in `queued` mode.
+    queues: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+}
+
 pub struct Automations {
     list: Vec<Automation>,
     /// Kept to compile edited automations the same way.
     pub location: Option<Location>,
-    history: Mutex<HashMap<String, History>>,
+    shared: Arc<Shared>,
     /// Last observed value per entity and capability, to see edges.
     observed: Mutex<HashMap<(Uuid, CapKind), CapValue>>,
     /// The devices that run an automation themselves too, by automation.
     delegated: Mutex<HashMap<String, BTreeSet<Uuid>>>,
+}
+
+fn stamp(z: &Zoned) -> String {
+    z.strftime("%Y-%m-%dT%H:%M:%S%:z").to_string()
 }
 
 impl Automations {
@@ -615,12 +734,12 @@ impl Automations {
             }
             list.push(Automation::compile(c, location)?);
         }
-        Ok(Self { list, location, history: Mutex::default(), observed: Mutex::default(), delegated: Mutex::default() })
+        Ok(Self { list, location, shared: Arc::default(), observed: Mutex::default(), delegated: Mutex::default() })
     }
 
     /// What the device of `entity` can run itself, from the automations simple enough for it:
     /// every trigger an `at`, no condition but days (a device cannot check a state or a time
-    /// range). Only `set` actions go; the core runs the whole automation anyway.
+    /// range), nothing but `set` nodes. The core runs the whole automation anyway.
     pub fn schedules_for(&self, entity: &Entity) -> Vec<Schedule> {
         let mut out = vec![];
         for a in self.list.iter().filter(|a| a.enabled) {
@@ -628,7 +747,7 @@ impl Automations {
             for c in &a.conditions {
                 days &= match c {
                     Condition::Days(d) => d.0,
-                    Condition::Between(..) | Condition::State(_) => 0,
+                    Condition::Between(..) | Condition::State(_) | Condition::Trigger(_) => 0,
                 };
             }
             let times: Option<Vec<(ScheduleTime, u8)>> = a
@@ -639,9 +758,8 @@ impl Automations {
                     Trigger::When(_) => None,
                 })
                 .collect();
-            let Some(times) = times else { continue };
-            for action in &a.actions {
-                let Action::Set { target, cap, value } = action else { continue };
+            let (Some(times), Some(sets)) = (times, a.flow.plain_sets()) else { continue };
+            for (target, cap, value) in sets {
                 let writable = entity.caps.get(cap).is_some_and(|slot| !slot.meta.read_only);
                 if !writable || !target.select.matches(entity) {
                     continue;
@@ -672,14 +790,34 @@ impl Automations {
         Self::new(&[], None).expect("an empty list has nothing to refuse")
     }
 
-    /// Keeps the runs of `old` for the automations still here (by id). An edited automation
+    /// Takes over from `old`: the runs of the automations still here (by id), and the runs not
+    /// over of those that did not change. Those that changed are stopped. An edited automation
     /// stopped by the loop guard starts again.
-    pub(crate) fn carry_runs(&self, old: &Automations) {
-        let old = old.history.lock().unwrap();
-        let mut history = self.history.lock().unwrap();
-        for a in &self.list {
-            if let Some(h) = old.get(&a.id) {
-                history.entry(a.id.clone()).or_default().runs.clone_from(&h.runs);
+    pub(crate) fn carry(&mut self, old: &Automations, core: &Core) {
+        self.shared = old.shared.clone();
+        let same = |id: &str| {
+            let now = self.list.iter().find(|a| a.id == id).map(|a| &a.config);
+            now.is_some() && now == old.list.iter().find(|a| a.id == id).map(|a| &a.config)
+        };
+        let ended: Vec<(String, Vec<Running>)> = {
+            let mut running = self.shared.running.lock().unwrap();
+            let ids: Vec<String> = running.keys().filter(|id| !same(id)).cloned().collect();
+            ids.into_iter().filter_map(|id| running.remove_entry(&id)).collect()
+        };
+        {
+            let mut history = self.shared.history.lock().unwrap();
+            history.retain(|id, _| self.list.iter().any(|a| a.id == *id));
+            for h in history.values_mut() {
+                h.recent.clear();
+                h.stopped = None;
+            }
+        }
+        for (id, runs) in ended {
+            for r in runs {
+                r.abort.abort();
+                if self.list.iter().any(|a| a.id == id) {
+                    self.close(core, &id, r, End::Stopped("the automation was edited"));
+                }
             }
         }
     }
@@ -688,13 +826,14 @@ impl Automations {
         self.list.is_empty()
     }
 
-    fn get(&self, id: &str) -> Result<&Automation, String> {
-        self.list.iter().find(|a| a.id == id).ok_or_else(|| format!("unknown automation `{id}`"))
+    fn index(&self, id: &str) -> Result<usize, String> {
+        self.list.iter().position(|a| a.id == id).ok_or_else(|| format!("unknown automation `{id}`"))
     }
 
     /// For the API: every automation, what it is, when it runs next, what may be wrong, its runs.
     pub fn list(&self, core: &Core, now: &Zoned) -> Value {
-        let history = self.history.lock().unwrap();
+        let history = self.shared.history.lock().unwrap();
+        let running = self.shared.running.lock().unwrap();
         let items: Vec<Value> = self
             .list
             .iter()
@@ -708,17 +847,28 @@ impl Automations {
                 if let Some(stopped) = h.and_then(|h| h.stopped.clone()) {
                     problems.insert(0, stopped);
                 }
+                let running: Vec<Value> = running
+                    .get(&a.id)
+                    .into_iter()
+                    .flatten()
+                    .map(|r| {
+                        let trace = r.trace.lock().unwrap();
+                        json!({ "at": r.at, "trigger": r.trigger, "nodes": trace.current, "steps": trace.steps })
+                    })
+                    .collect();
                 json!({
                     "id": a.id,
                     "name": a.name,
                     "enabled": a.enabled && h.is_none_or(|h| h.stopped.is_none()),
+                    "mode": a.mode,
                     "triggers": a.triggers.iter().map(describe_trigger).collect::<Vec<_>>(),
                     "conditions": a.conditions.iter().map(describe_condition).collect::<Vec<_>>(),
-                    "actions": a.actions.iter().map(describe_action).collect::<Vec<_>>(),
+                    "actions": a.flow.describe_actions(),
                     "next_run": a.enabled.then(|| a.next_time(now)).flatten().map(|z| z.timestamp().to_string()),
                     "problems": problems,
                     // These devices run it themselves too: it still happens while the hub is off.
                     "delegated": delegated,
+                    "running": running,
                     "runs": h.map(|h| h.runs.iter().rev().cloned().collect::<Vec<_>>()).unwrap_or_default(),
                     "config": a.config,
                 })
@@ -729,68 +879,55 @@ impl Automations {
 
     /// What it would do now, without doing anything.
     pub fn dry_run(&self, core: &Core, id: &str, now: &Zoned) -> Result<DryRun, String> {
-        let a = self.get(id)?;
+        let a = &self.list[self.index(id)?];
         let conditions: Vec<Check> = a
             .conditions
             .iter()
             .map(|c| {
-                let (ok, reason) = core.with(|r| check(c, now, r.entities.values()));
+                let (ok, reason) = core.with(|r| check(c, now, r.entities.values(), None));
                 Check { condition: describe_condition(c), ok, reason }
             })
             .collect();
-        let actions = core.with(|r| {
-            a.actions
-                .iter()
-                .map(|action| {
-                    let targets = match action {
-                        Action::Set { target, cap, value } => target
-                            .entities(r.entities.values())
-                            .into_iter()
-                            .map(|e| {
-                                let slot = e.caps.get(cap);
-                                let error = match slot {
-                                    None => Some(format!("{} has no {cap}", e.name)),
-                                    Some(slot) => slot.meta.validate(cap, value).err(),
-                                };
-                                let changes = slot.is_some_and(|s| s.desired.as_ref() != Some(value));
-                                PlannedTarget { entity: e.id, name: e.name.clone(), changes, error }
-                            })
-                            .collect(),
-                        Action::Invoke { target, action, .. } => target
-                            .entities(r.entities.values())
-                            .into_iter()
-                            .map(|e| PlannedTarget {
-                                entity: e.id,
-                                name: e.name.clone(),
-                                changes: true,
-                                error: (!e.actions.iter().any(|d| d.name == *action)).then(|| format!("{} has no action `{action}`", e.name)),
-                            })
-                            .collect(),
-                    };
-                    Planned { action: describe_action(action), targets }
-                })
-                .collect()
-        });
+        let (path, actions) = core.with(|r| a.flow.preview(r, now));
         let would_run = conditions.iter().all(|c| c.ok);
-        Ok(DryRun { conditions, actions, would_run })
+        Ok(DryRun { conditions, path, actions, would_run })
     }
 
-    /// Runs it now (conditions still apply), as if triggered by `trigger`.
-    pub async fn run(&self, core: &Core, id: &str, trigger: String, now: &Zoned) -> Result<Run, String> {
-        let a = self.get(id)?;
-        let run = self.execute(core, a, trigger, now).await;
-        self.record(core, &a.id, run.clone());
-        Ok(run)
+    /// Runs it now (conditions and mode still apply), as if triggered by `trigger`. Answers when
+    /// it ends, or after a while with where it is (`running`).
+    pub async fn run(self: &Arc<Self>, core: &Arc<Core>, id: &str, trigger: String, now: &Zoned) -> Result<Run, String> {
+        let i = self.index(id)?;
+        let (seq, done) = self.start(core, i, Fired { label: trigger, ..Fired::default() }, now);
+        match tokio::time::timeout(ANSWER_WITHIN, done).await {
+            Ok(Ok(run)) => Ok(run),
+            Ok(Err(_)) => Err("the run was dropped".into()),
+            Err(_) => {
+                let running = self.shared.running.lock().unwrap();
+                let r = running.get(id).into_iter().flatten().find(|r| Some(r.seq) == seq).ok_or("the run ended meanwhile")?;
+                Ok(r.so_far(End::Done, true))
+            }
+        }
     }
 
-    async fn execute(&self, core: &Core, a: &Automation, trigger: String, now: &Zoned) -> Run {
-        let mut run = Run { at: now.strftime("%Y-%m-%dT%H:%M:%S%:z").to_string(), trigger, skipped: None, results: vec![] };
+    /// Stops its runs not over yet; how many.
+    pub fn stop(&self, core: &Core, id: &str) -> Result<usize, String> {
+        self.index(id)?;
+        let runs = self.shared.running.lock().unwrap().remove(id).unwrap_or_default();
+        let count = runs.len();
+        for r in runs {
+            r.abort.abort();
+            self.close(core, id, r, End::Stopped("by hand"));
+        }
+        Ok(count)
+    }
+
+    /// Why it would not run now: the loop guard, a condition.
+    fn skip(&self, core: &Core, a: &Automation, fired: &Fired, now: &Zoned) -> Option<String> {
         {
-            let mut history = self.history.lock().unwrap();
+            let mut history = self.shared.history.lock().unwrap();
             let h = history.entry(a.id.clone()).or_default();
             if let Some(stopped) = &h.stopped {
-                run.skipped = Some(stopped.clone());
-                return run;
+                return Some(stopped.clone());
             }
             let minute_ago = Instant::now() - Duration::from_secs(60);
             while h.recent.front().is_some_and(|t| *t < minute_ago) {
@@ -800,80 +937,99 @@ impl Automations {
                 let why = format!("stopped: ran {MAX_RUNS_PER_MINUTE} times in a minute (a loop?); restart the core to resume");
                 tracing::error!(automation = %a.id, "{why}");
                 h.stopped = Some(why.clone());
-                run.skipped = Some(why);
-                return run;
+                return Some(why);
             }
             h.recent.push_back(Instant::now());
         }
-        for c in &a.conditions {
-            let (ok, reason) = core.with(|r| check(c, now, r.entities.values()));
-            if !ok {
-                run.skipped = Some(reason);
-                return run;
+        a.conditions.iter().find_map(|c| {
+            let (ok, reason) = core.with(|r| check(c, now, r.entities.values(), fired.id.as_deref()));
+            (!ok).then_some(reason)
+        })
+    }
+
+    /// Starts a run aside, as its mode says: its number (none: skipped), and its end.
+    fn start(self: &Arc<Self>, core: &Arc<Core>, i: usize, fired: Fired, now: &Zoned) -> (Option<u64>, tokio::sync::oneshot::Receiver<Run>) {
+        let (done, end) = tokio::sync::oneshot::channel();
+        let a = &self.list[i];
+        let mut skipped = self.skip(core, a, &fired, now);
+        let mut running = self.shared.running.lock().unwrap();
+        let others = running.entry(a.id.clone()).or_default();
+        if skipped.is_none() {
+            skipped = match a.mode {
+                Mode::Single if !others.is_empty() => Some("skipped: it is still running".into()),
+                Mode::Queued | Mode::Parallel if others.len() >= MAX_RUNNING => Some(format!("skipped: it is running {MAX_RUNNING} times already")),
+                _ => None,
+            };
+        }
+        if let Some(why) = skipped {
+            drop(running);
+            let run = Run::skipped(stamp(now), fired.label, why);
+            self.record(core, &a.id, run.clone());
+            let _ = done.send(run);
+            return (None, end);
+        }
+        if a.mode == Mode::Restart {
+            for r in std::mem::take(others) {
+                r.abort.abort();
+                self.close(core, &a.id, r, End::Stopped("started again"));
             }
         }
-        for action in &a.actions {
-            match action {
-                Action::Set { target, cap, value } => {
-                    let label = format!("set {cap} {}", value.plain());
-                    let results = core.with(|r| {
-                        let ids: Vec<(Uuid, String)> = target.entities(r.entities.values()).iter().map(|e| (e.id, e.name.clone())).collect();
-                        ids.into_iter()
-                            .map(|(id, name)| {
-                                let status = r.set_desired(id, cap, value.clone(), Instant::now());
-                                ActionResult {
-                                    entity: Some(id),
-                                    target: name,
-                                    action: label.clone(),
-                                    ok: status.is_ok(),
-                                    outcome: match status {
-                                        Ok(s) => serde_json::to_value(&s).ok().and_then(|v| v["state"].as_str().map(String::from)).unwrap_or_default(),
-                                        Err(e) => e,
-                                    },
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                    });
-                    run.results.extend(nothing_matched(results, target, &label));
-                }
-                Action::Invoke { target, action, params } => {
-                    let label = format!("invoke {action}");
-                    let ids: Vec<(Uuid, String)> =
-                        core.with(|r| target.entities(r.entities.values()).iter().map(|e| (e.id, e.name.clone())).collect());
-                    let mut results = vec![];
-                    for (id, name) in ids {
-                        let outcome = match core.plugins.get() {
-                            Some(plugins) => plugins.invoke(core, id, action, params.clone()).await,
-                            None => Err("plugins are not running".into()),
-                        };
-                        results.push(ActionResult {
-                            entity: Some(id),
-                            target: name,
-                            action: label.clone(),
-                            ok: outcome.is_ok(),
-                            outcome: outcome.map_or_else(|e| e, |()| "sent".into()),
-                        });
-                    }
-                    run.results.extend(nothing_matched(results, target, &label));
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+        let trace = Arc::<Mutex<Trace>>::default();
+        let queue = (a.mode == Mode::Queued).then(|| self.shared.queues.lock().unwrap().entry(a.id.clone()).or_default().clone());
+        let trigger = fired.label.clone();
+        let task = tokio::spawn({
+            let (this, core, trace) = (self.clone(), core.clone(), trace.clone());
+            async move {
+                let _turn = match &queue {
+                    Some(queue) => Some(queue.lock().await),
+                    None => None,
+                };
+                let a = &this.list[i];
+                let ended = Exec { core: &core, flow: &a.flow, fired: &fired, trace: &trace }.run().await;
+                let end = match ended {
+                    Err(Halt::Fail(e)) => End::Failed(e),
+                    Ok(()) | Err(Halt::Stop) => End::Done,
+                };
+                // Not there: stopped meanwhile, and recorded by who stopped it.
+                let me = {
+                    let mut running = this.shared.running.lock().unwrap();
+                    let runs = running.get_mut(&a.id);
+                    runs.and_then(|runs| runs.iter().position(|r| r.seq == seq).map(|i| runs.remove(i)))
+                };
+                if let Some(me) = me {
+                    this.close(&core, &a.id, me, end);
                 }
             }
+        });
+        // Under the lock: the task cannot look for itself before it is here.
+        others.push(Running { seq, at: stamp(now), trigger, trace, abort: task.abort_handle(), done: Some(done) });
+        (Some(seq), end)
+    }
+
+    /// Records a run that ended, and tells who waits for it.
+    fn close(&self, core: &Core, id: &str, mut r: Running, end: End) {
+        let run = r.so_far(end, false);
+        self.record(core, id, run.clone());
+        if let Some(done) = r.done.take() {
+            let _ = done.send(run);
         }
-        run
     }
 
     fn record(&self, core: &Core, id: &str, run: Run) {
-        tracing::info!(automation = %id, trigger = %run.trigger, skipped = ?run.skipped, "automation ran");
-        let mut history = self.history.lock().unwrap();
+        tracing::info!(automation = %id, trigger = %run.trigger, skipped = ?run.skipped, error = ?run.error, stopped = ?run.stopped, "automation ran");
+        let mut history = self.shared.history.lock().unwrap();
         let runs = &mut history.entry(id.into()).or_default().runs;
         if runs.len() == KEEP_RUNS {
             runs.pop_front();
         }
         runs.push_back(run.clone());
+        drop(history);
         let _ = core.changes.send(Event::Automation { id: id.into(), run });
     }
 
     /// The automations a state change triggers, with what triggered them.
-    fn triggered_by(&self, core: &Core, change: &Change) -> Vec<(usize, String)> {
+    fn triggered_by(&self, core: &Core, change: &Change) -> Vec<(usize, Fired)> {
         let Some(now) = change.slot.observed.clone() else { return vec![] };
         let before = self.observed.lock().unwrap().insert((change.id, change.cap.clone()), now.clone());
         if before.as_ref() == Some(&now) {
@@ -885,9 +1041,10 @@ impl Automations {
             .enumerate()
             .filter(|(_, a)| a.enabled)
             .filter_map(|(i, a)| {
-                a.triggers.iter().find_map(|t| match t {
+                a.triggers.iter().zip(&a.trigger_ids).find_map(|(t, id)| match t {
                     Trigger::When(w) if w.cap == change.cap && w.target.select.matches(&entity) && crosses(&w.test, before.as_ref(), &now) => {
-                        Some((i, format!("{} {}", entity.name, change.cap)))
+                        let label = format!("{} {}", entity.name, change.cap);
+                        Some((i, Fired { label, id: id.clone(), entity: Some(entity.id), value: Some(now.clone()) }))
                     }
                     _ => None,
                 })
@@ -912,20 +1069,20 @@ impl Automations {
                 () = tokio::time::sleep(wait) => {
                     let now = Zoned::now();
                     for (i, a) in self.list.iter().enumerate().filter(|(_, a)| a.enabled) {
-                        let Some((due, label)) = a.next_trigger(&checked).filter(|(due, _)| *due <= now) else { continue };
+                        let Some((due, fired)) = a.next_trigger(&checked).filter(|(due, _)| *due <= now) else { continue };
                         let late = Duration::try_from(now.duration_since(&due)).unwrap_or(Duration::ZERO);
                         if late > GRACE {
-                            tracing::warn!(automation = %a.id, "{label} skipped: the hub was not running then");
+                            tracing::warn!(automation = %a.id, "{} skipped: the hub was not running then", fired.label);
                         } else {
-                            self.spawn_run(&core, i, label);
+                            self.start(&core, i, fired, &now);
                         }
                     }
                     checked = now;
                 }
                 event = changes.recv() => match event {
                     Ok(Event::Slot(change)) => {
-                        for (i, trigger) in self.triggered_by(&core, &change) {
-                            self.spawn_run(&core, i, trigger);
+                        for (i, fired) in self.triggered_by(&core, &change) {
+                            self.start(&core, i, fired, &Zoned::now());
                         }
                     }
                     Ok(_) => {}
@@ -954,16 +1111,6 @@ impl Automations {
             }
         });
     }
-
-    /// Runs one aside: an action may wait for its plugin, and the engine keeps listening meanwhile.
-    fn spawn_run(self: &Arc<Self>, core: &Arc<Core>, i: usize, trigger: String) {
-        let (this, core) = (self.clone(), core.clone());
-        tokio::spawn(async move {
-            let a = &this.list[i];
-            let run = this.execute(&core, a, trigger, &Zoned::now()).await;
-            this.record(&core, &a.id, run);
-        });
-    }
 }
 
 fn nothing_matched(results: Vec<ActionResult>, target: &Target, label: &str) -> Vec<ActionResult> {
@@ -974,7 +1121,8 @@ fn nothing_matched(results: Vec<ActionResult>, target: &Target, label: &str) -> 
 }
 
 /// Whether a condition holds now, and why (or why not), in words for the dry run and the log.
-fn check<'a>(c: &Condition, now: &Zoned, entities: impl IntoIterator<Item = &'a Entity>) -> (bool, String) {
+/// `fired`: the id of the trigger that started the run.
+fn check<'a>(c: &Condition, now: &Zoned, entities: impl IntoIterator<Item = &'a Entity>, fired: Option<&str>) -> (bool, String) {
     match c {
         Condition::Between(from, to) => {
             let ok = between(now, *from, *to);
@@ -1007,39 +1155,52 @@ fn check<'a>(c: &Condition, now: &Zoned, entities: impl IntoIterator<Item = &'a 
                 .collect();
             (ok, format!("{} {}", shown.join(", "), if ok { "(passes)" } else { "(does not pass)" }))
         }
+        Condition::Trigger(id) => {
+            let ok = fired == Some(id.as_str());
+            (ok, format!("{} by the trigger `{id}`", if ok { "started" } else { "not started" }))
+        }
+    }
+}
+
+/// Called with what a selector must find: a device, with `what` (a capability, an action).
+type Need<'a> = dyn FnMut(&Target, String, &dyn Fn(&Entity) -> bool) + 'a;
+
+fn trigger_needs(t: &Trigger, need: &mut Need) {
+    if let Trigger::When(w) = t {
+        need(&w.target, w.cap.to_string(), &|e| e.caps.contains_key(&w.cap));
+    }
+}
+
+fn condition_needs(c: &Condition, need: &mut Need) {
+    if let Condition::State(s) = c {
+        need(&s.target, s.cap.to_string(), &|e| e.caps.contains_key(&s.cap));
     }
 }
 
 /// What may be wrong with an automation given the devices now: selectors matching nothing,
 /// devices without the capability or the action.
 fn problems<'a>(a: &Automation, entities: impl IntoIterator<Item = &'a Entity> + Clone) -> Vec<String> {
-    let mut out = vec![];
-    let mut empty = |target: &Target, need: &str, has: &dyn Fn(&Entity) -> bool| {
+    let mut out: Vec<String> = vec![];
+    let mut need = |target: &Target, what: String, has: &dyn Fn(&Entity) -> bool| {
         let matched = target.entities(entities.clone());
-        if matched.is_empty() {
-            out.push(format!("`{}` matches no device", target.text));
+        let problem = if matched.is_empty() {
+            format!("`{}` matches no device", target.text)
         } else if !matched.iter().any(|e| has(e)) {
-            out.push(format!("`{}` matches no device with {need}", target.text));
+            format!("`{}` matches no device with {what}", target.text)
+        } else {
+            return;
+        };
+        if !out.contains(&problem) {
+            out.push(problem);
         }
     };
     for t in &a.triggers {
-        if let Trigger::When(w) = t {
-            empty(&w.target, &w.cap.to_string(), &|e| e.caps.contains_key(&w.cap));
-        }
+        trigger_needs(t, &mut need);
     }
     for c in &a.conditions {
-        if let Condition::State(s) = c {
-            empty(&s.target, &s.cap.to_string(), &|e| e.caps.contains_key(&s.cap));
-        }
+        condition_needs(c, &mut need);
     }
-    for action in &a.actions {
-        match action {
-            Action::Set { target, cap, .. } => empty(target, &cap.to_string(), &|e| e.caps.contains_key(cap)),
-            Action::Invoke { target, action, .. } => {
-                empty(target, &format!("the action `{action}`"), &|e| e.actions.iter().any(|d| d.name == *action))
-            }
-        }
-    }
+    a.flow.needs(&mut need);
     out
 }
 
@@ -1056,13 +1217,13 @@ mod tests {
         reconciler::Reconciler,
     };
 
-    fn config(toml_text: &str) -> Result<Automations, String> {
+    fn config(toml_text: &str) -> Result<Arc<Automations>, String> {
         #[derive(Deserialize)]
         struct File {
             automation: Vec<AutomationConfig>,
         }
         let file: File = toml::from_str(toml_text).map_err(|e| e.to_string())?;
-        Automations::new(&file.automation, Some(PARIS))
+        Automations::new(&file.automation, Some(PARIS)).map(Arc::new)
     }
 
     const PARIS: Location = Location { latitude: 48.8566, longitude: 2.3522 };
@@ -1095,9 +1256,9 @@ mod tests {
         }
     }
 
-    fn core(entities: Vec<Entity>) -> (Core, mpsc::UnboundedReceiver<crate::reconciler::Command>) {
+    fn core(entities: Vec<Entity>) -> (Arc<Core>, mpsc::UnboundedReceiver<crate::reconciler::Command>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        (Core::new(Reconciler::new(entities.into_iter().map(|e| (e.id, e)).collect()), tx), rx)
+        (Arc::new(Core::new(Reconciler::new(entities.into_iter().map(|e| (e.id, e)).collect()), tx)), rx)
     }
 
     const EVENING: &str = r#"
@@ -1112,6 +1273,21 @@ mod tests {
         [[automation.action]]
         set = { select = "room:Salon & cap:brightness", cap = "brightness", value = 40 }
     "#;
+
+    #[test]
+    fn the_examples_of_the_example_config_load() {
+        // Its commented [[automation]] tables, without the prose around them.
+        let text = include_str!("../../../homemaid.example.toml");
+        let start = text.find("# [[automation]]").unwrap();
+        let toml: Vec<&str> = text[start..]
+            .lines()
+            .take_while(|l| l.starts_with('#'))
+            .filter_map(|l| l.strip_prefix("# "))
+            .filter(|l| l.starts_with("[[") || l.split_once(" = ").is_some_and(|(key, _)| key.chars().all(|c| c.is_ascii_lowercase() || c == '_')))
+            .collect();
+        let automations = config(&toml.join("\n")).unwrap();
+        assert!(automations.list.iter().any(|a| a.id == "living-at-night"));
+    }
 
     #[test]
     fn a_complete_automation_loads() {
@@ -1224,12 +1400,25 @@ days = ["monday"]"#, ok_action), "unknown day"),
             when = { select = "room:Salon", cap = "on_off", becomes = true }
             [[automation.action]]
             set = { select = "room:Salon", cap = "brightness", value = 10 }
+
+            [[automation]]
+            id = "then-off"
+            start = ["on"]
+            [[automation.trigger]]
+            at = "07:30"
+            [[automation.node]]
+            id = "on"
+            set = { select = "room:Salon", cap = "on_off", value = true }
+            next = ["later"]
+            [[automation.node]]
+            id = "later"
+            delay = "1h"
         "#).unwrap();
         let schedules = automations.schedules_for(&lamp(false));
         assert_eq!(schedules, [
             Schedule { automation: "dusk".into(), cap: CapKind::OnOff, value: CapValue::OnOff(true), at: ScheduleTime::Sunset(-15), days: 0b110 },
             Schedule { automation: "morning".into(), cap: CapKind::Brightness, value: CapValue::Brightness(40), at: ScheduleTime::Clock(450), days: 0x7f },
-        ], "a range or a state needs the hub; another room is not this device");
+        ], "a range, a state or a delay needs the hub; another room is not this device");
 
         let id = lamp(false).id;
         automations.set_delegated(id, &schedules, true);
@@ -1333,4 +1522,252 @@ days = ["monday"]"#, ok_action), "unknown day"),
         assert_eq!(automations.triggered_by(&core, &change(true, true)).len(), 1, "now really on");
         assert!(automations.triggered_by(&core, &change(true, true)).is_empty(), "still on");
     }
+
+    // ------------------------------------------------------------------------------- workflows
+
+    const AT_7: &str = "[[automation.trigger]]\nat = \"07:00\"\n";
+
+    /// One automation `f`; `rest` starts with its own keys (`start`, `mode`), then its tables.
+    fn flow(rest: &str) -> Result<Arc<Automations>, String> {
+        config(&format!("[[automation]]\nid = \"f\"\n{rest}"))
+    }
+
+    fn node(id: &str, body: &str) -> String {
+        format!("[[automation.node]]\nid = \"{id}\"\n{body}\n")
+    }
+
+    fn set(id: &str, cap: &str, value: &str, ports: &str) -> String {
+        node(id, &format!("set = {{ select = \"room:Salon\", cap = \"{cap}\", value = {value} }}\n{ports}"))
+    }
+
+    fn names(run: &Run) -> Vec<&str> {
+        run.steps.iter().map(|s| s.node.as_str()).collect()
+    }
+
+    fn sent(commands: &mut mpsc::UnboundedReceiver<crate::reconciler::Command>) -> Vec<CapValue> {
+        std::iter::from_fn(|| commands.try_recv().ok()).map(|c| c.value).collect()
+    }
+
+    fn last_run(a: &Automations, id: &str) -> Option<Run> {
+        a.shared.history.lock().unwrap().get(id).and_then(|h| h.runs.back().cloned())
+    }
+
+    fn other_lamp() -> Entity {
+        Entity { id: crate::model::entity_uuid("mock", "lamp2"), local_id: "lamp2".into(), name: "Lampe 2".into(), ..lamp(false) }
+    }
+
+    #[test]
+    fn flow_errors_say_which_node() {
+        let on = |id: &str, ports: &str| set(id, "on_off", "true", ports);
+        let cases = [
+            (format!("start = [\"a\"]\n{AT_7}{}", on("a", "next = [\"b\"]")), "`next` leads to `b`, which is no node"),
+            (format!("start = [\"a\"]\n{AT_7}{}", on("a", "then = [\"a\"]")), "no `then` port (it has: next, error)"),
+            (format!("start = [\"a\"]\n{AT_7}{}{}", on("a", ""), on("b", "")), "node `b`: nothing leads to it"),
+            (format!("start = [\"a\", \"b\"]\n{AT_7}{}{}{}", on("a", "next = [\"c\"]"), on("b", "next = [\"c\"]"), on("c", "")), "join them with a `merge`"),
+            (format!("start = [\"m\"]\n{AT_7}{}{}", on("a", "next = [\"m\"]"), node("m", "merge = \"any\"\nnext = [\"a\"]")), "leads back to itself"),
+            (
+                format!("start = [\"r\"]\n{AT_7}{}{}{}", node("r", "repeat = { count = 2 }\nbody = [\"a\"]\nnext = [\"m\"]"), on("a", "next = [\"m\"]"), node("m", "merge = \"all\"")),
+                "node `m`: the body of `r` leads to it, and so does the rest",
+            ),
+            (format!("start = [\"a\"]\n{AT_7}{}", node("a", "set = { select = \"item\", cap = \"on_off\", value = true }")), "`item` is only for"),
+            (format!("start = [\"a\"]\n{AT_7}{}", node("a", "set = { select = \"trigger\", cap = \"on_off\", value = true }")), "needs a `when` trigger"),
+            (format!("start = [\"a\"]\n{AT_7}{}[[automation.action]]\nset = {{ select = \"room:Salon\", cap = \"on_off\", value = true }}\n", on("a", "")), "not both"),
+            (format!("{AT_7}{}", on("a", "")), "`start` names the first node"),
+            (format!("start = [\"a\"]\n{AT_7}{}", node("a", "delay = \"10\"")), "not a duration"),
+            (format!("start = [\"a\"]\n{AT_7}{}", node("a", "wait = { timeout = \"1m\" }")), "either `until`"),
+            (format!("start = [\"a\"]\n{AT_7}{}", node("a", "if = [{ trigger = \"x\" }]\nthen = []")), "no trigger has the id `x`"),
+            (format!("start = [\"a\"]\n{AT_7}{}", node("a", "delay = \"1m\"\nstop = {}")), "exactly one of"),
+            (format!("start = [\"a\"]\n{AT_7}{}", node("a", "repeat = { count = 2 }")), "needs a `body`"),
+        ];
+        for (text, what) in cases {
+            let err = flow(&text).err().unwrap_or_default();
+            assert!(err.contains(what) && err.starts_with("automation `f`"), "{what}: got `{err}` for\n{text}");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn branches_run_side_by_side_and_merges_skip_the_paths_not_taken() {
+        let a = flow(&format!(
+            "start = [\"check\", \"side\"]\n{AT_7}{}{}{}{}{}{}",
+            node("check", "if = [{ state = { select = \"room:Salon\", cap = \"on_off\", is = true } }]\nthen = [\"dim\"]\nelse = [\"bright\"]"),
+            set("dim", "brightness", "20", "next = [\"join\"]"),
+            set("bright", "brightness", "90", "next = [\"join\"]"),
+            node("side", "delay = \"1s\"\nnext = [\"join\"]"),
+            node("join", "merge = \"all\"\nnext = [\"off\"]"),
+            set("off", "on_off", "false", ""),
+        ))
+        .unwrap();
+        let (core, mut commands) = core(vec![lamp(true)]);
+        let run = a.run(&core, "f", "manual".into(), &Zoned::now()).await.unwrap();
+        assert_eq!(names(&run), ["check", "dim", "side", "join", "off"], "`bright` is dead, so `join` does not wait for it");
+        assert_eq!(sent(&mut commands), [CapValue::Brightness(20), CapValue::OnOff(false)]);
+        assert_eq!(run.steps[0].outcome, "then: Lampe: true (passes)");
+
+        let dry = a.dry_run(&core, "f", &Zoned::now()).unwrap();
+        let path: Vec<&str> = dry.path.iter().map(|p| p.node.as_str()).collect();
+        assert_eq!(path, ["check", "dim", "join", "off", "side"]);
+        assert_eq!(dry.actions.len(), 2, "the `set`s on the way");
+
+        let any = flow(&format!(
+            "start = [\"fast\", \"slow\"]\n{AT_7}{}{}{}{}",
+            node("fast", "delay = \"1s\"\nnext = [\"join\"]"),
+            node("slow", "delay = \"5s\"\nnext = [\"join\"]"),
+            node("join", "merge = \"any\"\nnext = [\"on\"]"),
+            set("on", "on_off", "true", ""),
+        ))
+        .unwrap();
+        let run = any.run(&core, "f", "manual".into(), &Zoned::now()).await.unwrap();
+        assert_eq!(names(&run), ["fast", "join", "on", "slow"], "on with the first, once");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_wait_times_out_or_goes_on_and_the_mode_decides_about_new_runs() {
+        let steps = format!(
+            "{AT_7}{}{}{}{}",
+            set("on", "on_off", "true", "next = [\"wait\"]"),
+            node("wait", "wait = { until = [{ state = { select = \"room:Salon\", cap = \"on_off\", is = false } }], timeout = \"10m\" }\nnext = [\"done\"]\ntimeout = [\"late\"]"),
+            set("done", "brightness", "50", ""),
+            set("late", "brightness", "5", ""),
+        );
+        let a = flow(&format!("start = [\"on\"]\n{steps}")).unwrap();
+        let (core, mut commands) = core(vec![lamp(false)]);
+        // The lamp stays off until the 1st run's desired state is observed: the wait passes at once.
+        let run = a.run(&core, "f", "manual".into(), &Zoned::now()).await.unwrap();
+        assert_eq!(names(&run), ["on", "wait", "done"]);
+        sent(&mut commands);
+
+        core.with(|r| r.observe(lamp(false).id, &CapKind::OnOff, CapValue::OnOff(true)));
+        let run = a.run(&core, "f", "manual".into(), &Zoned::now()).await.unwrap();
+        assert!(run.running && names(&run) == ["on"], "answered before the end: {run:?}");
+        let list = a.list(&core, &Zoned::now());
+        assert_eq!(list[0]["running"][0]["nodes"], json!(["wait"]));
+        let second = a.run(&core, "f", "manual".into(), &Zoned::now()).await.unwrap();
+        assert_eq!(second.skipped.as_deref(), Some("skipped: it is still running"), "single, by default");
+
+        tokio::time::sleep(Duration::from_secs(11 * 60)).await;
+        let run = last_run(&a, "f").unwrap();
+        assert_eq!(names(&run), ["on", "wait", "late"]);
+        assert_eq!(run.steps[1].outcome, "timed out");
+
+        // Seen off while it waits: it goes on.
+        a.run(&core, "f", "manual".into(), &Zoned::now()).await.unwrap();
+        core.with(|r| r.observe(lamp(false).id, &CapKind::OnOff, CapValue::OnOff(false)));
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(names(&last_run(&a, "f").unwrap()), ["on", "wait", "done"]);
+
+        // Restart: the run waiting is stopped.
+        core.with(|r| r.observe(lamp(false).id, &CapKind::OnOff, CapValue::OnOff(true)));
+        let restart = flow(&format!("mode = \"restart\"\nstart = [\"on\"]\n{steps}")).unwrap();
+        restart.run(&core, "f", "manual".into(), &Zoned::now()).await.unwrap();
+        restart.run(&core, "f", "manual".into(), &Zoned::now()).await.unwrap();
+        assert_eq!(last_run(&restart, "f").unwrap().stopped.as_deref(), Some("started again"));
+        assert_eq!(restart.stop(&core, "f"), Ok(1));
+        assert_eq!(last_run(&restart, "f").unwrap().stopped.as_deref(), Some("by hand"));
+
+        // Queued: the second starts when the first ends.
+        let queued = flow(&format!("mode = \"queued\"\nstart = [\"on\"]\n{steps}")).unwrap();
+        queued.run(&core, "f", "manual".into(), &Zoned::now()).await.unwrap();
+        queued.run(&core, "f", "manual".into(), &Zoned::now()).await.unwrap();
+        let list = queued.list(&core, &Zoned::now());
+        assert_eq!(list[0]["running"][1]["nodes"], json!([]), "waits for its turn");
+        tokio::time::sleep(Duration::from_secs(11 * 60)).await;
+        assert!(queued.shared.history.lock().unwrap()["f"].runs.iter().all(|r| r.stopped.is_none()));
+        assert_eq!(queued.shared.running.lock().unwrap()["f"].len(), 1, "the second waits now");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn repeats_go_round_each_device_and_stop_at_their_limit() {
+        let a = flow(&format!(
+            "start = [\"each\"]\n{AT_7}{}{}{}{}",
+            node("each", "repeat = { for_each = \"cap:on_off\" }\nbody = [\"dim\"]\nnext = [\"thrice\"]"),
+            node("dim", "set = { select = \"item\", cap = \"brightness\", value = 30 }"),
+            node("thrice", "repeat = { count = 3 }\nbody = [\"pause\"]"),
+            node("pause", "delay = \"1s\""),
+        ))
+        .unwrap();
+        let (core, mut commands) = core(vec![lamp(true), other_lamp()]);
+        let run = a.run(&core, "f", "manual".into(), &Zoned::now()).await.unwrap();
+        assert_eq!(names(&run), ["dim", "dim", "each", "pause", "pause", "pause", "thrice"]);
+        assert_eq!(sent(&mut commands), [CapValue::Brightness(30), CapValue::Brightness(30)]);
+        assert_eq!(run.results.iter().map(|r| r.target.as_str()).collect::<Vec<_>>(), ["Lampe", "Lampe 2"]);
+
+        let forever = flow(&format!(
+            "start = [\"loop\"]\n{AT_7}{}{}",
+            node("loop", "repeat = { while = [{ state = { select = \"room:Salon\", cap = \"on_off\", is = true } }] }\nbody = [\"dim\"]"),
+            set("dim", "brightness", "30", ""),
+        ))
+        .unwrap();
+        let run = forever.run(&core, "f", "manual".into(), &Zoned::now()).await.unwrap();
+        assert!(run.error.unwrap().contains("1000 times at most"));
+    }
+
+    #[tokio::test]
+    async fn a_failure_takes_the_error_port_and_a_stop_ends_the_run() {
+        let a = flow(&format!(
+            "start = [\"cellar\"]\n{AT_7}{}{}{}",
+            node("cellar", "set = { select = \"room:Cave\", cap = \"on_off\", value = true }\nnext = [\"never\"]\nerror = [\"fail\"]"),
+            set("never", "on_off", "true", ""),
+            node("fail", "stop = { error = \"the cellar is gone\" }"),
+        ))
+        .unwrap();
+        let (core, mut commands) = core(vec![lamp(false)]);
+        let run = a.run(&core, "f", "manual".into(), &Zoned::now()).await.unwrap();
+        assert_eq!(names(&run), ["cellar", "fail"]);
+        assert_eq!(run.error.as_deref(), Some("the cellar is gone"));
+        assert!(sent(&mut commands).is_empty());
+
+        // No error port: the failure is in the results, and the run goes on.
+        let legacy = config(&format!(
+            "[[automation]]\nid = \"f\"\n{AT_7}[[automation.action]]\nset = {{ select = \"room:Cave\", cap = \"on_off\", value = true }}\n[[automation.action]]\nset = {{ select = \"room:Salon\", cap = \"on_off\", value = true }}\n"
+        ))
+        .unwrap();
+        let run = legacy.run(&core, "f", "manual".into(), &Zoned::now()).await.unwrap();
+        assert_eq!(names(&run), ["action-1", "action-2"], "actions are a chain");
+        assert_eq!((run.results[0].ok, run.results[1].ok, run.error), (false, true, None));
+    }
+
+    #[tokio::test]
+    async fn the_trigger_says_which_device_and_value_started_the_run() {
+        let a = config(&format!(
+            "[[automation]]\nid = \"f\"\nstart = [\"which\"]\n[[automation.trigger]]\nid = \"dimmed\"\nwhen = {{ select = \"cap:brightness\", cap = \"brightness\", changes = true }}\n{AT_7}{}{}",
+            node("which", "if = [{ trigger = \"dimmed\" }]\nthen = [\"copy\"]"),
+            node("copy", "set = { select = \"trigger\", cap = \"brightness\", from = \"trigger\" }"),
+        ))
+        .unwrap();
+        let (core, mut commands) = core(vec![lamp(false), other_lamp()]);
+        let change = Change {
+            id: other_lamp().id,
+            cap: CapKind::Brightness,
+            slot: CapSlot { observed: Some(CapValue::Brightness(70)), ..Default::default() },
+        };
+        a.seed(&core);
+        let (i, fired) = a.triggered_by(&core, &change).remove(0);
+        let (_, end) = a.start(&core, i, fired, &Zoned::now());
+        let run = end.await.unwrap();
+        assert_eq!(names(&run), ["which", "copy"]);
+        assert_eq!(run.results[0].target, "Lampe 2");
+        assert_eq!(sent(&mut commands), [CapValue::Brightness(70)]);
+
+        let manual = a.run(&core, "f", "manual".into(), &Zoned::now()).await.unwrap();
+        assert_eq!(names(&manual), ["which"], "not started by `dimmed`: else, which leads nowhere");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_edit_stops_the_runs_of_what_changed_only() {
+        let (core, _commands) = core(vec![lamp(true)]);
+        let waits = |delay: &str| format!("[[automation]]\nid = \"{delay}\"\nstart = [\"w\"]\n{AT_7}{}", node("w", &format!("delay = \"{delay}\"")));
+        let before = config(&format!("{}{}", waits("1h"), waits("2h"))).unwrap();
+        core.set_automations(Arc::try_unwrap(before).ok().unwrap());
+        let a = core.automations();
+        a.run(&core, "1h", "manual".into(), &Zoned::now()).await.ok();
+        a.run(&core, "2h", "manual".into(), &Zoned::now()).await.ok();
+        let edited = config(&format!("{}{}", waits("1h"), waits("2h").replace("id = \"2h\"", "id = \"2h\"\nname = \"x\""))).unwrap();
+        core.set_automations(Arc::try_unwrap(edited).ok().unwrap());
+        let a = core.automations();
+        let running = a.shared.running.lock().unwrap();
+        assert_eq!((running["1h"].len(), running.get("2h").map_or(0, Vec::len)), (1, 0));
+        drop(running);
+        assert_eq!(last_run(&a, "2h").unwrap().stopped.as_deref(), Some("the automation was edited"));
+    }
+
 }

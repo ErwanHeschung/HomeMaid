@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../clients.dart';
+import '../flow.dart';
 import '../l10n/app_localizations.dart';
 import '../model.dart';
 import '../theme.dart';
+import '../widgets/flow_canvas.dart';
 import '../widgets/model_names.dart';
 import '../widgets/state.dart';
 import 'automation_editor.dart';
@@ -103,11 +105,14 @@ class _AutomationRow extends StatelessWidget {
     final theme = Theme.of(context);
     final a = automation;
     final when = a.triggers.isEmpty ? '' : triggerText(context, core, a.triggers.first) + (a.triggers.length > 1 ? ' · +${a.triggers.length - 1}' : '');
-    final status = !a.enabled
-        ? l.automationDisabled
-        : a.nextRun != null
-            ? l.nextAt(whenText(context, a.nextRun!))
-            : null;
+    final running = a.running.isNotEmpty;
+    final status = running
+        ? l.runInProgress
+        : !a.enabled
+            ? l.automationDisabled
+            : a.nextRun != null
+                ? l.nextAt(whenText(context, a.nextRun!))
+                : null;
     return InkWell(
       onTap: () => showModalBottomSheet<void>(
         context: context,
@@ -133,7 +138,7 @@ class _AutomationRow extends StatelessWidget {
             ),
             if (status != null) ...[
               const SizedBox(width: 12),
-              Text(status, style: theme.textTheme.labelSmall?.copyWith(color: Hm.textDim, fontFeatures: Hm.tabular)),
+              Text(status, style: theme.textTheme.labelSmall?.copyWith(color: running ? Hm.pending : Hm.textDim, fontFeatures: Hm.tabular)),
             ],
             const SizedBox(width: 4),
             Semantics(
@@ -182,10 +187,14 @@ class _AutomationSheetState extends State<AutomationSheet> {
     }
   }
 
-  Future<void> _run() async {
+  Future<void> _run() => _doing(() => widget.core.runAutomation(widget.id));
+
+  Future<void> _stop() => _doing(() => widget.core.stopAutomation(widget.id));
+
+  Future<void> _doing(Future<void> Function() work) async {
     setState(() => _busy = true);
     try {
-      await widget.core.runAutomation(widget.id);
+      await work();
     } catch (e) {
       if (mounted) showError(context, e);
     } finally {
@@ -202,6 +211,15 @@ class _AutomationSheetState extends State<AutomationSheet> {
           final l = AppLocalizations.of(context);
           final theme = Theme.of(context);
           final core = widget.core;
+          final graph = FlowGraph.of(a.config);
+          final at = graph.layout();
+          final steps = [...graph.nodes]..sort((x, y) {
+              final (p, q) = (at[x['id']]!, at[y['id']]!);
+              return p.layer != q.layer ? p.layer.compareTo(q.layer) : p.column.compareTo(q.column);
+            });
+          // A list of settings and actions one after the other reads as well in sentences.
+          final plain = graph.nodes.every((n) => const {'set', 'invoke'}.contains(kindOf(n)) && graph.targets(n['id'] as String, 'next').length <= 1) &&
+              graph.start.length == 1;
           Widget line(String text, {Color? color}) => Padding(
                 padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
                 child: Text(text, style: theme.textTheme.bodyLarge?.copyWith(color: color)),
@@ -230,11 +248,45 @@ class _AutomationSheetState extends State<AutomationSheet> {
                 for (final t in a.triggers) line(triggerText(context, core, t)),
                 if (a.conditions.isNotEmpty) ...[
                   SectionHeader(l.sectionIf),
-                  for (final c in a.conditions) line(conditionText(context, core, c)),
+                  for (final c in a.conditions) line(conditionText(context, core, c, triggers: a.triggers)),
                 ],
                 SectionHeader(l.sectionThen),
-                for (final act in a.actions) line(actionText(context, core, act)),
+                // Branches and waits read on the flow, not in a list.
+                if (plain) for (final n in steps) line(nodeText(context, core, n, triggers: a.triggers)),
+                if (!plain)
+                  Padding(
+                    // With the button's own 12 px, its icon on the 20 px gutter.
+                    padding: const EdgeInsets.fromLTRB(8, 0, 20, 0),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        icon: const Icon(Icons.account_tree_outlined),
+                        label: Text('${l.showFlow} · ${l.stepCount(steps.length)}'),
+                        onPressed: () => showFlow(context, core, a, running: a.running.firstOrNull),
+                      ),
+                    ),
+                  ),
                 if (a.delegated.isNotEmpty) line(l.runsWithoutHub(a.delegated.join(', ')), color: Hm.textDim),
+                for (final r in a.running)
+                  InkWell(
+                    onTap: () => showFlow(context, core, a, running: r),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+                      child: Row(children: [
+                        Expanded(
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(l.runningSince(whenText(context, r.at)), style: theme.textTheme.titleSmall?.copyWith(color: Hm.pending)),
+                            if (r.nodes.isNotEmpty)
+                              Text(
+                                l.waitingAt([for (final id in r.nodes) if (graph.node(id) case final n?) nodeText(context, core, n, triggers: a.triggers)].join(', ')),
+                                style: theme.textTheme.bodyMedium?.copyWith(color: Hm.textDim),
+                              ),
+                          ]),
+                        ),
+                        OutlinedButton(onPressed: _busy ? null : _stop, child: Text(l.stopRuns)),
+                      ]),
+                    ),
+                  ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
                   child: Row(children: [
@@ -243,10 +295,10 @@ class _AutomationSheetState extends State<AutomationSheet> {
                     Expanded(child: FilledButton(onPressed: _busy || !a.enabled ? null : _run, child: Text(l.runNow))),
                   ]),
                 ),
-                if (_dry != null) DryRunView(dry: _dry!, core: core),
+                if (_dry != null) DryRunView(dry: _dry!, core: core, config: a.config),
                 SectionHeader(l.sectionRuns),
                 if (a.runs.isEmpty) line(l.neverRan, color: Hm.textDim),
-                for (final run in a.runs) _RunRow(run: run),
+                for (final run in a.runs) _RunRow(run: run, onTap: run.steps.isEmpty || plain ? null : () => showFlow(context, core, a, run: run)),
               ]),
             ),
           );
@@ -255,10 +307,21 @@ class _AutomationSheetState extends State<AutomationSheet> {
 }
 
 class DryRunView extends StatelessWidget {
-  const DryRunView({super.key, required this.dry, required this.core});
+  const DryRunView({super.key, required this.dry, required this.core, this.config});
 
   final DryRun dry;
   final CoreClient core;
+
+  /// The automation tried, to name its steps.
+  final Map<String, dynamic>? config;
+
+  String _step(BuildContext context, String id) {
+    final config = this.config;
+    final node = config == null ? null : FlowGraph.of(config).node(id);
+    if (node == null) return id;
+    final triggers = [for (final t in (config!['trigger'] as List?) ?? const []) (t as Map).cast<String, dynamic>()];
+    return nodeText(context, core, node, triggers: triggers);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -280,6 +343,13 @@ class DryRunView extends StatelessWidget {
             padding: const EdgeInsets.only(top: 6),
             child: Text(c.reason, style: small?.copyWith(color: c.ok ? Hm.textDim : Hm.text)),
           ),
+        // What decides the way: an `if`, a wait, a delay, a repeat.
+        for (final p in dry.path)
+          if (p.outcome.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text('${_step(context, p.node)} · ${p.outcome}', style: small?.copyWith(color: Hm.textDim)),
+            ),
         for (final a in dry.actions) ...[
           const SizedBox(height: 10),
           Text(actionText(context, core, a.action), style: small),
@@ -299,20 +369,32 @@ class DryRunView extends StatelessWidget {
 }
 
 class _RunRow extends StatelessWidget {
-  const _RunRow({required this.run});
+  const _RunRow({required this.run, this.onTap});
 
   final Run run;
+
+  /// Shows it on the flow.
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
     final theme = Theme.of(context);
+    final acted = run.results.map((r) => r.target).toSet().join(', ');
     final outcome = run.skipped != null
         ? '${l.runSkipped} · ${run.skipped}'
-        : run.failed
-            ? '${l.runFailed} · ${run.results.where((r) => !r.ok).map((r) => '${r.target}: ${r.outcome}').join(', ')}'
-            : '${l.runActed} · ${run.results.map((r) => r.target).toSet().join(', ')}';
-    return Padding(
+        : run.stopped != null
+            ? '${l.runStopped} · ${stoppedText(context, run.stopped!)}'
+            : run.error != null
+                ? '${l.runFailed} · ${run.error}'
+                : run.failed
+                    ? '${l.runFailed} · ${run.results.where((r) => !r.ok).map((r) => '${r.target}: ${r.outcome}').join(', ')}'
+                    : acted.isEmpty
+                        ? l.runActed
+                        : '${l.runActed} · $acted';
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
       padding: const EdgeInsets.fromLTRB(20, 6, 20, 6),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Padding(padding: const EdgeInsets.only(top: 4), child: _RunMark(run, size: 10)),
@@ -326,7 +408,66 @@ class _RunRow extends StatelessWidget {
             Text(outcome, style: theme.textTheme.bodyMedium?.copyWith(color: run.failed ? Hm.danger : Hm.text)),
           ]),
         ),
+        if (onTap != null) const Icon(Icons.account_tree_outlined, size: 18, color: Hm.textDim),
       ]),
+      ),
+    );
+  }
+}
+
+/// Opens the automation's flow, read only, with a run on it (one not over, or one that ended).
+Future<void> showFlow(BuildContext context, CoreClient core, Automation a, {Run? run, RunningRun? running}) =>
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => FlowViewer(core: core, automation: a, run: run, running: running)));
+
+class FlowViewer extends StatelessWidget {
+  const FlowViewer({super.key, required this.core, required this.automation, this.run, this.running});
+
+  final CoreClient core;
+  final Automation automation;
+  final Run? run;
+  final RunningRun? running;
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    final a = automation;
+    final steps = running?.steps ?? run?.steps;
+    final marks = steps == null ? null : runMarks(steps, running?.nodes ?? const []);
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(a.name),
+        bottom: steps == null
+            ? null
+            : PreferredSize(
+                preferredSize: const Size.fromHeight(24),
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    running != null ? l.runInProgress : l.runOf(whenText(context, run!.at)),
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(color: running != null ? Hm.pending : Hm.textDim),
+                  ),
+                ),
+              ),
+      ),
+      body: FlowCanvas(
+        graph: FlowGraph.of(a.config),
+        root: rootText(context, core, a.triggers, a.conditions),
+        summary: (n) => nodeText(context, core, n, triggers: a.triggers),
+        icon: (n) => kindIcon(kindOf(n)),
+        portLabel: (p) => portLabel(context, p),
+        marks: marks,
+        // What it did there: every turn of a repeat.
+        onNode: steps == null
+            ? null
+            : (id) {
+                final here = steps.where((s) => s.node == id).toList();
+                ScaffoldMessenger.of(context)
+                  ..hideCurrentSnackBar()
+                  ..showSnackBar(SnackBar(
+                    content: Text(here.isEmpty ? l.notReached : here.map((s) => s.outcome).where((o) => o.isNotEmpty).join('\n')),
+                  ));
+              },
+      ),
     );
   }
 }
@@ -363,6 +504,9 @@ String _days(BuildContext context, List<Object?> days) {
 /// A selector in words where it is simple (`room:Salon & model:lamp` -> "Salon · Lampe"); the
 /// selector itself otherwise.
 String targetText(BuildContext context, String select) {
+  final l = AppLocalizations.of(context);
+  if (select == 'trigger') return l.targetTrigger;
+  if (select == 'item') return l.targetItem;
   if (RegExp(r'[|!()]').hasMatch(select)) return select;
   final parts = <String>[];
   for (final term in select.split('&').map((t) => t.trim())) {
@@ -384,7 +528,8 @@ String targetText(BuildContext context, String select) {
         parts.add(value);
     }
   }
-  return parts.isEmpty ? select : parts.join(' · ');
+  // Only a capability: wherever it is.
+  return parts.isEmpty ? l.wholeHome : parts.join(' · ');
 }
 
 String valueText(BuildContext context, String cap, Object? value) {
@@ -437,8 +582,15 @@ String triggerText(BuildContext context, CoreClient core, Map<String, dynamic> t
   return l.whenChanges(target, label);
 }
 
-String conditionText(BuildContext context, CoreClient core, Map<String, dynamic> c) {
+/// `triggers`: the automation's, for a `trigger` condition (which one started the run). `bare`:
+/// without "If", after "Wait until" or "Until".
+String conditionText(BuildContext context, CoreClient core, Map<String, dynamic> c,
+    {List<Map<String, dynamic>> triggers = const [], bool bare = false}) {
   final l = AppLocalizations.of(context);
+  if (c['trigger'] case final String id) {
+    final t = triggers.where((t) => t['id'] == id).firstOrNull;
+    return l.ifTrigger(t == null ? id : triggerText(context, core, t));
+  }
   if (c['between'] case [final String from, final String to]) {
     return l.ifBetween(sunText(context, from, at: false) ?? from, sunText(context, to, at: false) ?? to);
   }
@@ -448,10 +600,10 @@ String conditionText(BuildContext context, CoreClient core, Map<String, dynamic>
   final test = _test(state);
   final label = capLabel(context, cap);
   final text = test.containsKey('is')
-      ? l.ifIs(target, label, valueText(context, cap, test['is']))
+      ? (bare ? l.stateIs : l.ifIs)(target, label, valueText(context, cap, test['is']))
       : test['above'] is num
-          ? l.ifAbove(target, label, valueText(context, cap, test['above']))
-          : l.ifBelow(target, label, valueText(context, cap, test['below']));
+          ? (bare ? l.stateAbove : l.ifAbove)(target, label, valueText(context, cap, test['above']))
+          : (bare ? l.stateBelow : l.ifBelow)(target, label, valueText(context, cap, test['below']));
   return state['all'] == true ? l.ifAll(text) : text;
 }
 
@@ -459,7 +611,8 @@ String actionText(BuildContext context, CoreClient core, Map<String, dynamic> a)
   final l = AppLocalizations.of(context);
   if (a['set'] case final Map set) {
     final cap = set['cap'] as String;
-    return l.doSet(targetText(context, set['select'] as String), capLabel(context, cap), valueText(context, cap, set['value']));
+    final value = set['from'] == 'trigger' ? l.valueFromTrigger : valueText(context, cap, set['value']);
+    return l.doSet(targetText(context, set['select'] as String), capLabel(context, cap), value);
   }
   final invoke = (a['invoke'] as Map).cast<String, dynamic>();
   // "Launch notepad": the parameters say what.
@@ -481,3 +634,110 @@ String actionLabel(BuildContext context, String name) {
     _ => name.isEmpty ? name : name[0].toUpperCase() + name.substring(1).replaceAll('_', ' '),
   };
 }
+
+/// `1h30m` in words: `1 h 30 min`.
+String durationText(String text) {
+  final seconds = durationSeconds(text);
+  if (seconds == null) return text;
+  final (h, m, s) = (seconds ~/ 3600, seconds ~/ 60 % 60, seconds % 60);
+  return [if (h > 0) '$h h', if (m > 0) '$m min', if (s > 0) '$s s'].join(' ');
+}
+
+String _conditions(BuildContext context, CoreClient core, Object? list, List<Map<String, dynamic>> triggers, {bool any = false, bool bare = false}) {
+  final l = AppLocalizations.of(context);
+  final texts = [for (final c in (list as List?) ?? const []) conditionText(context, core, (c as Map).cast(), triggers: triggers, bare: bare)];
+  return texts.isEmpty ? '' : texts.reduce((a, b) => any ? l.conditionsOr(a, b) : l.conditionsAnd(a, b));
+}
+
+/// What a node does, in a sentence. `triggers`: the automation's.
+String nodeText(BuildContext context, CoreClient core, Map<String, dynamic> node, {List<Map<String, dynamic>> triggers = const []}) {
+  final l = AppLocalizations.of(context);
+  Map<String, dynamic> sub(String key) => ((node[key] as Map?) ?? const {}).cast<String, dynamic>();
+  switch (kindOf(node)) {
+    case 'set' || 'invoke':
+      return actionText(context, core, node);
+    case 'delay':
+      return l.nodeDelay(durationText(node['delay'] as String));
+    case 'wait':
+      final wait = sub('wait');
+      final text = wait['trigger'] is Map
+          ? l.nodeWaitFor(triggerText(context, core, (wait['trigger'] as Map).cast()))
+          : l.nodeWaitUntil(_conditions(context, core, wait['until'], triggers, bare: true));
+      return wait['timeout'] is String ? l.nodeAtMost(text, durationText(wait['timeout'] as String)) : text;
+    case 'if':
+      return _conditions(context, core, node['if'], triggers, any: node['any'] == true);
+    case 'repeat':
+      final r = sub('repeat');
+      if (r['count'] case final int n) return l.repeatCount(n);
+      if (r['while'] != null) return l.repeatWhile(_conditions(context, core, r['while'], triggers, bare: true));
+      if (r['until'] != null) return l.repeatUntil(_conditions(context, core, r['until'], triggers, bare: true));
+      return l.repeatEach(targetText(context, r['for_each'] as String? ?? ''));
+    case 'merge':
+      return node['merge'] == 'any' ? l.mergeAny : l.mergeAll;
+    default:
+      final error = sub('stop')['error'] as String?;
+      return error == null ? l.stopOk : l.stopError(error);
+  }
+}
+
+String kindLabel(BuildContext context, String kind) {
+  final l = AppLocalizations.of(context);
+  return switch (kind) {
+    'set' => l.kindSet,
+    'invoke' => l.kindInvoke,
+    'delay' => l.kindDelay,
+    'wait' => l.kindWait,
+    'if' => l.kindIf,
+    'repeat' => l.kindRepeat,
+    'merge' => l.kindMerge,
+    _ => l.kindStop,
+  };
+}
+
+IconData kindIcon(String kind) => switch (kind) {
+      'set' => Icons.tune,
+      'invoke' => Icons.play_arrow_outlined,
+      'delay' => Icons.hourglass_bottom,
+      'wait' => Icons.pause_circle_outline,
+      'if' => Icons.call_split,
+      'repeat' => Icons.repeat,
+      'merge' => Icons.call_merge,
+      _ => Icons.stop_circle_outlined,
+    };
+
+String portLabel(BuildContext context, String port) {
+  final l = AppLocalizations.of(context);
+  return switch (port) {
+    'error' => l.portError,
+    'timeout' => l.portTimeout,
+    'then' => l.portThen,
+    'else' => l.portElse,
+    'body' => l.portBody,
+    'start' => l.flowStart,
+    _ => l.portNext,
+  };
+}
+
+/// What starts it, on the canvas's top card: its triggers, then its conditions.
+String rootText(BuildContext context, CoreClient core, List<Map<String, dynamic>> triggers, List<Map<String, dynamic>> conditions) => [
+      for (final t in triggers) triggerText(context, core, t),
+      for (final c in conditions) conditionText(context, core, c, triggers: triggers),
+    ].join('\n');
+
+/// Why the core stopped a run, in words.
+String stoppedText(BuildContext context, String why) {
+  final l = AppLocalizations.of(context);
+  return switch (why) {
+    'by hand' => l.stoppedByHand,
+    'started again' => l.stoppedRestarted,
+    'the automation was edited' => l.stoppedEdited,
+    _ => why,
+  };
+}
+
+/// A run on the canvas: where it went (and failed), where it waits; the rest it did not reach.
+Map<String, NodeMark> runMarks(List<RunStep> steps, [List<String> waiting = const []]) => {
+      for (final s in steps) s.node: s.ok ? NodeMark.passed : NodeMark.failed,
+      for (final n in waiting) n: NodeMark.waiting,
+    };
+

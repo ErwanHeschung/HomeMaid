@@ -1,5 +1,7 @@
-/// The automation editor: the sheet's sentences as cards to change. Saved through the core, which
-/// checks it as at startup, writes it to homemaid.toml and puts it in force at once.
+/// The automation editor: a flow, as in n8n. What starts it on top (its triggers and conditions),
+/// then its steps as cards linked top to bottom; the "+" under a step adds one after it, a tap opens
+/// its settings. Saved through the core, which checks it as at startup, writes it to
+/// homemaid.toml and puts it in force at once.
 library;
 
 import 'dart:convert';
@@ -8,10 +10,12 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../clients.dart';
+import '../flow.dart';
 import '../l10n/app_localizations.dart';
 import '../model.dart';
 import '../selectors.dart';
 import '../theme.dart';
+import '../widgets/flow_canvas.dart';
 import '../widgets/state.dart';
 import 'automations.dart';
 import 'common.dart';
@@ -41,6 +45,8 @@ Map<String, dynamic> _copy(Map<String, dynamic> m) => (jsonDecode(jsonEncode(m))
 
 Map<String, dynamic> _sub(Map<String, dynamic> m, String key) => (m[key] as Map).cast<String, dynamic>();
 
+List<Map<String, dynamic>> _list(Map<String, dynamic> m, String key) => (m[key] as List).cast<Map<String, dynamic>>();
+
 bool _writable(Entity e, String cap) => e.caps[cap] != null && e.caps[cap]!.meta['read_only'] != true;
 
 /// The metadata of `cap` on the first device that has it.
@@ -67,6 +73,27 @@ Map<String, dynamic> _newAction(CoreClient core) {
   return {'set': {'select': roomSelector(pick?.$1.room, cap), 'cap': cap, 'value': _defaultValue(cap, _meta(core, cap))}};
 }
 
+Map<String, dynamic> _newCondition(CoreClient core) => {'state': _newTest(core, trigger: false)};
+
+/// A new node of `kind`, then the nodes of its body (a repeat's).
+List<Map<String, dynamic>> _newNodes(CoreClient core, FlowGraph graph, String kind) {
+  final id = graph.newId(kind);
+  return switch (kind) {
+    'set' => [{'id': id, ..._newAction(core)}],
+    'invoke' => [{'id': id, 'invoke': _newInvoke(core)}],
+    'delay' => [{'id': id, 'delay': '5m'}],
+    'wait' => [{'id': id, 'wait': {'until': [_newCondition(core)], 'timeout': '30m'}}],
+    'if' => [{'id': id, 'if': [_newCondition(core)]}],
+    'repeat' => [
+        {'id': id, 'repeat': {'count': 3}, 'body': [graph.newId('set')]},
+        {'id': graph.newId('set'), ..._newAction(core)},
+      ],
+    _ => [{'id': id, 'stop': <String, dynamic>{}}],
+  };
+}
+
+const _modes = ['single', 'restart', 'queued', 'parallel'];
+
 class AutomationEditor extends StatefulWidget {
   const AutomationEditor({super.key, required this.core, this.automation});
 
@@ -82,9 +109,12 @@ class AutomationEditor extends StatefulWidget {
 class _AutomationEditorState extends State<AutomationEditor> {
   late final _name = TextEditingController(text: widget.automation?.name ?? '');
   late bool _enabled = widget.automation?.config['enabled'] as bool? ?? true;
+  late String _mode = widget.automation?.config['mode'] as String? ?? 'single';
   late final _triggers = [for (final t in widget.automation?.triggers ?? [_newTrigger()]) _copy(t)];
   late final _conditions = [for (final c in widget.automation?.conditions ?? const <Map<String, dynamic>>[]) _copy(c)];
-  late final _actions = [for (final a in widget.automation?.actions ?? [_newAction(widget.core)]) _copy(a)];
+  late final _graph = widget.automation == null
+      ? FlowGraph(['set-1'], [{'id': 'set-1', ..._newAction(widget.core)}])
+      : FlowGraph.of(widget.automation!.config);
   String? _error;
   DryRun? _dry;
   bool _busy = false;
@@ -101,9 +131,10 @@ class _AutomationEditorState extends State<AutomationEditor> {
       'id': widget.automation?.id ?? _newId(name),
       if (name.isNotEmpty) 'name': name,
       if (!_enabled) 'enabled': false,
+      if (_mode != 'single') 'mode': _mode,
       'trigger': _triggers,
       if (_conditions.isNotEmpty) 'condition': _conditions,
-      'action': _actions,
+      ..._graph.toConfig(),
     };
   }
 
@@ -139,7 +170,18 @@ class _AutomationEditorState extends State<AutomationEditor> {
 
   Future<void> _try() => _busyWith(() async {
         final dry = await widget.core.dryRunConfig(_config);
-        if (mounted) setState(() => _dry = dry);
+        if (!mounted) return;
+        setState(() => _dry = dry);
+        await showModalBottomSheet<void>(
+          context: context,
+          isScrollControlled: true,
+          useSafeArea: true,
+          builder: (_) => SingleChildScrollView(
+            padding: const EdgeInsets.only(bottom: 24),
+            // The sheet's whole width, not its text's.
+            child: SizedBox(width: double.infinity, child: DryRunView(dry: dry, core: widget.core, config: _config)),
+          ),
+        );
       });
 
   Future<void> _save() => _busyWith(() async {
@@ -171,13 +213,163 @@ class _AutomationEditorState extends State<AutomationEditor> {
     });
   }
 
+  /// A sheet that edits in place: the canvas follows each change behind it.
+  Future<void> _sheet(Widget Function(BuildContext context, VoidCallback changed) build) => showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setSheet) => Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.only(bottom: 24),
+              child: build(context, () {
+                setSheet(() {});
+                _changed();
+              }),
+            ),
+          ),
+        ),
+      );
+
+  /// Its triggers and conditions: what starts it.
+  Future<void> _editStart() => _sheet((context, changed) {
+        final l = AppLocalizations.of(context);
+        final core = widget.core;
+        VoidCallback? removing(List<Map<String, dynamic>> list, Map<String, dynamic> item, {bool keepOne = false}) =>
+            keepOne && list.length == 1 ? null : () { list.remove(item); changed(); };
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          SectionHeader(l.sectionWhen),
+          for (final t in _triggers)
+            _TriggerCard(key: ObjectKey(t), core: core, trigger: t, onChanged: changed, onRemove: removing(_triggers, t, keepOne: true)),
+          _AddButton(l.addTrigger, () { _triggers.add(_newTrigger()); changed(); }),
+          SectionHeader(l.sectionIf),
+          for (final c in _conditions)
+            _ConditionCard(key: ObjectKey(c), core: core, condition: c, triggers: _triggers, onChanged: changed, onRemove: removing(_conditions, c)),
+          _AddButton(l.addCondition, () { _conditions.add({'between': ['18:00', '23:00']}); changed(); }),
+        ]);
+      });
+
+  Future<void> _editNode(String id) => _sheet((context, changed) {
+        final l = AppLocalizations.of(context);
+        final node = _graph.node(id);
+        if (node == null) return const SizedBox();
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Row(children: [
+              Icon(kindIcon(kindOf(node)), color: Hm.select),
+              const SizedBox(width: 12),
+              Expanded(child: Text(kindLabel(context, kindOf(node)), style: Theme.of(context).textTheme.titleLarge)),
+            ]),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: _NodeFields(core: widget.core, node: node, triggers: _triggers, onChanged: changed),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 16, 20, 0),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                style: TextButton.styleFrom(foregroundColor: Hm.danger),
+                icon: const Icon(Icons.delete_outline),
+                label: Text(l.removeStep),
+                onPressed: () {
+                  _graph.remove(id);
+                  _changed();
+                  Navigator.pop(context);
+                },
+              ),
+            ),
+          ),
+        ]);
+      });
+
+  /// What to put after a port: a new step (between it and what followed, or as a branch of its
+  /// own), or a link to a step already there.
+  Future<void> _add(String? from, String port) async {
+    final l = AppLocalizations.of(context);
+    final core = widget.core;
+    var parallel = false;
+    final added = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheet) => SingleChildScrollView(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            // Where it goes, in words: "If it fails…", "Otherwise…".
+            SectionHeader(switch (port) {
+              'next' => l.addThen,
+              'error' => l.addOnError,
+              'timeout' => l.addOnTimeout,
+              'body' => l.addEachTurn,
+              'then' => l.addIfYes,
+              'else' => l.addIfNo,
+              _ => l.addStep,
+            }),
+            for (final kind in const ['set', 'invoke', 'delay', 'wait', 'if', 'repeat', 'stop'])
+              ListTile(
+                leading: Icon(kindIcon(kind)),
+                title: Text(kindLabel(context, kind)),
+                subtitle: Text(switch (kind) {
+                  'set' => l.kindSetHint,
+                  'invoke' => l.kindInvokeHint,
+                  'delay' => l.kindDelayHint,
+                  'wait' => l.kindWaitHint,
+                  'if' => l.kindIfHint,
+                  'repeat' => l.kindRepeatHint,
+                  _ => l.kindStopHint,
+                }),
+                onTap: () {
+                  final nodes = _newNodes(core, _graph, kind);
+                  _graph.insert(from, port, nodes, parallel: parallel);
+                  Navigator.pop(context, nodes.first['id'] as String);
+                },
+              ),
+            if (_graph.targets(from, port).isNotEmpty)
+              SwitchListTile(
+                title: Text(l.addParallel),
+                value: parallel,
+                onChanged: (v) => setSheet(() => parallel = v),
+              ),
+            if (_graph.joinable(from, port).isNotEmpty) ...[
+              SectionHeader(l.joinStep),
+              for (final id in _graph.joinable(from, port))
+                ListTile(
+                  leading: Icon(kindIcon(kindOf(_graph.node(id)!))),
+                  title: Text(nodeText(context, core, _graph.node(id)!, triggers: _triggers), maxLines: 2, overflow: TextOverflow.ellipsis),
+                  onTap: () {
+                    _graph.join(from, port, id);
+                    Navigator.pop(context, '');
+                  },
+                ),
+            ],
+          ]),
+        ),
+      ),
+    );
+    if (added == null || !mounted) return;
+    _changed();
+    // A new step opens on its settings, as it is rarely right as it comes.
+    if (added.isNotEmpty) await _editNode(added);
+  }
+
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
     final theme = Theme.of(context);
     final core = widget.core;
-    VoidCallback? removing(List<Map<String, dynamic>> list, Map<String, dynamic> item, {bool keepOne = false}) =>
-        keepOne && list.length == 1 ? null : () => setState(() => list.remove(item));
+    final dry = _dry;
+    final canWait = _mode != 'single' || _graph.nodes.any((n) => const {'delay', 'wait', 'repeat'}.contains(kindOf(n)));
+    final modes = {
+      'single': (l.modeSingle, l.modeSingleHint),
+      'restart': (l.modeRestart, l.modeRestartHint),
+      'queued': (l.modeQueued, l.modeQueuedHint),
+      'parallel': (l.modeParallel, l.modeParallelHint),
+    };
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.automation == null ? l.newAutomation : l.editAutomation),
@@ -186,7 +378,7 @@ class _AutomationEditorState extends State<AutomationEditor> {
             IconButton(icon: const Icon(Icons.delete_outline), tooltip: l.deleteAutomation, onPressed: _busy ? null : _delete),
         ],
       ),
-      body: ListView(padding: const EdgeInsets.only(bottom: 24), children: [
+      body: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
           child: TextField(
@@ -196,28 +388,73 @@ class _AutomationEditorState extends State<AutomationEditor> {
             onChanged: (_) => _changed(),
           ),
         ),
-        SwitchListTile(
-          contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-          title: Text(l.automationEnabled),
-          value: _enabled,
-          onChanged: (v) {
-            _enabled = v;
-            _changed();
-          },
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 12, 8),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            // Only when it can matter: a run that waits can be triggered again meanwhile.
+            if (canWait) ...[
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  isExpanded: true,
+                  itemHeight: null,
+                  initialValue: _modes.contains(_mode) ? _mode : 'single',
+                  decoration: InputDecoration(labelText: l.modeLabel, helperText: modes[_mode]?.$2, helperMaxLines: 2),
+                  selectedItemBuilder: (context) => [for (final m in _modes) Text(modes[m]!.$1, overflow: TextOverflow.ellipsis)],
+                  items: [
+                    for (final m in _modes)
+                      DropdownMenuItem(
+                        value: m,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                            Text(modes[m]!.$1),
+                            Text(modes[m]!.$2, style: theme.textTheme.bodySmall?.copyWith(color: Hm.textDim)),
+                          ]),
+                        ),
+                      ),
+                  ],
+                  onChanged: (v) {
+                    _mode = v ?? 'single';
+                    _changed();
+                  },
+                ),
+              ),
+              const SizedBox(width: 12),
+            ] else
+              const Spacer(),
+            Padding(padding: const EdgeInsets.only(top: 14), child: Text(l.automationEnabled, style: theme.textTheme.bodyMedium)),
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Switch(
+                value: _enabled,
+                onChanged: (v) {
+                  _enabled = v;
+                  _changed();
+                },
+              ),
+            ),
+          ]),
         ),
-        SectionHeader(l.sectionWhen),
-        for (final t in _triggers)
-          _TriggerCard(key: ObjectKey(t), core: core, trigger: t, onChanged: _changed, onRemove: removing(_triggers, t, keepOne: true)),
-        _AddButton(l.addTrigger, () => setState(() => _triggers.add(_newTrigger()))),
-        SectionHeader(l.sectionIf),
-        for (final c in _conditions)
-          _ConditionCard(key: ObjectKey(c), core: core, condition: c, onChanged: _changed, onRemove: removing(_conditions, c)),
-        _AddButton(l.addCondition, () => setState(() => _conditions.add({'between': ['18:00', '23:00']}))),
-        SectionHeader(l.sectionThen),
-        for (final a in _actions)
-          _ActionCard(key: ObjectKey(a), core: core, action: a, onChanged: _changed, onRemove: removing(_actions, a, keepOne: true)),
-        _AddButton(l.addAction, () => setState(() => _actions.add(_newAction(core)))),
-        if (_dry != null) DryRunView(dry: _dry!, core: core),
+        const Divider(height: 1),
+        // A first flow: how it works, once.
+        if (_graph.nodes.length <= 1)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+            child: Text(l.flowHint, style: theme.textTheme.bodyMedium?.copyWith(color: Hm.textDim)),
+          ),
+        Expanded(
+          child: FlowCanvas(
+            graph: _graph,
+            root: rootText(context, core, _triggers, _conditions),
+            summary: (n) => nodeText(context, core, n, triggers: _triggers),
+            icon: (n) => kindIcon(kindOf(n)),
+            portLabel: (p) => portLabel(context, p),
+            marks: dry == null ? null : _dryMarks(dry),
+            onRoot: _editStart,
+            onNode: _editNode,
+            onPort: _add,
+          ),
+        ),
       ]),
       bottomNavigationBar: SafeArea(
         child: Container(
@@ -239,6 +476,16 @@ class _AutomationEditorState extends State<AutomationEditor> {
       ),
     );
   }
+
+  /// Where a dry run goes: through the steps it would take, stopping at a wait that would wait.
+  Map<String, NodeMark> _dryMarks(DryRun dry) => {
+        for (final p in dry.path)
+          p.node: switch (_graph.node(p.node)) {
+            final n? when !p.ok && kindOf(n) == 'wait' => NodeMark.waiting,
+            final n? when !p.ok && kindOf(n) == 'stop' => NodeMark.failed,
+            _ => NodeMark.passed,
+          },
+      };
 }
 
 class _AddButton extends StatelessWidget {
@@ -257,9 +504,203 @@ class _AddButton extends StatelessWidget {
       );
 }
 
+/// A node's settings, by kind.
+class _NodeFields extends StatelessWidget {
+  const _NodeFields({required this.core, required this.node, required this.triggers, required this.onChanged});
+
+  final CoreClient core;
+  final Map<String, dynamic> node;
+  final List<Map<String, dynamic>> triggers;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    final n = node;
+    final fromDevice = triggers.any((t) => t.containsKey('when'));
+    switch (kindOf(n)) {
+      case 'set':
+        return _SetFields(core: core, set: _sub(n, 'set'), onChanged: onChanged, fromTrigger: fromDevice);
+      case 'invoke':
+        return _InvokeFields(core: core, invoke: _sub(n, 'invoke'), onChanged: onChanged);
+      case 'delay':
+        return _Duration(value: n['delay'] as String, onChanged: (v) { n['delay'] = v; onChanged(); });
+      case 'wait':
+        final wait = _sub(n, 'wait');
+        final event = wait.containsKey('trigger');
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          SegmentedButton<bool>(
+            showSelectedIcon: false,
+            segments: [ButtonSegment(value: false, label: Text(l.waitConditions)), ButtonSegment(value: true, label: Text(l.waitEvent))],
+            selected: {event},
+            onSelectionChanged: (s) {
+              wait.remove('until');
+              wait.remove('trigger');
+              s.first ? wait['trigger'] = {'when': _newTest(core, trigger: true)} : wait['until'] = [_newCondition(core)];
+              onChanged();
+            },
+          ),
+          const SizedBox(height: 8),
+          if (event)
+            _TriggerCard(core: core, trigger: _sub(wait, 'trigger'), onChanged: onChanged, onRemove: null, inset: false)
+          else
+            _Conditions(core: core, list: _list(wait, 'until'), triggers: triggers, onChanged: onChanged),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(l.limitWait),
+            value: wait['timeout'] is String,
+            onChanged: (on) {
+              on ? wait['timeout'] = '30m' : wait.remove('timeout');
+              onChanged();
+            },
+          ),
+          if (wait['timeout'] case final String timeout) _Duration(value: timeout, onChanged: (v) { wait['timeout'] = v; onChanged(); }),
+        ]);
+      case 'if':
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          _Conditions(core: core, list: _list(n, 'if'), triggers: triggers, onChanged: onChanged),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(l.anyCondition),
+            value: n['any'] == true,
+            onChanged: (v) {
+              v ? n['any'] = true : n.remove('any');
+              onChanged();
+            },
+          ),
+        ]);
+      case 'repeat':
+        final repeat = _sub(n, 'repeat');
+        final kind = const ['while', 'until', 'for_each'].firstWhere(repeat.containsKey, orElse: () => 'count');
+        final each = {'select': repeat['for_each'] ?? '', 'cap': parseRoomSelector(repeat['for_each'] as String? ?? '')?.$2 ?? 'on_off'};
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          SegmentedButton<String>(
+            showSelectedIcon: false,
+            segments: [
+              ButtonSegment(value: 'count', label: Text(l.repeatTimes)),
+              ButtonSegment(value: 'while', label: Text(l.repeatWhileKind)),
+              ButtonSegment(value: 'until', label: Text(l.repeatUntilKind)),
+              ButtonSegment(value: 'for_each', label: Text(l.repeatEachKind)),
+            ],
+            selected: {kind},
+            onSelectionChanged: (s) {
+              repeat.clear();
+              repeat.addAll(switch (s.first) {
+                'while' || 'until' => {s.first: [_newCondition(core)]},
+                'for_each' => {'for_each': (_newAction(core)['set'] as Map)['select']},
+                _ => {'count': 3},
+              });
+              onChanged();
+            },
+          ),
+          const SizedBox(height: 12),
+          switch (kind) {
+            'while' || 'until' => _Conditions(core: core, list: _list(repeat, kind), triggers: triggers, onChanged: onChanged),
+            'for_each' => _Target(
+                core: core,
+                target: each,
+                caps: core.entities.values.expand((e) => e.caps.keys).toSet().toList(),
+                onChanged: (_) { repeat['for_each'] = each['select']; onChanged(); },
+              ),
+            _ => _Value(
+                cap: 'count',
+                meta: const {'min': 1, 'max': 20},
+                value: repeat['count'] as int? ?? 3,
+                number: true,
+                onChanged: (v) { repeat['count'] = (v as num).round(); onChanged(); },
+              ),
+          },
+        ]);
+      case 'merge':
+        return SegmentedButton<String>(
+          showSelectedIcon: false,
+          segments: [ButtonSegment(value: 'all', label: Text(l.mergeAll)), ButtonSegment(value: 'any', label: Text(l.mergeAny))],
+          selected: {n['merge'] as String? ?? 'all'},
+          onSelectionChanged: (s) { n['merge'] = s.first; onChanged(); },
+        );
+      default:
+        final stop = _sub(n, 'stop');
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(l.stopFails),
+            value: stop['error'] is String,
+            onChanged: (v) {
+              v ? stop['error'] = l.runFailed : stop.remove('error');
+              onChanged();
+            },
+          ),
+          if (stop['error'] case final String error)
+            _TextValue(label: l.stopWhy, value: error, onChanged: (v) { stop['error'] = v; onChanged(); }),
+        ]);
+    }
+  }
+}
+
+/// A list of conditions, all to pass; at least one.
+class _Conditions extends StatelessWidget {
+  const _Conditions({required this.core, required this.list, required this.triggers, required this.onChanged});
+
+  final CoreClient core;
+  final List<Map<String, dynamic>> list;
+  final List<Map<String, dynamic>> triggers;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        for (final c in list)
+          _ConditionCard(
+            key: ObjectKey(c),
+            core: core,
+            condition: c,
+            triggers: triggers,
+            inset: false,
+            onChanged: onChanged,
+            onRemove: list.length == 1 ? null : () { list.remove(c); onChanged(); },
+          ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () { list.add(_newCondition(core)); onChanged(); },
+            icon: const Icon(Icons.add),
+            label: Text(AppLocalizations.of(context).addCondition),
+          ),
+        ),
+      ]);
+}
+
+/// A duration as the core writes it (`10m`, `1h30m`), with the usual ones a tap away.
+class _Duration extends StatelessWidget {
+  const _Duration({required this.value, required this.onChanged});
+
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Wrap(spacing: 6, runSpacing: 6, children: [
+        for (final d in const ['30s', '1m', '5m', '15m', '30m', '1h', '2h'])
+          ChoiceChip(label: Text(durationText(d)), selected: value == d, onSelected: (_) => onChanged(d)),
+      ]),
+      const SizedBox(height: 10),
+      _TextValue(
+        label: '${l.durationLabel} · ${durationText(value)}',
+        value: value,
+        // Kept only once it reads; the core would refuse it anyway.
+        onChanged: (v) {
+          if (durationSeconds(v.trim()) != null) onChanged(v.trim());
+        },
+        error: durationSeconds(value) == null ? l.durationInvalid : null,
+      ),
+    ]);
+  }
+}
+
 /// A trigger, condition or action: its kind, its fields, and a way out.
 class _Card extends StatelessWidget {
-  const _Card({required this.kinds, required this.kind, required this.onKind, required this.onRemove, required this.children});
+  const _Card({required this.kinds, required this.kind, required this.onKind, required this.onRemove, required this.children, this.inset = true});
 
   final List<(String, String)> kinds;
   final String kind;
@@ -267,9 +708,12 @@ class _Card extends StatelessWidget {
   final VoidCallback? onRemove;
   final List<Widget> children;
 
+  /// Its own side margins; none inside a node's settings, which have theirs.
+  final bool inset;
+
   @override
   Widget build(BuildContext context) => Container(
-        margin: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+        margin: EdgeInsets.fromLTRB(inset ? 20 : 0, 4, inset ? 20 : 0, 8),
         padding: const EdgeInsets.fromLTRB(12, 12, 4, 12),
         decoration: BoxDecoration(border: Border.all(color: Hm.line), borderRadius: BorderRadius.circular(Hm.radius)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -293,12 +737,13 @@ class _Card extends StatelessWidget {
 }
 
 class _TriggerCard extends StatelessWidget {
-  const _TriggerCard({super.key, required this.core, required this.trigger, required this.onChanged, required this.onRemove});
+  const _TriggerCard({super.key, required this.core, required this.trigger, required this.onChanged, required this.onRemove, this.inset = true});
 
   final CoreClient core;
   final Map<String, dynamic> trigger;
   final VoidCallback onChanged;
   final VoidCallback? onRemove;
+  final bool inset;
 
   @override
   Widget build(BuildContext context) {
@@ -309,9 +754,12 @@ class _TriggerCard extends StatelessWidget {
       kinds: [('moment', l.kindMoment), ('device', l.kindDevice)],
       kind: device ? 'device' : 'moment',
       onRemove: onRemove,
+      inset: inset,
       onKind: (kind) {
+        // Its id stays: a `trigger` condition may name it.
+        final id = t['id'];
         t.clear();
-        t.addAll(kind == 'device' ? {'when': _newTest(core, trigger: true)} : _newTrigger());
+        t.addAll({'id': ?id, ...kind == 'device' ? {'when': _newTest(core, trigger: true)} : _newTrigger()});
         onChanged();
       },
       children: device
@@ -331,32 +779,70 @@ class _TriggerCard extends StatelessWidget {
 }
 
 class _ConditionCard extends StatelessWidget {
-  const _ConditionCard({super.key, required this.core, required this.condition, required this.onChanged, required this.onRemove});
+  const _ConditionCard({
+    super.key,
+    required this.core,
+    required this.condition,
+    required this.triggers,
+    required this.onChanged,
+    required this.onRemove,
+    this.inset = true,
+  });
 
   final CoreClient core;
   final Map<String, dynamic> condition;
+
+  /// The automation's: with several, a condition can say which one started the run.
+  final List<Map<String, dynamic>> triggers;
   final VoidCallback onChanged;
   final VoidCallback? onRemove;
+  final bool inset;
 
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
     final c = condition;
-    final kind = c.containsKey('state') ? 'state' : c.containsKey('days') ? 'days' : 'between';
+    final kind = const ['state', 'days', 'trigger'].firstWhere(c.containsKey, orElse: () => 'between');
     return _Card(
-      kinds: [('between', l.kindTimeRange), ('days', l.kindDays), ('state', l.kindState)],
+      kinds: [
+        ('between', l.kindTimeRange),
+        ('days', l.kindDays),
+        ('state', l.kindState),
+        if (triggers.length > 1 || kind == 'trigger') ('trigger', l.kindTrigger),
+      ],
       kind: kind,
       onRemove: onRemove,
+      inset: inset,
       onKind: (kind) {
         c.clear();
+        if (kind == 'trigger') {
+          // Named to be told apart: t1, t2...
+          for (final (i, t) in triggers.indexed) {
+            t['id'] ??= 't${i + 1}';
+          }
+        }
         c.addAll(switch (kind) {
           'days' => {'days': [...allDays.take(5)]},
           'state' => {'state': _newTest(core, trigger: false)},
+          'trigger' => {'trigger': triggers.first['id']},
           _ => {'between': ['18:00', '23:00']},
         });
         onChanged();
       },
       children: switch (kind) {
+        'trigger' => [
+            DropdownButtonFormField<String>(
+              isExpanded: true,
+              initialValue: triggers.any((t) => t['id'] == c['trigger']) ? c['trigger'] as String : null,
+              decoration: InputDecoration(labelText: l.kindTrigger),
+              items: [
+                for (final t in triggers)
+                  if (t['id'] case final String id)
+                    DropdownMenuItem(value: id, child: Text(triggerText(context, core, t), maxLines: 2, overflow: TextOverflow.ellipsis)),
+              ],
+              onChanged: (id) { c['trigger'] = id; onChanged(); },
+            ),
+          ],
         'days' => [
             _DayChips(days: (c['days'] as List).cast<String>(), onChanged: (days) {
               c['days'] = days;
@@ -375,35 +861,6 @@ class _ConditionCard extends StatelessWidget {
               ),
           ],
       },
-    );
-  }
-}
-
-class _ActionCard extends StatelessWidget {
-  const _ActionCard({super.key, required this.core, required this.action, required this.onChanged, required this.onRemove});
-
-  final CoreClient core;
-  final Map<String, dynamic> action;
-  final VoidCallback onChanged;
-  final VoidCallback? onRemove;
-
-  @override
-  Widget build(BuildContext context) {
-    final l = AppLocalizations.of(context);
-    final a = action;
-    final invoke = a.containsKey('invoke');
-    return _Card(
-      kinds: [('set', l.kindSet), ('invoke', l.kindInvoke)],
-      kind: invoke ? 'invoke' : 'set',
-      onRemove: onRemove,
-      onKind: (kind) {
-        a.clear();
-        a.addAll(kind == 'invoke' ? {'invoke': _newInvoke(core)} : _newAction(core));
-        onChanged();
-      },
-      children: invoke
-          ? [_InvokeFields(core: core, invoke: _sub(a, 'invoke'), onChanged: onChanged)]
-          : [_SetFields(core: core, set: _sub(a, 'set'), onChanged: onChanged)],
     );
   }
 }
@@ -672,12 +1129,13 @@ class _Value extends StatelessWidget {
 }
 
 class _TextValue extends StatefulWidget {
-  const _TextValue({super.key, required this.label, required this.value, required this.onChanged, this.number = false});
+  const _TextValue({super.key, required this.label, required this.value, required this.onChanged, this.number = false, this.error});
 
   final String label;
   final String value;
   final ValueChanged<String> onChanged;
   final bool number;
+  final String? error;
 
   @override
   State<_TextValue> createState() => _TextValueState();
@@ -685,6 +1143,13 @@ class _TextValue extends StatefulWidget {
 
 class _TextValueState extends State<_TextValue> {
   late final _text = TextEditingController(text: widget.value);
+
+  @override
+  void didUpdateWidget(_TextValue old) {
+    super.didUpdateWidget(old);
+    // Changed from elsewhere (a chip): shown; what is being typed is left alone.
+    if (widget.value != old.value && widget.value != _text.text) _text.text = widget.value;
+  }
 
   @override
   void dispose() {
@@ -695,7 +1160,7 @@ class _TextValueState extends State<_TextValue> {
   @override
   Widget build(BuildContext context) => TextField(
         controller: _text,
-        decoration: InputDecoration(labelText: widget.label),
+        decoration: InputDecoration(labelText: widget.label, errorText: widget.error),
         keyboardType: widget.number ? const TextInputType.numberWithOptions(decimal: true, signed: true) : TextInputType.text,
         onChanged: widget.onChanged,
       );
@@ -791,33 +1256,55 @@ class _TestFields extends StatelessWidget {
 }
 
 class _SetFields extends StatelessWidget {
-  const _SetFields({required this.core, required this.set, required this.onChanged});
+  const _SetFields({required this.core, required this.set, required this.onChanged, this.fromTrigger = false});
 
   final CoreClient core;
   final Map<String, dynamic> set;
   final VoidCallback onChanged;
 
+  /// A device starts it: the value can be the one it took.
+  final bool fromTrigger;
+
   @override
   Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
     final cap = set['cap'] as String;
     final meta = _meta(core, cap);
     final caps = core.entities.values.expand((e) => e.caps.keys.where((c) => _writable(e, c))).toSet().toList();
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       _Target(core: core, target: set, caps: caps, onChanged: (capChanged) {
-        if (capChanged) set['value'] = _defaultValue(set['cap'] as String, _meta(core, set['cap'] as String));
+        if (capChanged && set['from'] == null) set['value'] = _defaultValue(set['cap'] as String, _meta(core, set['cap'] as String));
         onChanged();
       }),
-      const SizedBox(height: 12),
-      _Value(
-        key: ValueKey(cap),
-        cap: cap,
-        meta: meta,
-        value: set['value'],
-        onChanged: (v) {
-          set['value'] = v;
-          onChanged();
-        },
-      ),
+      if (fromTrigger || set['from'] != null)
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(l.fromTrigger),
+          value: set['from'] == 'trigger',
+          onChanged: (on) {
+            if (on) {
+              set.remove('value');
+              set['from'] = 'trigger';
+            } else {
+              set.remove('from');
+              set['value'] = _defaultValue(cap, meta);
+            }
+            onChanged();
+          },
+        ),
+      if (set['from'] == null) ...[
+        const SizedBox(height: 12),
+        _Value(
+          key: ValueKey(cap),
+          cap: cap,
+          meta: meta,
+          value: set['value'],
+          onChanged: (v) {
+            set['value'] = v;
+            onChanged();
+          },
+        ),
+      ],
     ]);
   }
 }

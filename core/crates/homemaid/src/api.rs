@@ -4,7 +4,8 @@
 //! `entity.update { id, name?, room?, tags?, model? }` (saved to the config file), `rooms.list`,
 //! `room.update { name, kind }` (saved too; empty kind clears it), `entity.invoke { id, action,
 //! params? }` (a one-shot action), `automations.list`, `automation.dry_run { id }` or
-//! `{ automation }` (one not saved yet), `automation.run { id }`, `automation.save { automation }`
+//! `{ automation }` (one not saved yet), `automation.run { id }` (answers when it ends, or after
+//! 10 s with `running`), `automation.stop { id }` (its runs not over), `automation.save { automation }`
 //! (created or replaced by id, saved to the config file, in force at once), `automation.delete
 //! { id }`, `subscribe` (then `state.changed { id, cap, slot }`, `entity.changed { entity }`,
 //! `room.changed { name, kind }`, `automation.ran { id, run }` and `automations.changed`
@@ -309,6 +310,10 @@ async fn handle(app: &AppState, req: Request) -> Value {
                 let automations = app.core.automations();
                 automations.run(&app.core, &p.id, "manual".into(), &jiff::Zoned::now()).await.map(|r| json!(r)).map_err(|e| (-32000, e))
             }
+        },
+        "automation.stop" => match serde_json::from_value::<AutomationId>(req.params) {
+            Err(e) => Err((-32602, e.to_string())),
+            Ok(p) => app.core.automations().stop(&app.core, &p.id).map(|n| json!(n)).map_err(|e| (-32000, e)),
         },
         "automation.save" => match serde_json::from_value::<SaveAutomation>(req.params) {
             Err(e) => Err((-32602, e.to_string())),

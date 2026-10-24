@@ -4,6 +4,7 @@ import 'package:homemaid/demo.dart';
 import 'package:homemaid/l10n/app_localizations.dart';
 import 'package:homemaid/model.dart';
 import 'package:homemaid/screens/automations.dart';
+import 'package:homemaid/widgets/flow_canvas.dart';
 
 /// `automations.list` as the core sends it (crates/homemaid/src/automations.rs).
 const listed = {
@@ -144,5 +145,31 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('Would run now'), findsOneWidget);
     expect(find.text('DEMO-PC · to do'), findsOneWidget);
+  });
+
+  testWidgets('steps read as sentences, runs bring their path', (tester) async {
+    final core = DemoCore();
+    final c = await localized(tester, 'en');
+    final triggers = [{'id': 'dusk', 'at': 'sunset'}];
+    String text(Map<String, dynamic> node) => nodeText(c, core, node, triggers: triggers);
+    expect(text({'id': 'd', 'delay': '1h30m'}), 'Wait 1 h 30 min');
+    expect(
+      text({'id': 'w', 'wait': {'until': [{'days': ['sat', 'sun']}], 'timeout': '2h'}}),
+      'Wait until: Weekends (2 h at most)',
+    );
+    expect(text({'id': 'i', 'if': [{'trigger': 'dusk'}, {'days': ['mon']}], 'any': true}), 'Started by: Every day at sunset or Mon');
+    expect(text({'id': 'r', 'repeat': {'count': 3}, 'body': ['d']}), '3 times');
+    expect(text({'id': 'e', 'repeat': {'for_each': 'cap:on_off'}, 'body': ['d']}), 'For each: Whole home');
+    expect(text({'id': 's', 'set': {'select': 'item', 'cap': 'brightness', 'from': 'trigger'}}), 'Set this device · Brightness to its new value');
+    expect(text({'id': 'm', 'merge': 'any'}), 'As soon as one branch arrives');
+    expect(text({'id': 'x', 'stop': {'error': 'no PC'}}), 'Fail: no PC');
+
+    final run = Run.fromJson({
+      'at': '2026-10-18T19:30:00+02:00', 'trigger': 'manual', 'skipped': null, 'error': null, 'stopped': 'by hand',
+      'results': [], 'steps': [{'node': 'on', 'at': '2026-10-18T19:30:01+02:00', 'ok': true, 'outcome': 'Lampe: pending'}],
+    });
+    expect(run.failed, isFalse, reason: 'stopped is not failed');
+    expect(runMarks(run.steps, ['wait']), {'on': NodeMark.passed, 'wait': NodeMark.waiting});
+    expect(Run.fromJson({'at': '', 'trigger': '', 'error': 'too many steps', 'results': []}).failed, isTrue);
   });
 }

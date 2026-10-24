@@ -87,8 +87,9 @@ never a wish), **pink** is a command still waiting for the device, **red** is a 
   [HomeMaid-plugins](https://github.com/ErwanHeschung/HomeMaid-plugins) offers, shows the
   permissions a plugin asks in plain words and the settings it needs, then the hub downloads it.
   Every `.wasm` must match its checksum and be signed by its author's key, pinned at install.
-- **Automations**: time and state triggers, conditions, actions on selectors, dry run, the last 20
-  runs, a loop guard.
+- **Automations**: time and state triggers, conditions, then a workflow drawn in the app (n8n-like):
+  set, invoke, delay, wait (with a timeout), if/else, repeat, parallel branches and merges, stop,
+  run modes. Dry run, the path of each run, a loop guard.
 - **PC agent**: mouse, keyboard, media keys, volume (Core Audio), power, streaming services
   ([Simple Icons](https://simpleicons.org) logos). Windows first.
 - **PC client**: on Windows, double-click `homemaid.exe` and it runs the hub and the agent, with

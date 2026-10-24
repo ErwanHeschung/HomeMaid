@@ -17,6 +17,8 @@ mdns-sd = "0.21.5"
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 tokio = { version = "1.53.3", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time"] }
+# Runs the branches of an automation side by side; axum already pulls it in.
+futures-util = "0.3.34"
 toml = "1.1.8"
 toml_edit = "0.25.17"
 tracing = "0.1.44"
@@ -65,7 +67,8 @@ windows = { version = "0.62.2", features = [
 ] }
 
 [dev-dependencies]
+# Paused time, for the automations' delays and waits.
+tokio = { version = "1.53.3", features = ["test-util"] }
 # WebSocket client for tests/agent.rs; same versions axum already pulls in.
-futures-util = "0.3.34"
 tokio-tungstenite = "0.29.0"
 minisign = "0.10.0"

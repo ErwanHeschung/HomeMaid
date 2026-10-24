@@ -1747,6 +1747,528 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Retry'**
   String get retry;
+
+  /// No description provided for @kindDelay.
+  ///
+  /// In en, this message translates to:
+  /// **'Pause'**
+  String get kindDelay;
+
+  /// No description provided for @kindWait.
+  ///
+  /// In en, this message translates to:
+  /// **'Wait until'**
+  String get kindWait;
+
+  /// No description provided for @kindIf.
+  ///
+  /// In en, this message translates to:
+  /// **'If'**
+  String get kindIf;
+
+  /// No description provided for @kindRepeat.
+  ///
+  /// In en, this message translates to:
+  /// **'Repeat'**
+  String get kindRepeat;
+
+  /// No description provided for @kindMerge.
+  ///
+  /// In en, this message translates to:
+  /// **'Join'**
+  String get kindMerge;
+
+  /// No description provided for @kindStop.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop'**
+  String get kindStop;
+
+  /// No description provided for @kindTrigger.
+  ///
+  /// In en, this message translates to:
+  /// **'Trigger'**
+  String get kindTrigger;
+
+  /// No description provided for @portNext.
+  ///
+  /// In en, this message translates to:
+  /// **'next'**
+  String get portNext;
+
+  /// No description provided for @portError.
+  ///
+  /// In en, this message translates to:
+  /// **'if it fails'**
+  String get portError;
+
+  /// No description provided for @portTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'if too long'**
+  String get portTimeout;
+
+  /// No description provided for @portThen.
+  ///
+  /// In en, this message translates to:
+  /// **'yes'**
+  String get portThen;
+
+  /// No description provided for @portElse.
+  ///
+  /// In en, this message translates to:
+  /// **'no'**
+  String get portElse;
+
+  /// No description provided for @portBody.
+  ///
+  /// In en, this message translates to:
+  /// **'each turn'**
+  String get portBody;
+
+  /// No description provided for @flowStart.
+  ///
+  /// In en, this message translates to:
+  /// **'Start'**
+  String get flowStart;
+
+  /// No description provided for @nodeDelay.
+  ///
+  /// In en, this message translates to:
+  /// **'Wait {duration}'**
+  String nodeDelay(String duration);
+
+  /// No description provided for @nodeWaitUntil.
+  ///
+  /// In en, this message translates to:
+  /// **'Wait until: {condition}'**
+  String nodeWaitUntil(String condition);
+
+  /// No description provided for @nodeWaitFor.
+  ///
+  /// In en, this message translates to:
+  /// **'Wait for: {trigger}'**
+  String nodeWaitFor(String trigger);
+
+  /// No description provided for @nodeAtMost.
+  ///
+  /// In en, this message translates to:
+  /// **'{text} ({duration} at most)'**
+  String nodeAtMost(String text, String duration);
+
+  /// No description provided for @conditionsAnd.
+  ///
+  /// In en, this message translates to:
+  /// **'{a} and {b}'**
+  String conditionsAnd(String a, String b);
+
+  /// No description provided for @conditionsOr.
+  ///
+  /// In en, this message translates to:
+  /// **'{a} or {b}'**
+  String conditionsOr(String a, String b);
+
+  /// No description provided for @repeatCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Once} other{{count} times}}'**
+  String repeatCount(int count);
+
+  /// No description provided for @repeatWhile.
+  ///
+  /// In en, this message translates to:
+  /// **'While: {condition}'**
+  String repeatWhile(String condition);
+
+  /// No description provided for @repeatUntil.
+  ///
+  /// In en, this message translates to:
+  /// **'Until: {condition}'**
+  String repeatUntil(String condition);
+
+  /// No description provided for @repeatEach.
+  ///
+  /// In en, this message translates to:
+  /// **'For each: {target}'**
+  String repeatEach(String target);
+
+  /// No description provided for @mergeAll.
+  ///
+  /// In en, this message translates to:
+  /// **'When every branch is done'**
+  String get mergeAll;
+
+  /// No description provided for @mergeAny.
+  ///
+  /// In en, this message translates to:
+  /// **'As soon as one branch arrives'**
+  String get mergeAny;
+
+  /// No description provided for @stopOk.
+  ///
+  /// In en, this message translates to:
+  /// **'End here'**
+  String get stopOk;
+
+  /// No description provided for @stopError.
+  ///
+  /// In en, this message translates to:
+  /// **'Fail: {error}'**
+  String stopError(String error);
+
+  /// No description provided for @targetTrigger.
+  ///
+  /// In en, this message translates to:
+  /// **'the device that started it'**
+  String get targetTrigger;
+
+  /// No description provided for @targetItem.
+  ///
+  /// In en, this message translates to:
+  /// **'this device'**
+  String get targetItem;
+
+  /// No description provided for @valueFromTrigger.
+  ///
+  /// In en, this message translates to:
+  /// **'its new value'**
+  String get valueFromTrigger;
+
+  /// No description provided for @ifTrigger.
+  ///
+  /// In en, this message translates to:
+  /// **'Started by: {trigger}'**
+  String ifTrigger(String trigger);
+
+  /// No description provided for @modeLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'If triggered again while waiting'**
+  String get modeLabel;
+
+  /// No description provided for @modeSingle.
+  ///
+  /// In en, this message translates to:
+  /// **'Let the current run finish'**
+  String get modeSingle;
+
+  /// No description provided for @modeRestart.
+  ///
+  /// In en, this message translates to:
+  /// **'Start over'**
+  String get modeRestart;
+
+  /// No description provided for @modeQueued.
+  ///
+  /// In en, this message translates to:
+  /// **'Run again afterwards'**
+  String get modeQueued;
+
+  /// No description provided for @modeParallel.
+  ///
+  /// In en, this message translates to:
+  /// **'Run both at once'**
+  String get modeParallel;
+
+  /// No description provided for @addStep.
+  ///
+  /// In en, this message translates to:
+  /// **'Add a step'**
+  String get addStep;
+
+  /// No description provided for @addParallel.
+  ///
+  /// In en, this message translates to:
+  /// **'At the same time as what follows'**
+  String get addParallel;
+
+  /// No description provided for @joinStep.
+  ///
+  /// In en, this message translates to:
+  /// **'Or continue to an existing step'**
+  String get joinStep;
+
+  /// No description provided for @removeStep.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove this step'**
+  String get removeStep;
+
+  /// No description provided for @stepCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 step} other{{count} steps}}'**
+  String stepCount(int count);
+
+  /// No description provided for @durationLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Duration'**
+  String get durationLabel;
+
+  /// No description provided for @durationInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'A duration such as 45s, 10m or 1h30m'**
+  String get durationInvalid;
+
+  /// No description provided for @waitConditions.
+  ///
+  /// In en, this message translates to:
+  /// **'Conditions'**
+  String get waitConditions;
+
+  /// No description provided for @waitEvent.
+  ///
+  /// In en, this message translates to:
+  /// **'Event'**
+  String get waitEvent;
+
+  /// No description provided for @limitWait.
+  ///
+  /// In en, this message translates to:
+  /// **'Limit the wait'**
+  String get limitWait;
+
+  /// No description provided for @anyCondition.
+  ///
+  /// In en, this message translates to:
+  /// **'One condition is enough'**
+  String get anyCondition;
+
+  /// No description provided for @repeatTimes.
+  ///
+  /// In en, this message translates to:
+  /// **'Times'**
+  String get repeatTimes;
+
+  /// No description provided for @repeatWhileKind.
+  ///
+  /// In en, this message translates to:
+  /// **'While'**
+  String get repeatWhileKind;
+
+  /// No description provided for @repeatUntilKind.
+  ///
+  /// In en, this message translates to:
+  /// **'Until'**
+  String get repeatUntilKind;
+
+  /// No description provided for @repeatEachKind.
+  ///
+  /// In en, this message translates to:
+  /// **'Each device'**
+  String get repeatEachKind;
+
+  /// No description provided for @stopFails.
+  ///
+  /// In en, this message translates to:
+  /// **'End as a failure'**
+  String get stopFails;
+
+  /// No description provided for @stopWhy.
+  ///
+  /// In en, this message translates to:
+  /// **'Why'**
+  String get stopWhy;
+
+  /// No description provided for @fromTrigger.
+  ///
+  /// In en, this message translates to:
+  /// **'The value that started it'**
+  String get fromTrigger;
+
+  /// No description provided for @showFlow.
+  ///
+  /// In en, this message translates to:
+  /// **'See the flow'**
+  String get showFlow;
+
+  /// No description provided for @runningSince.
+  ///
+  /// In en, this message translates to:
+  /// **'Running since {when}'**
+  String runningSince(String when);
+
+  /// No description provided for @waitingAt.
+  ///
+  /// In en, this message translates to:
+  /// **'At: {steps}'**
+  String waitingAt(String steps);
+
+  /// No description provided for @stopRuns.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop'**
+  String get stopRuns;
+
+  /// No description provided for @runStopped.
+  ///
+  /// In en, this message translates to:
+  /// **'Stopped'**
+  String get runStopped;
+
+  /// No description provided for @stoppedByHand.
+  ///
+  /// In en, this message translates to:
+  /// **'by hand'**
+  String get stoppedByHand;
+
+  /// No description provided for @stoppedRestarted.
+  ///
+  /// In en, this message translates to:
+  /// **'started again'**
+  String get stoppedRestarted;
+
+  /// No description provided for @stoppedEdited.
+  ///
+  /// In en, this message translates to:
+  /// **'the automation was edited'**
+  String get stoppedEdited;
+
+  /// No description provided for @runOf.
+  ///
+  /// In en, this message translates to:
+  /// **'Run of {when}'**
+  String runOf(String when);
+
+  /// No description provided for @runInProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'Run in progress'**
+  String get runInProgress;
+
+  /// No description provided for @notReached.
+  ///
+  /// In en, this message translates to:
+  /// **'Not reached'**
+  String get notReached;
+
+  /// No description provided for @stateIs.
+  ///
+  /// In en, this message translates to:
+  /// **'{target} · {cap} is {value}'**
+  String stateIs(String target, String cap, String value);
+
+  /// No description provided for @stateAbove.
+  ///
+  /// In en, this message translates to:
+  /// **'{target} · {cap} is above {value}'**
+  String stateAbove(String target, String cap, String value);
+
+  /// No description provided for @stateBelow.
+  ///
+  /// In en, this message translates to:
+  /// **'{target} · {cap} is below {value}'**
+  String stateBelow(String target, String cap, String value);
+
+  /// No description provided for @modeSingleHint.
+  ///
+  /// In en, this message translates to:
+  /// **'The new trigger is ignored.'**
+  String get modeSingleHint;
+
+  /// No description provided for @modeRestartHint.
+  ///
+  /// In en, this message translates to:
+  /// **'The wait starts again: a light that stays on while someone moves.'**
+  String get modeRestartHint;
+
+  /// No description provided for @modeQueuedHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Every trigger runs, one after the other: a doorbell.'**
+  String get modeQueuedHint;
+
+  /// No description provided for @modeParallelHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Each trigger runs on its own, side by side.'**
+  String get modeParallelHint;
+
+  /// No description provided for @addThen.
+  ///
+  /// In en, this message translates to:
+  /// **'Then…'**
+  String get addThen;
+
+  /// No description provided for @addOnError.
+  ///
+  /// In en, this message translates to:
+  /// **'If it fails…'**
+  String get addOnError;
+
+  /// No description provided for @addOnTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'If the wait is too long…'**
+  String get addOnTimeout;
+
+  /// No description provided for @addEachTurn.
+  ///
+  /// In en, this message translates to:
+  /// **'Each turn…'**
+  String get addEachTurn;
+
+  /// No description provided for @addIfYes.
+  ///
+  /// In en, this message translates to:
+  /// **'If yes…'**
+  String get addIfYes;
+
+  /// No description provided for @addIfNo.
+  ///
+  /// In en, this message translates to:
+  /// **'Otherwise…'**
+  String get addIfNo;
+
+  /// No description provided for @kindSetHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn on, off or adjust a device'**
+  String get kindSetHint;
+
+  /// No description provided for @kindInvokeHint.
+  ///
+  /// In en, this message translates to:
+  /// **'A one-off action: pause, lock, open an app'**
+  String get kindInvokeHint;
+
+  /// No description provided for @kindDelayHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Pause for a set time'**
+  String get kindDelayHint;
+
+  /// No description provided for @kindWaitHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Until a device changes or a condition is true'**
+  String get kindWaitHint;
+
+  /// No description provided for @kindIfHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Do one thing or another, depending on the home'**
+  String get kindIfHint;
+
+  /// No description provided for @kindRepeatHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Do steps again: a number of times, or for each device'**
+  String get kindRepeatHint;
+
+  /// No description provided for @kindStopHint.
+  ///
+  /// In en, this message translates to:
+  /// **'End the automation here'**
+  String get kindStopHint;
+
+  /// No description provided for @flowHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap a card to change it, + to add a step.'**
+  String get flowHint;
 }
 
 class _AppLocalizationsDelegate

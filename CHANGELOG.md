@@ -8,9 +8,14 @@ What changes for people using HomeMaid, version by version. The format follows [
 
 - **Add a device from the app.** Home → **+**: a device of an installed plugin by its own form (a Tapo strip by its IP address and TP-Link login), a PC by its pairing code, or another one by installing its plugin first. The plugin checks it right away: a wrong password is said in the form. A second strip on the same account needs no login again.
 - **Remove a device** from its panel, with all its parts.
+- **Automations as workflows.** After its triggers and conditions, an automation is now a flow of steps drawn in the app, top to bottom, as in n8n: set a device, run an action, wait a while, wait until something happens (with a time limit), if / else, repeat (a number of times, while, until, or for each device), branches side by side joined back together, stop. Tap the **+** under a step to add the next one.
+- **Use what started it**: a step can act on the device that triggered the automation, or copy its new value; a condition can tell which trigger it was.
+- **What happens when it starts again while still running**: ignore it, start over, run it afterwards, or run both.
+- **See where a run went**: each run shows its path on the flow; a run still waiting says where, and can be stopped. *Try* lights the path it would take now.
 
 ### Changed
 
+- **Your automations keep working as they are.** Their list of actions opens as a chain of steps, and is saved as steps once edited.
 - **A power strip is one device.** The list shows it once; its outlets are sections of its panel, each with its switch and its name. Moving it to another room moves all its outlets.
 - **Installing a plugin asks for nothing but its permissions** when its devices are added one by one; its first device's form opens right away. TP-Link Tapo 0.2.0 works this way: update it from Settings → Plugins, then add your strip again from Home → +.
 
