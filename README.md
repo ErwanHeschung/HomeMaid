@@ -163,13 +163,14 @@ move to a Raspberry Pi or a mini-PC without code changes.
 2. Double-click `homemaid.exe`. Allow it on private networks when Windows asks (ports 8123 and 8124).
 3. Install the app from the **HomeMaid-android** artifact (`app-real-release.apk`), then in the app:
    *Settings → Pair*, and scan the QR codes shown in the HomeMaid window.
-4. Add your devices: *Settings → Plugins*, pick a plugin under *Available* (TP-Link Tapo…), check
-   what it may do, fill in its settings, *Install*. Its devices appear in the home.
+4. Add your devices: *Home → +*, *Another device*, pick its plugin under *Available* (TP-Link
+   Tapo…), check what it may do, *Install*, then fill in the device's form (a strip's IP address
+   and TP-Link login). Next ones: *Home → +* and the plugin. Each is removed from its own panel.
 
 The first start writes `homemaid.toml` next to the exe. See
 [`homemaid.example.toml`](core/homemaid.example.toml) for every option: plugins, rooms, automations,
-streaming services. Plugins installed from the app are written there too, their `.wasm` in
-`data/plugins`, their passwords in `data/secrets.toml`.
+streaming services. Plugins installed from the app are written there too, with the devices added
+to them (`[[plugin.device]]`), their `.wasm` in `data/plugins`, their passwords in `data/secrets.toml`.
 
 > [!TIP]
 > Just curious? Install `app-demo-release.apk`: it runs a synthetic home covering every device and
@@ -279,7 +280,7 @@ homemaid_plugin::export!(Lamp with_types_in homemaid_plugin::bindings);
 The [`mock`](core/plugins/mock/src/lib.rs) plugin is a complete small example, and
 [`tplink`](https://github.com/ErwanHeschung/HomeMaid-plugins/blob/main/plugins/tplink/src/lib.rs)
 a real one. Plugins get only what their manifest asks and the user grants: no files, no Internet,
-the local network at most. Plugins pin the SDK to a tag of this repo (`plugin-api-v1.2.0`); each
+the local network at most. Plugins pin the SDK to a tag of this repo (`plugin-api-v1.3.0`); each
 plugin-api change gets a new one. To publish yours, see
 [HomeMaid-plugins](https://github.com/ErwanHeschung/HomeMaid-plugins#publish-a-plugin).
 

@@ -1,4 +1,4 @@
-//! SDK for HomeMaid plugins (plugin-api 1.2).
+//! SDK for HomeMaid plugins (plugin-api 1.3).
 //!
 //! ```ignore
 //! struct MyPlugin;
@@ -10,6 +10,9 @@
 //! A plugin whose devices run schedules themselves (1.2) implements [`Actions`] and [`Schedules`]
 //! and exports with
 //! `homemaid_plugin::export_with_schedules!(MyPlugin with_types_in homemaid_plugin::bindings_schedules);`.
+//! A plugin whose devices the user adds one by one from the app (1.3) also implements [`Devices`]
+//! and exports with
+//! `homemaid_plugin::export_with_devices!(MyPlugin with_types_in homemaid_plugin::bindings_devices);`.
 //! Build with `cargo build --target wasm32-wasip2`.
 
 use std::collections::BTreeMap;
@@ -39,8 +42,8 @@ pub mod bindings_actions {
         export_macro_name: "export_with_actions",
         default_bindings_module: "homemaid_plugin::bindings_actions",
         with: {
-            "homemaid:plugin/types@1.2.0": crate::bindings::homemaid::plugin::types,
-            "homemaid:plugin/host@1.2.0": crate::bindings::homemaid::plugin::host,
+            "homemaid:plugin/types@1.3.0": crate::bindings::homemaid::plugin::types,
+            "homemaid:plugin/host@1.3.0": crate::bindings::homemaid::plugin::host,
         },
     });
 }
@@ -55,9 +58,27 @@ pub mod bindings_schedules {
         export_macro_name: "export_with_schedules",
         default_bindings_module: "homemaid_plugin::bindings_schedules",
         with: {
-            "homemaid:plugin/types@1.2.0": crate::bindings::homemaid::plugin::types,
-            "homemaid:plugin/host@1.2.0": crate::bindings::homemaid::plugin::host,
-            "homemaid:plugin/action-types@1.2.0": crate::bindings_actions::homemaid::plugin::action_types,
+            "homemaid:plugin/types@1.3.0": crate::bindings::homemaid::plugin::types,
+            "homemaid:plugin/host@1.3.0": crate::bindings::homemaid::plugin::host,
+            "homemaid:plugin/action-types@1.3.0": crate::bindings_actions::homemaid::plugin::action_types,
+        },
+    });
+}
+
+/// The 1.3 world (1.2 + devices added by the user), sharing the same host and types.
+#[doc(hidden)]
+pub mod bindings_devices {
+    wit_bindgen::generate!({
+        path: "wit",
+        world: "plugin-with-devices",
+        pub_export_macro: true,
+        export_macro_name: "export_with_devices",
+        default_bindings_module: "homemaid_plugin::bindings_devices",
+        with: {
+            "homemaid:plugin/types@1.3.0": crate::bindings::homemaid::plugin::types,
+            "homemaid:plugin/host@1.3.0": crate::bindings::homemaid::plugin::host,
+            "homemaid:plugin/action-types@1.3.0": crate::bindings_actions::homemaid::plugin::action_types,
+            "homemaid:plugin/schedule-types@1.3.0": crate::bindings_schedules::homemaid::plugin::schedule_types,
         },
     });
 }
@@ -65,12 +86,13 @@ pub mod bindings_schedules {
 pub use bindings::export;
 pub use bindings_actions::export_with_actions;
 pub use bindings_schedules::export_with_schedules;
+pub use bindings_devices::export_with_devices;
 use bindings::{Guest, homemaid::plugin::types};
 pub use bindings::homemaid::plugin::host::{kv_get, kv_set, log, secret, set_available};
 pub use bindings::homemaid::plugin::types::LogLevel;
 
 /// Version of the WIT contract this SDK implements.
-pub const API_VERSION: &str = "1.2.0";
+pub const API_VERSION: &str = "1.3.0";
 
 /// Permission to open sockets to the local network (the core refuses public addresses).
 pub const LOCAL_NETWORK: &str = "local-network";
@@ -143,6 +165,31 @@ pub trait Schedules: Actions {
     fn set_schedules(local_id: &str, schedules: Vec<Schedule>) -> Result<(), String>;
 }
 
+/// Plugins whose devices the user adds one at a time from the app (plugin-api 1.3), each with
+/// the settings the plugin's `device_settings` declare in the registry.
+pub trait Devices: Schedules {
+    /// Starts driving a device and returns its entities. Called after `init` and before
+    /// `discover` for each saved device, and when the user adds one (an `Err` is shown in the
+    /// form then). At start, one that does not answer may return its last known entities.
+    fn add_device(id: &str, settings: BTreeMap<String, String>) -> Result<Vec<DiscoveredEntity>, String>;
+}
+
+fn to_wit(e: DiscoveredEntity) -> types::Entity {
+    types::Entity {
+        local_id: e.local_id,
+        name: e.name,
+        device: e.device,
+        capabilities: e
+            .caps
+            .into_iter()
+            .map(|(kind, meta)| types::Capability {
+                kind: kind.to_string(),
+                meta: serde_json::to_string(&meta).expect("CapMeta always serializes"),
+            })
+            .collect(),
+    }
+}
+
 pub fn report_state(local_id: &str, kind: &CapKind, value: &CapValue) {
     let value = serde_json::to_string(value).expect("CapValue always serializes");
     bindings::homemaid::plugin::host::report_state(local_id, &kind.to_string(), &value);
@@ -159,23 +206,7 @@ impl<T: Plugin> Guest for T {
     }
 
     fn discover() -> Result<Vec<types::Entity>, String> {
-        let entities = T::discover()?
-            .into_iter()
-            .map(|e| types::Entity {
-                local_id: e.local_id,
-                name: e.name,
-                device: e.device,
-                capabilities: e
-                    .caps
-                    .into_iter()
-                    .map(|(kind, meta)| types::Capability {
-                        kind: kind.to_string(),
-                        meta: serde_json::to_string(&meta).expect("CapMeta always serializes"),
-                    })
-                    .collect(),
-            })
-            .collect();
-        Ok(entities)
+        Ok(T::discover()?.into_iter().map(to_wit).collect())
     }
 
     fn apply(local_id: String, kind: String, value: String) -> Result<(), String> {
@@ -272,5 +303,43 @@ impl<T: Schedules> bindings_schedules::Guest for T {
             })
             .collect::<Result<_, String>>()?;
         T::set_schedules(&local_id, schedules)
+    }
+}
+
+impl<T: Devices> bindings_devices::Guest for T {
+    fn manifest() -> types::Manifest {
+        <T as Guest>::manifest()
+    }
+
+    fn init(settings: Vec<(String, String)>) -> Result<(), String> {
+        <T as Guest>::init(settings)
+    }
+
+    fn discover() -> Result<Vec<types::Entity>, String> {
+        <T as Guest>::discover()
+    }
+
+    fn apply(local_id: String, kind: String, value: String) -> Result<(), String> {
+        <T as Guest>::apply(local_id, kind, value)
+    }
+
+    fn refresh() -> u32 {
+        <T as Guest>::refresh()
+    }
+
+    fn list_actions() -> Vec<bindings_actions::homemaid::plugin::action_types::Action> {
+        <T as bindings_actions::Guest>::list_actions()
+    }
+
+    fn invoke(local_id: String, name: String, params: String) -> Result<(), String> {
+        <T as bindings_actions::Guest>::invoke(local_id, name, params)
+    }
+
+    fn set_schedules(local_id: String, schedules: Vec<bindings_schedules::homemaid::plugin::schedule_types::Schedule>) -> Result<(), String> {
+        <T as bindings_schedules::Guest>::set_schedules(local_id, schedules)
+    }
+
+    fn add_device(id: String, settings: Vec<(String, String)>) -> Result<Vec<types::Entity>, String> {
+        Ok(T::add_device(&id, settings.into_iter().collect())?.into_iter().map(to_wit).collect())
     }
 }

@@ -1,6 +1,7 @@
 //! Plugin host (plugin-api 1.x): each WASM plugin runs sandboxed in its own thread. A plugin that
 //! exports `invoke` (plugin-api 1.1) also offers one-shot actions; one that exports
-//! `set-schedules` (1.2) is handed the schedules its devices can run themselves.
+//! `set-schedules` (1.2) is handed the schedules its devices can run themselves; one that exports
+//! `add-device` (1.3) is given, one by one, the devices the user added from the app.
 //!
 //! Commands are applied as soon as they arrive, then the plugin is refreshed to read the new state
 //! back; in between, it is refreshed at the interval it asks for. A plugin that traps is marked offline and restarted with backoff.
@@ -69,7 +70,22 @@ mod wit_schedules {
     });
 }
 
+/// The 1.3 world: the same again, plus devices added by the user.
+mod wit_devices {
+    wasmtime::component::bindgen!({
+        path: "../../plugin-api/wit",
+        world: "plugin-with-devices",
+        with: {
+            "homemaid:plugin/types": super::wit::homemaid::plugin::types,
+            "homemaid:plugin/host": super::wit::homemaid::plugin::host,
+            "homemaid:plugin/action-types": super::wit_actions::homemaid::plugin::action_types,
+            "homemaid:plugin/schedule-types": super::wit_schedules::homemaid::plugin::schedule_types,
+        },
+    });
+}
+
 use wit_actions::PluginWithActions;
+use wit_devices::PluginWithDevices;
 use wit_schedules::{PluginWithSchedules, homemaid::plugin::schedule_types};
 
 /// A running plugin of any 1.x world; the calls they share go through [`call!`].
@@ -77,6 +93,7 @@ enum Instance {
     Plain(Plugin),
     Actions(PluginWithActions),
     Schedules(PluginWithSchedules),
+    Devices(PluginWithDevices),
 }
 
 macro_rules! call {
@@ -85,6 +102,7 @@ macro_rules! call {
             Instance::Plain(p) => p.$method($($arg),*),
             Instance::Actions(p) => p.$method($($arg),*),
             Instance::Schedules(p) => p.$method($($arg),*),
+            Instance::Devices(p) => p.$method($($arg),*),
         }
     };
 }
@@ -95,11 +113,13 @@ enum Job {
     Invoke { local_id: String, name: String, params: String, reply: tokio::sync::oneshot::Sender<Result<(), String>> },
     /// Automations or entities changed: hand the devices their schedules again.
     Reschedule,
+    /// The user adds a device (plugin-api 1.3); settings include its secrets.
+    AddDevice { id: String, settings: Vec<(String, String)>, reply: tokio::sync::oneshot::Sender<Result<(), String>> },
 }
 
 pub const API_MAJOR: &str = "1.";
 /// The newest 1.x this host implements.
-pub const API_MINOR: u32 = 2;
+pub const API_MINOR: u32 = 3;
 const LOCAL_NETWORK: &str = "local-network";
 /// Granted in the config only (`permissions`), for a plugin whose device runs on this PC (`pc`):
 /// the core, the agent and their pairing pages listen on loopback.
@@ -139,6 +159,8 @@ pub struct PluginState {
     pub version: Option<String>,
     /// Why it is not running (cannot load, refused, crashed); `None` once started again.
     pub error: Option<String>,
+    /// Added devices it could not set up at its last start, with why, by id.
+    pub devices: BTreeMap<String, String>,
 }
 
 impl Plugins {
@@ -163,8 +185,8 @@ impl Plugins {
         let kv_dir = data_dir.join("plugins");
         fs::create_dir_all(&kv_dir).map_err(|e| format!("{}: {e}", kv_dir.display()))?;
         let plugins = Self { engine, core, kv_dir, running: Mutex::default() };
-        for cfg in configs {
-            let secrets = secrets.remove(&cfg.id).unwrap_or_default();
+        for mut cfg in configs {
+            let secrets = take_secrets(&mut cfg, &mut secrets);
             plugins.spawn(cfg, secrets)?;
         }
         Ok(plugins)
@@ -231,6 +253,20 @@ impl Plugins {
     pub fn reschedule(&self) {
         for running in self.running.lock().unwrap().values() {
             let _ = running.jobs.send(Job::Reschedule);
+        }
+    }
+
+    /// Sets up a device the user adds to a running plugin (plugin-api 1.3); its entities appear at
+    /// once. `settings` include its secrets. An error is the plugin's, for the form.
+    pub async fn add_device(&self, plugin: &str, id: &str, settings: BTreeMap<String, String>) -> Result<(), String> {
+        let tx = self.sender(plugin).ok_or_else(|| format!("plugin `{plugin}` is not running"))?;
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        tx.send(Job::AddDevice { id: id.into(), settings: settings.into_iter().collect(), reply })
+            .map_err(|_| format!("plugin `{plugin}` stopped"))?;
+        match tokio::time::timeout(Duration::from_secs(70), answer).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(format!("plugin `{plugin}` stopped")),
+            Err(_) => Err(format!("plugin `{plugin}` did not answer")),
         }
     }
 
@@ -317,10 +353,12 @@ impl Runner {
         let mut store = self.store(network.clone())?;
         let mut linker = Linker::new(&self.engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
-        // The 1.2 linker is a superset: it also satisfies 1.0 and 1.1 plugins.
-        PluginWithSchedules::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)?;
+        // The 1.3 linker is a superset: it also satisfies 1.0 to 1.2 plugins.
+        PluginWithDevices::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)?;
         let exports = |export: &str| component.component_type().exports(&self.engine).any(|(name, _)| name == export);
-        let plugin = if exports("set-schedules") {
+        let plugin = if exports("add-device") {
+            Instance::Devices(PluginWithDevices::instantiate(&mut store, component, &linker)?)
+        } else if exports("set-schedules") {
             Instance::Schedules(PluginWithSchedules::instantiate(&mut store, component, &linker)?)
         } else if exports("invoke") {
             Instance::Actions(PluginWithActions::instantiate(&mut store, component, &linker)?)
@@ -339,37 +377,31 @@ impl Runner {
         let settings: Vec<(String, String)> = self.cfg.settings.clone().into_iter().collect();
         store.set_epoch_deadline(CALL_BUDGET);
         call!(&plugin, call_init(&mut store, &settings))?.map_err(|e| wasmtime::Error::msg(format!("init: {e}")))?;
-        store.set_epoch_deadline(CALL_BUDGET);
-        let discovered = call!(&plugin, call_discover(&mut store))?.map_err(|e| wasmtime::Error::msg(format!("discover: {e}")))?;
-        store.data_mut().save_kv();
-        let mut actions: HashMap<String, Vec<ActionDecl>> = HashMap::new();
-        store.set_epoch_deadline(CALL_BUDGET);
-        let declared = match &plugin {
-            Instance::Plain(_) => vec![],
-            Instance::Actions(p) => p.call_list_actions(&mut store)?,
-            Instance::Schedules(p) => p.call_list_actions(&mut store)?,
-        };
-        for a in declared {
-            let params = match a.params.as_deref().map(serde_json::from_str).transpose() {
-                Ok(params) => params,
-                Err(e) => {
-                    tracing::warn!(plugin = %self.cfg.id, "{}: action `{}` ignored, invalid params schema: {e}", a.local_id, a.name);
-                    continue;
+        // The devices the user added, each with its entities; one that fails waits for the next start.
+        let mut discovered: Vec<(types::Entity, Option<String>)> = vec![];
+        let mut failed_devices = BTreeMap::new();
+        if let Instance::Devices(p) = &plugin {
+            for device in &self.cfg.devices {
+                let settings: Vec<(String, String)> = device.settings.clone().into_iter().collect();
+                store.set_epoch_deadline(CALL_BUDGET);
+                match p.call_add_device(&mut store, &device.id, &settings)? {
+                    Ok(entities) => discovered.extend(entities.into_iter().map(|e| (e, Some(device.id.clone())))),
+                    Err(e) => {
+                        tracing::warn!(plugin = %self.cfg.id, device = %device.id, "device not set up: {e}");
+                        failed_devices.insert(device.id.clone(), e);
+                    }
                 }
-            };
-            actions.entry(a.local_id).or_default().push(ActionDecl { name: a.name, params });
+            }
         }
-        let entities: Vec<Entity> =
-            discovered.into_iter().map(|e| {
-                let mine = actions.remove(&e.local_id).unwrap_or_default();
-                self.to_entity(e, mine)
-            }).collect();
+        store.set_epoch_deadline(CALL_BUDGET);
+        let found = call!(&plugin, call_discover(&mut store))?.map_err(|e| wasmtime::Error::msg(format!("discover: {e}")))?;
+        discovered.extend(found.into_iter().map(|e| (e, None)));
+        store.data_mut().save_kv();
+        let entities = self.to_entities(&plugin, &mut store, discovered)?;
         tracing::info!(plugin = %self.cfg.id, version = %manifest.version, "started with {} entities", entities.len());
-        *self.state.lock().unwrap() = PluginState { version: Some(manifest.version.clone()), error: None };
+        *self.state.lock().unwrap() = PluginState { version: Some(manifest.version.clone()), error: None, devices: failed_devices };
         let _ = self.core.changes.send(crate::Event::Plugins);
-        if let Instance::Schedules(p) = &plugin {
-            self.hand_schedules(p, &mut store, &entities)?;
-        }
+        self.hand_schedules(&plugin, &mut store, &entities)?;
         let now = Instant::now();
         self.core.with(|r| entities.into_iter().for_each(|e| r.upsert(e, now)));
         *delay = MIN_RESTART;
@@ -396,6 +428,10 @@ impl Runner {
                             store.set_epoch_deadline(CALL_BUDGET);
                             p.call_invoke(&mut store, &local_id, &name, &params)?
                         }
+                        Instance::Devices(p) => {
+                            store.set_epoch_deadline(CALL_BUDGET);
+                            p.call_invoke(&mut store, &local_id, &name, &params)?
+                        }
                         Instance::Plain(_) => Err("this plugin has no actions (plugin-api 1.0)".into()),
                     };
                     if let Err(e) = &result {
@@ -407,10 +443,36 @@ impl Runner {
                     next_refresh = Instant::now();
                 }
                 Ok(Job::Reschedule) => {
-                    if let Instance::Schedules(p) = &plugin {
-                        let mine: Vec<Entity> = self.core.with(|r| r.entities.values().filter(|e| e.plugin == self.cfg.id).cloned().collect());
-                        self.hand_schedules(p, &mut store, &mine)?;
-                    }
+                    let mine: Vec<Entity> = self.core.with(|r| r.entities.values().filter(|e| e.plugin == self.cfg.id).cloned().collect());
+                    self.hand_schedules(&plugin, &mut store, &mine)?;
+                }
+                Ok(Job::AddDevice { id, settings, reply }) => {
+                    let Instance::Devices(p) = &plugin else {
+                        let _ = reply.send(Err("this plugin has no devices to add (plugin-api 1.3)".into()));
+                        continue;
+                    };
+                    store.set_epoch_deadline(CALL_BUDGET);
+                    let result = p.call_add_device(&mut store, &id, &settings)?;
+                    store.data_mut().save_kv();
+                    let result = match result {
+                        Ok(found) => {
+                            let found = found.into_iter().map(|e| (e, Some(id.clone()))).collect();
+                            let entities = self.to_entities(&plugin, &mut store, found)?;
+                            tracing::info!(plugin = %self.cfg.id, device = %id, "device added with {} entities", entities.len());
+                            self.hand_schedules(&plugin, &mut store, &entities)?;
+                            let now = Instant::now();
+                            self.core.with(|r| entities.into_iter().for_each(|e| r.upsert(e, now)));
+                            self.state.lock().unwrap().devices.remove(&id);
+                            Ok(())
+                        }
+                        Err(e) => {
+                            tracing::warn!(plugin = %self.cfg.id, device = %id, "device refused: {e}");
+                            Err(e)
+                        }
+                    };
+                    let _ = reply.send(result);
+                    // Read the new device's state right away.
+                    next_refresh = Instant::now();
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     store.set_epoch_deadline(CALL_BUDGET);
@@ -424,15 +486,53 @@ impl Runner {
         }
     }
 
+    /// The entities a plugin found, with the actions it declares for them; `added` is the device
+    /// each one came with.
+    fn to_entities(&self, plugin: &Instance, store: &mut Store<HostState>, found: Vec<(types::Entity, Option<String>)>) -> wasmtime::Result<Vec<Entity>> {
+        store.set_epoch_deadline(CALL_BUDGET);
+        let declared = match plugin {
+            Instance::Plain(_) => vec![],
+            Instance::Actions(p) => p.call_list_actions(&mut *store)?,
+            Instance::Schedules(p) => p.call_list_actions(&mut *store)?,
+            Instance::Devices(p) => p.call_list_actions(&mut *store)?,
+        };
+        let mut actions: HashMap<String, Vec<ActionDecl>> = HashMap::new();
+        for a in declared {
+            let params = match a.params.as_deref().map(serde_json::from_str).transpose() {
+                Ok(params) => params,
+                Err(e) => {
+                    tracing::warn!(plugin = %self.cfg.id, "{}: action `{}` ignored, invalid params schema: {e}", a.local_id, a.name);
+                    continue;
+                }
+            };
+            actions.entry(a.local_id).or_default().push(ActionDecl { name: a.name, params });
+        }
+        Ok(found
+            .into_iter()
+            .map(|(e, added)| {
+                let mine = actions.remove(&e.local_id).unwrap_or_default();
+                Entity { added, ..self.to_entity(e, mine) }
+            })
+            .collect())
+    }
+
     /// Gives each entity the schedules its device can run alone (none clears the old ones), so
-    /// they keep happening while the hub is off. At start, and again on [`Job::Reschedule`].
-    fn hand_schedules(&self, plugin: &PluginWithSchedules, store: &mut Store<HostState>, entities: &[Entity]) -> wasmtime::Result<()> {
+    /// they keep happening while the hub is off. At start, and again on [`Job::Reschedule`]. Only
+    /// plugins of 1.2 and later have schedules.
+    fn hand_schedules(&self, plugin: &Instance, store: &mut Store<HostState>, entities: &[Entity]) -> wasmtime::Result<()> {
+        if matches!(plugin, Instance::Plain(_) | Instance::Actions(_)) {
+            return Ok(());
+        }
         let automations = self.core.automations();
         for entity in entities {
             let schedules = automations.schedules_for(entity);
             let wit: Vec<schedule_types::Schedule> = schedules.iter().map(to_wit).collect();
             store.set_epoch_deadline(CALL_BUDGET);
-            let result = plugin.call_set_schedules(&mut *store, &entity.local_id, &wit)?;
+            let result = match plugin {
+                Instance::Schedules(p) => p.call_set_schedules(&mut *store, &entity.local_id, &wit)?,
+                Instance::Devices(p) => p.call_set_schedules(&mut *store, &entity.local_id, &wit)?,
+                Instance::Plain(_) | Instance::Actions(_) => unreachable!("returned above"),
+            };
             match &result {
                 Ok(()) if !schedules.is_empty() => {
                     tracing::info!(plugin = %self.cfg.id, "{}: {} schedules run on the device too", entity.name, schedules.len());
@@ -518,6 +618,7 @@ impl Runner {
             plugin: self.cfg.id.clone(),
             local_id: e.local_id,
             device: e.device,
+            added: None,
             model: None,
             actions,
             caps,
@@ -542,6 +643,15 @@ impl Runner {
             }
         });
     }
+}
+
+/// Takes a plugin's secrets out of `secrets`, and gives each of its added devices its own (in
+/// its settings, which are only in memory: the config file never holds them).
+pub fn take_secrets(cfg: &mut PluginConfig, secrets: &mut Secrets) -> BTreeMap<String, String> {
+    for device in &mut cfg.devices {
+        device.settings.extend(secrets.remove(&crate::config::device_secrets(&cfg.id, &device.id)).unwrap_or_default());
+    }
+    secrets.remove(&cfg.id).unwrap_or_default()
 }
 
 fn to_wit(s: &Schedule) -> schedule_types::Schedule {

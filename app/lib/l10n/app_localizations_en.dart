@@ -129,6 +129,39 @@ class AppLocalizationsEn extends AppLocalizations {
   String get roomHint => 'Empty = no room';
 
   @override
+  String get addDevice => 'Add a device';
+
+  @override
+  String get addPc => 'A PC';
+
+  @override
+  String get addPcHint => 'With its pairing code';
+
+  @override
+  String get addOther => 'Another device';
+
+  @override
+  String get addOtherHint => 'Install the plugin for its brand';
+
+  @override
+  String get deviceSameLogin => 'Leave empty: same as the previous device';
+
+  @override
+  String get deviceAdded => 'Device added.';
+
+  @override
+  String get removeDevice => 'Remove this device';
+
+  @override
+  String get removeDeviceBody =>
+      'It leaves the home with all its parts. You can add it again with +.';
+
+  @override
+  String roomWholeDevice(int count) {
+    return 'Moves the whole device ($count parts)';
+  }
+
+  @override
   String get cancel => 'Cancel';
 
   @override

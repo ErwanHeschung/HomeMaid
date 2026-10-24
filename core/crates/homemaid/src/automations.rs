@@ -1082,6 +1082,7 @@ mod tests {
             plugin: "mock".into(),
             local_id: "lamp".into(),
             device: None,
+            added: None,
             model: None,
             actions: vec![],
             caps: BTreeMap::from([

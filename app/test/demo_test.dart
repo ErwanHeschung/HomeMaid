@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:homemaid/l10n/app_localizations.dart';
 import 'package:homemaid/demo.dart';
 import 'package:homemaid/model.dart';
+import 'package:homemaid/screens/home.dart';
 import 'package:homemaid/theme.dart';
 import 'package:homemaid/viewport/models.dart';
 import 'package:homemaid/viewport/room_viewport.dart';
@@ -74,6 +75,73 @@ void main() {
     for (final e in demo.values) {
       expect(summary(context, e), isNotEmpty, reason: e.name);
     }
+  });
+
+  testWidgets('a strip is one device, its outlets are sections of its sheet', (tester) async {
+    final core = DemoCore();
+    final strip = deviceParts(core, core.entities['demo-strip-2']!);
+    expect(strip.map((e) => e.id).toSet(), {'demo-strip-1', 'demo-strip-2', 'demo-strip-3'});
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(body: DeviceSheet(core: core, id: 'demo-strip-2', onSet: (_, _, _) {})),
+    ));
+    for (final e in strip) {
+      expect(find.text(e.name), findsOneWidget, reason: e.id);
+    }
+    expect(find.byType(Switch), findsNWidgets(3));
+  });
+
+  testWidgets('an added strip is removed from its sheet, all its outlets with it', (tester) async {
+    final core = DemoCore();
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(body: DeviceSheet(core: core, id: 'demo-strip-1', onSet: (_, _, _) {})),
+    ));
+    // Pumped by time: the pending outlet's hatching never settles.
+    await tester.tap(find.text('Remove this device'));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
+    await tester.pump(const Duration(seconds: 1));
+    expect(core.entities.values.where((e) => e.device == 'demo-strip'), isEmpty);
+    expect(core.plugins.firstWhere((p) => p.id == 'tplink').devices, isEmpty);
+  });
+
+  test('a second strip is added with the first one\'s login, as three outlets', () async {
+    final core = DemoCore();
+    await core.refreshPlugins();
+    await expectLater(core.addDevice('tplink', {'host': ''}), throwsA(contains('required')));
+    await core.addDevice('tplink', {'host': '192.168.1.60', 'username': '', 'password': ''});
+    final added = core.plugins.firstWhere((p) => p.id == 'tplink').devices.last;
+    expect(added.settings['host'], '192.168.1.60');
+    expect(core.entities.values.where((e) => e.added == added.id).length, 3);
+  });
+
+  testWidgets('moving one outlet moves its whole strip, and renames only that outlet', (tester) async {
+    late BuildContext context;
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(body: const SizedBox().withContext((c) => context = c)),
+    ));
+    final core = DemoCore();
+    final strip = core.entities.values.where((e) => e.device == 'demo-strip').toList();
+    final edited = editEntity(context, core, strip.first);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'Lamp');
+    await tester.enterText(find.byType(TextField).at(1), 'Office');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    await edited;
+    for (final e in strip) {
+      expect(core.entities[e.id]!.room, 'Office', reason: e.id);
+    }
+    expect(core.entities[strip.first.id]!.name, 'Lamp');
+    expect(core.entities[strip[1].id]!.name, strip[1].name);
   });
 }
 

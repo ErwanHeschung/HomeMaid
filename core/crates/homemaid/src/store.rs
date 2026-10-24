@@ -82,6 +82,7 @@ mod tests {
             plugin: "mock".into(),
             local_id: "plug".into(),
             device: None,
+            added: None,
             model: None,
             actions: vec![],
             caps: BTreeMap::from([(CapKind::OnOff, slot)]),

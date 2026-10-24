@@ -69,6 +69,7 @@ fn start_on(plugin: Plugin, path: PathBuf, automations: Option<Automations>) -> 
         settings: pairs(plugin.settings),
         version: None,
         key: None,
+        devices: vec![],
     };
     let secrets = BTreeMap::from([(plugin.id.to_string(), pairs(plugin.secrets))]);
     let plugins = Arc::new(Plugins::start(core.clone(), vec![config], &data.0, secrets).unwrap());

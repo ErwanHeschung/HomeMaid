@@ -129,6 +129,39 @@ class AppLocalizationsFr extends AppLocalizations {
   String get roomHint => 'Vide = sans pièce';
 
   @override
+  String get addDevice => 'Ajouter un appareil';
+
+  @override
+  String get addPc => 'Un PC';
+
+  @override
+  String get addPcHint => 'Avec son code d\'appairage';
+
+  @override
+  String get addOther => 'Un autre appareil';
+
+  @override
+  String get addOtherHint => 'Installer le plugin de sa marque';
+
+  @override
+  String get deviceSameLogin => 'Vide : comme l\'appareil précédent';
+
+  @override
+  String get deviceAdded => 'Appareil ajouté.';
+
+  @override
+  String get removeDevice => 'Retirer cet appareil';
+
+  @override
+  String get removeDeviceBody =>
+      'Il quitte la maison, avec toutes ses parties. Tu pourras l\'ajouter à nouveau avec +.';
+
+  @override
+  String roomWholeDevice(int count) {
+    return 'Déplace tout l\'appareil ($count éléments)';
+  }
+
+  @override
   String get cancel => 'Annuler';
 
   @override

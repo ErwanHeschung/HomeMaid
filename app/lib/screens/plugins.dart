@@ -9,6 +9,29 @@ import 'common.dart';
 Future<void> showPlugins(BuildContext context, CoreClient core) =>
     Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => PluginsScreen(core: core)));
 
+/// The form of a device to add to [plugin] (its address, its login); true once the plugin took it.
+/// A secret left empty is the previous device's, so a second strip needs no login.
+Future<bool> showDeviceForm(BuildContext context, CoreClient core, InstalledPlugin plugin) async {
+  final l = AppLocalizations.of(context);
+  final added = await showModalBottomSheet<bool>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (_) => PluginSheet(
+      name: plugin.name,
+      settings: plugin.deviceSettings,
+      secretsSet: plugin.devices.lastOrNull?.secrets ?? const [],
+      keepHint: l.deviceSameLogin,
+      action: l.addDevice,
+      save: (values) => core.addDevice(plugin.id, values),
+    ),
+  );
+  if (added == true && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l.deviceAdded)));
+  }
+  return added == true;
+}
+
 /// The hub's plugins, and what the registry offers: install, update, set up, remove.
 class PluginsScreen extends StatefulWidget {
   const PluginsScreen({super.key, required this.core});
@@ -45,7 +68,7 @@ class _PluginsScreenState extends State<PluginsScreen> {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (_) => _PluginSheet(
+      builder: (_) => PluginSheet(
         name: plugin.name,
         permissions: plugin.permissions,
         // An update keeps its settings: nothing to ask.
@@ -54,14 +77,20 @@ class _PluginsScreenState extends State<PluginsScreen> {
         save: (values) => widget.core.installPlugin(plugin, values),
       ),
     );
-    if (done == true) _loadRegistry();
+    if (done != true) return;
+    _loadRegistry();
+    // Installed: its first device right away (a plugin with devices does nothing without one).
+    final installed = widget.core.plugins.where((p) => p.id == plugin.id).firstOrNull;
+    if (plugin.installed == null && installed != null && installed.deviceSettings.isNotEmpty && mounted) {
+      await showDeviceForm(context, widget.core, installed);
+    }
   }
 
   Future<void> _configure(InstalledPlugin plugin) => showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    builder: (_) => _PluginSheet(
+    builder: (_) => PluginSheet(
       name: plugin.name,
       settings: plugin.declared,
       current: plugin.settings,
@@ -118,6 +147,7 @@ class _PluginsScreenState extends State<PluginsScreen> {
                 for (final p in installed) ...[
                   _InstalledTile(
                     plugin: p,
+                    onAdd: p.deviceSettings.isNotEmpty ? () => showDeviceForm(context, widget.core, p) : null,
                     onConfigure: p.fromRegistry && p.declared.isNotEmpty ? () => _configure(p) : null,
                     onRemove: p.fromRegistry ? () => _remove(p) : null,
                   ),
@@ -170,9 +200,10 @@ class _PluginsScreenState extends State<PluginsScreen> {
 }
 
 class _InstalledTile extends StatelessWidget {
-  const _InstalledTile({required this.plugin, this.onConfigure, this.onRemove});
+  const _InstalledTile({required this.plugin, this.onAdd, this.onConfigure, this.onRemove});
 
   final InstalledPlugin plugin;
+  final VoidCallback? onAdd;
   final VoidCallback? onConfigure;
   final VoidCallback? onRemove;
 
@@ -181,20 +212,28 @@ class _InstalledTile extends StatelessWidget {
     final l = AppLocalizations.of(context);
     final theme = Theme.of(context);
     final p = plugin;
-    final state = p.error ?? (p.version == null ? l.pluginStarting : l.pluginRunning);
+    final failing = p.devices.map((d) => d.error).nonNulls.firstOrNull;
+    final error = p.error ?? failing;
+    final state = error ?? (p.version == null ? l.pluginStarting : l.pluginRunning);
     return ListTile(
       contentPadding: const EdgeInsets.only(left: 20, right: 8),
-      leading: Icon(Icons.extension_outlined, color: p.error != null ? Hm.danger : null),
+      leading: Icon(Icons.extension_outlined, color: error != null ? Hm.danger : null),
       title: Text(p.name, style: theme.textTheme.titleMedium),
       subtitle: Text(
-        [if (p.version != null) p.version!, state, if (!p.fromRegistry) l.pluginLocal].join(' · '),
+        [
+          if (p.version != null) p.version!,
+          if (p.deviceSettings.isNotEmpty) l.deviceCount(p.devices.length),
+          state,
+          if (!p.fromRegistry) l.pluginLocal,
+        ].join(' · '),
         maxLines: 3,
         overflow: TextOverflow.ellipsis,
-        style: theme.textTheme.bodyMedium?.copyWith(color: p.error != null ? Hm.danger : Hm.textDim),
+        style: theme.textTheme.bodyMedium?.copyWith(color: error != null ? Hm.danger : Hm.textDim),
       ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (onAdd != null) IconButton(icon: const Icon(Icons.add), tooltip: l.addDevice, onPressed: onAdd),
           if (onConfigure != null) IconButton(icon: const Icon(Icons.tune), tooltip: l.pluginSettings, onPressed: onConfigure),
           if (onRemove != null) IconButton(icon: const Icon(Icons.delete_outline), tooltip: l.removeItem, onPressed: onRemove),
         ],
@@ -203,16 +242,20 @@ class _InstalledTile extends StatelessWidget {
   }
 }
 
-/// Installing (permissions, then settings), updating (permissions only) or setting up a plugin.
-/// Pops true once the hub accepted; its refusal stays in the sheet, with what was typed.
-class _PluginSheet extends StatefulWidget {
-  const _PluginSheet({
+/// Installing (permissions, then settings), updating (permissions only) or setting up a plugin,
+/// or adding one of its devices. Pops true once the hub accepted; its refusal stays in the
+/// sheet, with what was typed.
+class PluginSheet extends StatefulWidget {
+  const PluginSheet({
+    super.key,
     required this.name,
     this.permissions = const [],
     required this.settings,
     this.current = const {},
     this.secretsSet = const [],
+    this.keepHint,
     this.confirm,
+    this.action,
     required this.save,
   });
 
@@ -224,15 +267,21 @@ class _PluginSheet extends StatefulWidget {
   final Map<String, String> current;
   final List<String> secretsSet;
 
+  /// What an empty secret of [secretsSet] does; "leave empty to keep" by default.
+  final String? keepHint;
+
   /// The version an update goes to; null to install or set up.
   final String? confirm;
+
+  /// The button's label, when it is none of install, update and save.
+  final String? action;
   final Future<void> Function(Map<String, String> values) save;
 
   @override
-  State<_PluginSheet> createState() => _PluginSheetState();
+  State<PluginSheet> createState() => _PluginSheetState();
 }
 
-class _PluginSheetState extends State<_PluginSheet> {
+class _PluginSheetState extends State<PluginSheet> {
   late final _fields = {for (final s in widget.settings) s.key: TextEditingController(text: s.secret ? '' : widget.current[s.key] ?? '')};
   String? _error;
   bool _busy = false;
@@ -307,7 +356,7 @@ class _PluginSheetState extends State<_PluginSheet> {
                   enabled: !_busy,
                   decoration: InputDecoration(
                     labelText: s.required ? '${s.label} *' : s.label,
-                    hintText: s.secret && widget.secretsSet.contains(s.key) ? l.pluginKeep : null,
+                    hintText: s.secret && widget.secretsSet.contains(s.key) ? widget.keepHint ?? l.pluginKeep : null,
                     floatingLabelBehavior: s.secret && widget.secretsSet.contains(s.key) ? FloatingLabelBehavior.always : null,
                   ),
                 ),
@@ -328,11 +377,12 @@ class _PluginSheetState extends State<_PluginSheet> {
                   child: _busy
                       ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
                       : Text(
-                          widget.confirm != null
+                          widget.action ??
+                          (widget.confirm != null
                               ? l.pluginUpdate(widget.confirm!)
                               : installing
                               ? l.pluginInstall
-                              : l.save,
+                              : l.save),
                         ),
                 ),
               ],

@@ -36,6 +36,9 @@ pub struct Entry {
     /// What the user fills in at install.
     #[serde(default)]
     pub settings: Vec<Setting>,
+    /// What the user fills in for each device they add (plugin-api 1.3): a strip's address and login.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub device_settings: Vec<Setting>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub versions: Vec<Version>,
 }
@@ -151,6 +154,7 @@ pub(crate) mod tests {
             repo: String::new(),
             key: key.into(),
             settings: vec![],
+            device_settings: vec![],
             versions: versions.iter().map(version).collect(),
         }
     }

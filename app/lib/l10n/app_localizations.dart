@@ -290,6 +290,66 @@ abstract class AppLocalizations {
   /// **'Empty = no room'**
   String get roomHint;
 
+  /// No description provided for @addDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Add a device'**
+  String get addDevice;
+
+  /// No description provided for @addPc.
+  ///
+  /// In en, this message translates to:
+  /// **'A PC'**
+  String get addPc;
+
+  /// No description provided for @addPcHint.
+  ///
+  /// In en, this message translates to:
+  /// **'With its pairing code'**
+  String get addPcHint;
+
+  /// No description provided for @addOther.
+  ///
+  /// In en, this message translates to:
+  /// **'Another device'**
+  String get addOther;
+
+  /// No description provided for @addOtherHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Install the plugin for its brand'**
+  String get addOtherHint;
+
+  /// No description provided for @deviceSameLogin.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave empty: same as the previous device'**
+  String get deviceSameLogin;
+
+  /// No description provided for @deviceAdded.
+  ///
+  /// In en, this message translates to:
+  /// **'Device added.'**
+  String get deviceAdded;
+
+  /// No description provided for @removeDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove this device'**
+  String get removeDevice;
+
+  /// No description provided for @removeDeviceBody.
+  ///
+  /// In en, this message translates to:
+  /// **'It leaves the home with all its parts. You can add it again with +.'**
+  String get removeDeviceBody;
+
+  /// No description provided for @roomWholeDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Moves the whole device ({count} parts)'**
+  String roomWholeDevice(int count);
+
   /// No description provided for @cancel.
   ///
   /// In en, this message translates to:

@@ -131,6 +131,23 @@ pub struct PluginConfig {
     pub version: Option<String>,
     #[serde(default)]
     pub key: Option<String>,
+    /// Devices the user added from the app (plugin-api 1.3), in `[[plugin.device]]`.
+    #[serde(default, rename = "device")]
+    pub devices: Vec<DeviceConfig>,
+}
+
+/// A device added from the app: its id, and what the user typed for it but its secrets (in
+/// `secrets.toml`, table [`device_secrets`]).
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeviceConfig {
+    pub id: String,
+    #[serde(default)]
+    pub settings: BTreeMap<String, String>,
+}
+
+/// The `secrets.toml` table of a device added to `plugin`.
+pub fn device_secrets(plugin: &str, device: &str) -> String {
+    format!("{plugin}/{device}")
 }
 
 /// Relative paths in the file are resolved against the directory of the file.
@@ -321,6 +338,57 @@ pub fn save_plugin(path: &Path, plugin: &PluginConfig, file: &str) -> Result<(),
         }
         set("settings", Some(Item::Table(settings)));
     })
+}
+
+/// Adds a device to the `[[plugin]]` of `plugin`, after its others, as `[[plugin.device]]`.
+pub fn add_device(path: &Path, plugin: &str, device: &DeviceConfig) -> Result<(), String> {
+    use toml_edit::{ArrayOfTables, Item, Table, value};
+
+    edit_toml(path, |doc| {
+        let table = plugin_table(doc, plugin)?;
+        let devices = table.entry("device").or_insert(Item::ArrayOfTables(ArrayOfTables::new()));
+        let devices = devices.as_array_of_tables_mut().ok_or(format!("`device` of plugin `{plugin}` must be [[plugin.device]]"))?;
+        let mut new = Table::new();
+        new["id"] = value(&device.id);
+        let mut settings = Table::new();
+        for (key, v) in &device.settings {
+            settings[key] = value(v);
+        }
+        new["settings"] = Item::Table(settings);
+        devices.push(new);
+        Ok(())
+    })
+}
+
+/// Removes the `[[plugin.device]]` `device` of `plugin`.
+pub fn delete_device(path: &Path, plugin: &str, device: &str) -> Result<(), String> {
+    use toml_edit::Item;
+
+    edit_toml(path, |doc| {
+        let devices = plugin_table(doc, plugin)?.get_mut("device").and_then(Item::as_array_of_tables_mut);
+        let devices = devices.ok_or(format!("plugin `{plugin}` has no device `{device}`"))?;
+        let index = devices.iter().position(|t| t.get("id").and_then(Item::as_str) == Some(device));
+        devices.remove(index.ok_or(format!("plugin `{plugin}` has no device `{device}`"))?);
+        Ok(())
+    })
+}
+
+/// Removes `[section]` from a secrets file, if there.
+pub fn delete_secrets(path: &Path, section: &str) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    edit_toml(path, |doc| {
+        doc.remove(section);
+        Ok(())
+    })
+}
+
+fn plugin_table<'a>(doc: &'a mut toml_edit::DocumentMut, id: &str) -> Result<&'a mut toml_edit::Table, String> {
+    use toml_edit::Item;
+
+    let tables = doc.get_mut("plugin").and_then(Item::as_array_of_tables_mut).ok_or(format!("no plugin `{id}`"))?;
+    tables.iter_mut().find(|t| t.get("id").and_then(Item::as_str) == Some(id)).ok_or(format!("no plugin `{id}`"))
 }
 
 /// Removes the `[[plugin]]` of `id`.
@@ -591,8 +659,14 @@ mod tests {
             settings: BTreeMap::from([("hosts".into(), "192.168.1.20".into())]),
             version: Some("0.1.0".into()),
             key: Some("RWQkey".into()),
+            devices: vec![],
         };
         save_plugin(&path, &plugin, "data/plugins/tplink.wasm").unwrap();
+        for (id, host) in [("strip1", "192.168.1.89"), ("strip2", "192.168.1.90")] {
+            let device = DeviceConfig { id: id.into(), settings: BTreeMap::from([("host".into(), host.into())]) };
+            add_device(&path, "tplink", &device).unwrap();
+        }
+        // An update rewrites the plugin's fields, not its devices.
         plugin.version = Some("0.2.0".into());
         save_plugin(&path, &plugin, "data/plugins/tplink.wasm").unwrap();
         let config = load(&path).unwrap();
@@ -603,6 +677,13 @@ mod tests {
         assert_eq!((t.version.as_deref(), t.key.as_deref()), (Some("0.2.0"), Some("RWQkey")));
         assert_eq!(t.settings["hosts"], "192.168.1.20");
         assert!(t.path.ends_with("data/plugins/tplink.wasm"));
+        let hosts: Vec<_> = t.devices.iter().map(|d| (d.id.as_str(), d.settings["host"].as_str())).collect();
+        assert_eq!(hosts, [("strip1", "192.168.1.89"), ("strip2", "192.168.1.90")], "{written}");
+
+        delete_device(&path, "tplink", "strip1").unwrap();
+        let devices = &load(&path).unwrap().plugins[1].devices;
+        assert_eq!(devices.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), ["strip2"]);
+        assert!(delete_device(&path, "tplink", "strip1").is_err(), "gone already");
 
         delete_plugin(&path, "tplink").unwrap();
         let config = load(&path).unwrap();

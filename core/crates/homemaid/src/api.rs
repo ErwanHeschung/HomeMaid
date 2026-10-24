@@ -14,6 +14,8 @@
 //! methods with `plugin.install` that use the Internet), `plugin.install { id, version, permissions,
 //! settings? }` (the version and permissions the user accepted; an update keeps the settings),
 //! `plugin.configure { id, settings }` and `plugin.remove { id }`, then `plugins.changed`.
+//! Devices added from the app (plugin-api 1.3): `device.add { plugin, settings }` (the plugin
+//! checks it first; returns its `id`) and `device.remove { plugin, id }`, then `plugins.changed`.
 //! `/pair` serves the pairing QR code to the PC itself; `/hello?nonce=` proves this host knows
 //! the token (see [`pairing::proof`]).
 
@@ -43,7 +45,7 @@ use uuid::Uuid;
 use crate::{
     Core, Event,
     automations::{AutomationConfig, Automations, Location},
-    config::{self, EntityOverride, PluginConfig, RoomConfig},
+    config::{self, DeviceConfig, EntityOverride, PluginConfig, RoomConfig},
     model::{CapKind, CapValue},
     pairing, registry, store,
 };
@@ -129,7 +131,8 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 /// Methods that wait for a plugin (an action: ms usually, 70 s at worst) or the registry. They run aside so the
 /// notifications keep flowing; the others answer in order with them, so `entities.list` is never
 /// overtaken by an older change.
-const SLOW: [&str; 6] = ["entity.invoke", "automation.run", "registry.list", "plugin.install", "plugin.configure", "plugin.remove"];
+const SLOW: [&str; 8] =
+    ["entity.invoke", "automation.run", "registry.list", "plugin.install", "plugin.configure", "plugin.remove", "device.add", "device.remove"];
 
 async fn session(mut socket: WebSocket, app: AppState) {
     let mut changes = app.core.changes.subscribe();
@@ -235,6 +238,19 @@ struct Configure {
 }
 
 #[derive(Deserialize)]
+struct AddDevice {
+    plugin: String,
+    #[serde(default)]
+    settings: BTreeMap<String, String>,
+}
+
+#[derive(Deserialize)]
+struct DeviceId {
+    plugin: String,
+    id: String,
+}
+
+#[derive(Deserialize)]
 struct PluginId {
     id: String,
 }
@@ -323,6 +339,14 @@ async fn handle(app: &AppState, req: Request) -> Value {
         "plugin.remove" => match serde_json::from_value::<PluginId>(req.params) {
             Err(e) => Err((-32602, e.to_string())),
             Ok(p) => blocking(app, move |app| remove_plugin(app, &p.id)).await.map_err(|e| (-32000, e)),
+        },
+        "device.add" => match serde_json::from_value::<AddDevice>(req.params) {
+            Err(e) => Err((-32602, e.to_string())),
+            Ok(p) => add_device(app, p).await.map_err(|e| (-32000, e)),
+        },
+        "device.remove" => match serde_json::from_value::<DeviceId>(req.params) {
+            Err(e) => Err((-32602, e.to_string())),
+            Ok(p) => blocking(app, move |app| remove_device(app, p)).await.map_err(|e| (-32000, e)),
         },
         _ => Err((-32601, format!("unknown method `{}`", req.method))),
     };
@@ -426,6 +450,14 @@ fn list_plugins(app: &AppState) -> Result<Value, String> {
             let entry = cfg.key.is_some().then(|| installed_entry(app, &cfg.id)).flatten();
             let state = states.get(&cfg.id).cloned().unwrap_or_default();
             let set: Vec<&String> = secrets.get(&cfg.id).map(|s| s.keys().collect()).unwrap_or_default();
+            let devices: Vec<Value> = cfg
+                .devices
+                .iter()
+                .map(|d| {
+                    let set: Vec<&String> = secrets.get(&config::device_secrets(&cfg.id, &d.id)).map(|s| s.keys().collect()).unwrap_or_default();
+                    json!({ "id": d.id, "settings": d.settings, "secrets": set, "error": state.devices.get(&d.id) })
+                })
+                .collect();
             json!({
                 "id": cfg.id,
                 "name": entry.as_ref().map_or(&cfg.id, |e| &e.name),
@@ -436,7 +468,9 @@ fn list_plugins(app: &AppState) -> Result<Value, String> {
                 "permissions": cfg.permissions,
                 "settings": cfg.settings,
                 "secrets": set,
-                "declared": entry.map(|e| e.settings).unwrap_or_default(),
+                "declared": entry.as_ref().map(|e| &e.settings),
+                "device_settings": entry.as_ref().map(|e| &e.device_settings),
+                "devices": devices,
             })
         })
         .collect();
@@ -460,6 +494,7 @@ fn list_registry(app: &AppState) -> Result<Value, String> {
                 "description": e.description,
                 "repo": e.repo,
                 "settings": e.settings,
+                "device_settings": e.device_settings,
                 "version": version.map(|v| &v.version),
                 "permissions": version.map(|v| &v.permissions),
                 "installed": mine.map(|c| c.version.as_deref().unwrap_or("local")),
@@ -487,7 +522,7 @@ fn install_plugin(app: &AppState, p: Install) -> Result<Value, String> {
         return Err(format!("`{}` is already in the config, not from the registry: remove its [[plugin]] first", p.id));
     }
     let old_settings = current.as_ref().map(|c| c.settings.clone()).unwrap_or_default();
-    let (settings, secrets) = split_settings(app, &entry.settings, &p.id, p.settings, old_settings)?;
+    let (settings, secrets) = split_settings(app, &entry.settings, &p.id, p.settings, &old_settings)?;
     let wasm = registry::download(&entry, &version, current.as_ref().and_then(|c| c.key.as_deref()))?;
 
     // The running instance compiled its own copy: the file can be replaced under it.
@@ -505,6 +540,7 @@ fn install_plugin(app: &AppState, p: Install) -> Result<Value, String> {
         settings,
         version: Some(version.version),
         key: Some(key),
+        devices: current.map(|c| c.devices).unwrap_or_default(),
     };
     save_and_start(app, cfg, secrets)
 }
@@ -513,26 +549,26 @@ fn install_plugin(app: &AppState, p: Install) -> Result<Value, String> {
 fn configure_plugin(app: &AppState, p: Configure) -> Result<Value, String> {
     let cfg = config::load(&app.config_path)?.plugins.into_iter().find(|c| c.id == p.id).ok_or(format!("no plugin `{}`", p.id))?;
     let entry = installed_entry(app, &p.id).filter(|_| cfg.key.is_some()).ok_or(format!("`{}` is set in homemaid.toml, not from the app", p.id))?;
-    let (settings, secrets) = split_settings(app, &entry.settings, &p.id, p.settings, cfg.settings.clone())?;
+    let (settings, secrets) = split_settings(app, &entry.settings, &p.id, p.settings, &cfg.settings)?;
     save_and_start(app, PluginConfig { settings, ..cfg }, secrets)
 }
 
 type Settings = BTreeMap<String, String>;
 
-/// Sorts what the user typed by the plugin's declared settings: secrets to `secrets.toml`, the
-/// rest to the config. A setting left out (or an empty secret) keeps its value; a required one
-/// with none is refused.
+/// Sorts what the user typed by the declared settings: secrets (to `secrets.toml`) and the rest
+/// (to the config). A setting left out (or an empty secret) keeps its value, from `old` or the
+/// `section` of `secrets.toml`; a required one with none is refused.
 fn split_settings(
     app: &AppState,
     declared: &[registry::Setting],
-    id: &str,
+    section: &str,
     mut given: BTreeMap<String, String>,
-    old: BTreeMap<String, String>,
+    old: &BTreeMap<String, String>,
 ) -> Result<(Settings, Settings), String> {
     if let Some(unknown) = given.keys().find(|k| !declared.iter().any(|d| &d.key == *k)) {
-        return Err(format!("`{id}` has no setting `{unknown}`"));
+        return Err(format!("no setting `{unknown}`"));
     }
-    let old_secrets = config::load_secrets(&secrets_path(app))?.remove(id).unwrap_or_default();
+    let old_secrets = config::load_secrets(&secrets_path(app))?.remove(section).unwrap_or_default();
     let (mut settings, mut secrets) = (BTreeMap::new(), BTreeMap::new());
     for d in declared {
         let value = given.remove(&d.key).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
@@ -544,7 +580,7 @@ fn split_settings(
             (Some(v), true) => drop(secrets.insert(d.key.clone(), v)),
             (Some(v), false) => drop(settings.insert(d.key.clone(), v)),
             (None, false) => settings.extend(kept.map(|v| (d.key.clone(), v.clone()))),
-            (None, true) => {}
+            (None, true) => secrets.extend(kept.map(|v| (d.key.clone(), v.clone()))),
         }
     }
     Ok((settings, secrets))
@@ -558,11 +594,62 @@ fn save_and_start(app: &AppState, cfg: PluginConfig, secrets: BTreeMap<String, S
     let dir = app.config_path.parent().unwrap_or(Path::new("."));
     let file = cfg.path.strip_prefix(dir).unwrap_or(&cfg.path).display().to_string();
     config::save_plugin(&app.config_path, &cfg, &file)?;
+    restart(app, cfg)
+}
+
+/// (Re)starts a plugin with its secrets and its devices' ones, as saved.
+fn restart(app: &AppState, mut cfg: PluginConfig) -> Result<Value, String> {
     let plugins = app.core.plugins.get().ok_or("plugins are not running")?;
-    let secrets = config::load_secrets(&secrets_path(app))?.remove(&cfg.id).unwrap_or_default();
+    let secrets = crate::plugins::take_secrets(&mut cfg, &mut config::load_secrets(&secrets_path(app))?);
     plugins.spawn(cfg, secrets)?;
     let _ = app.core.changes.send(Event::Plugins);
     Ok(json!(true))
+}
+
+/// Adds a device to a plugin from its form (plugin-api 1.3). The plugin checks it first (a wrong
+/// address or password is said in the form) and only one it accepts is saved. An empty secret
+/// takes the plugin's last added device's: a second strip on the same account needs no login.
+async fn add_device(app: &AppState, p: AddDevice) -> Result<Value, String> {
+    let plugins = app.core.plugins.get().ok_or("plugins are not running")?.clone();
+    let (prepare, plugin) = (app.clone(), p.plugin.clone());
+    let (device, secrets) = tokio::task::spawn_blocking(move || {
+        let cfg = config::load(&prepare.config_path)?.plugins.into_iter().find(|c| c.id == p.plugin).ok_or(format!("no plugin `{}`", p.plugin))?;
+        let entry = installed_entry(&prepare, &p.plugin).filter(|_| cfg.key.is_some());
+        let declared = entry.map(|e| e.device_settings).filter(|d| !d.is_empty()).ok_or(format!("`{}` has no devices to add", p.plugin))?;
+        let last = cfg.devices.last().map(|d| config::device_secrets(&p.plugin, &d.id)).unwrap_or_default();
+        let (settings, secrets) = split_settings(&prepare, &declared, &last, p.settings, &BTreeMap::new())?;
+        let taken = |id: &str| cfg.devices.iter().any(|d| d.id == id);
+        let id = std::iter::repeat_with(|| Uuid::new_v4().simple().to_string()[..8].to_string()).find(|id| !taken(id)).expect("endless");
+        Ok::<_, String>((DeviceConfig { id, settings }, secrets))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let mut given = device.settings.clone();
+    given.extend(secrets.clone());
+    plugins.add_device(&plugin, &device.id, given).await?;
+    blocking(app, move |app| {
+        for (key, value) in &secrets {
+            config::set_secret(&secrets_path(app), &config::device_secrets(&plugin, &device.id), key, value)?;
+        }
+        config::add_device(&app.config_path, &plugin, &device)?;
+        let _ = app.core.changes.send(Event::Plugins);
+        Ok(json!({ "id": device.id }))
+    })
+    .await
+}
+
+/// Removes a device added from the app, its entities and its secrets; the plugin restarts without it.
+fn remove_device(app: &AppState, p: DeviceId) -> Result<Value, String> {
+    let cfg = config::load(&app.config_path)?.plugins.into_iter().find(|c| c.id == p.plugin).ok_or(format!("no plugin `{}`", p.plugin))?;
+    config::delete_device(&app.config_path, &p.plugin, &p.id)?;
+    config::delete_secrets(&secrets_path(app), &config::device_secrets(&p.plugin, &p.id))?;
+    // Stopped first: an instance still starting with the old devices would bring its entities back.
+    if let Some(plugins) = app.core.plugins.get() {
+        plugins.stop(&p.plugin);
+    }
+    app.core.with(|r| r.entities.retain(|_, e| !(e.plugin == p.plugin && e.added.as_deref() == Some(p.id.as_str()))));
+    app.core.dirty.notify_one();
+    restart(app, PluginConfig { devices: cfg.devices.into_iter().filter(|d| d.id != p.id).collect(), ..cfg })
 }
 
 /// Uninstalls a plugin of the registry: its `[[plugin]]`, files, KV store and entities. Its

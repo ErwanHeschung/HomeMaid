@@ -4,6 +4,16 @@ What changes for people using HomeMaid, version by version. The format follows [
 
 ## [Unreleased]
 
+### Added
+
+- **Add a device from the app.** Home → **+**: a device of an installed plugin by its own form (a Tapo strip by its IP address and TP-Link login), a PC by its pairing code, or another one by installing its plugin first. The plugin checks it right away: a wrong password is said in the form. A second strip on the same account needs no login again.
+- **Remove a device** from its panel, with all its parts.
+
+### Changed
+
+- **A power strip is one device.** The list shows it once; its outlets are sections of its panel, each with its switch and its name. Moving it to another room moves all its outlets.
+- **Installing a plugin asks for nothing but its permissions** when its devices are added one by one; its first device's form opens right away. TP-Link Tapo 0.2.0 works this way: update it from Settings → Plugins, then add your strip again from Home → +.
+
 ## [0.1.0-alpha.1] - 2026-10-23
 
 The first public alpha: the hub, the PC remote and the Android app, tried on the author's own devices. Expect rough edges, and keep your manufacturer's app at hand.

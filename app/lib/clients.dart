@@ -246,6 +246,19 @@ class CoreClient extends ChangeNotifier {
     await refreshPlugins();
   }
 
+  /// Adds a device to `plugin` from its form; the plugin checks it first (its refusal is the
+  /// error). An empty secret takes the plugin's last added device's.
+  Future<void> addDevice(String plugin, Map<String, String> settings) async {
+    await _call('device.add', {'plugin': plugin, 'settings': settings}, const Duration(seconds: 90));
+    await refreshPlugins();
+  }
+
+  /// Removes a device added with [addDevice], and its entities.
+  Future<void> removeDevice(String plugin, String id) async {
+    await _call('device.remove', {'plugin': plugin, 'id': id}, const Duration(seconds: 90));
+    await refreshPlugins();
+  }
+
   /// Saved in homemaid.toml; an empty kind goes back to the inferred one.
   Future<void> updateRoom(String name, String kind) => call('room.update', {'name': name, 'kind': kind});
 

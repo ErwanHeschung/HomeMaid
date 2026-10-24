@@ -67,6 +67,23 @@
   "name": "Name",
   "room": "Room",
   "roomHint": "Empty = no room",
+  "addDevice": "Add a device",
+  "addPc": "A PC",
+  "addPcHint": "With its pairing code",
+  "addOther": "Another device",
+  "addOtherHint": "Install the plugin for its brand",
+  "deviceSameLogin": "Leave empty: same as the previous device",
+  "deviceAdded": "Device added.",
+  "removeDevice": "Remove this device",
+  "removeDeviceBody": "It leaves the home with all its parts. You can add it again with +.",
+  "roomWholeDevice": "Moves the whole device ({count} parts)",
+  "@roomWholeDevice": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "cancel": "Cancel",
   "save": "Save",
   "capOnOff": "Power",

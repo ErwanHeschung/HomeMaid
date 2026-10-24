@@ -145,3 +145,95 @@ async fn a_plugin_is_installed_checked_updated_and_removed() {
     assert!(config::load(&config_path).unwrap().plugins.is_empty());
     assert!(!dir.0.join("data/plugins/mock.wasm").exists());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn devices_are_added_from_their_form_checked_kept_and_removed() {
+    let wasm = std::fs::read(build_plugin("mock-plugin")).unwrap();
+    let served = Served::default();
+    let at = registry(served.clone()).await;
+    let author = Author::new();
+    // plugin-api 1.3: nothing to fill in at install, a form for each device.
+    let mut index: Value = serde_json::from_str(&author.index(&author.key, "0.1.0", &wasm, at)).unwrap();
+    index["plugins"][0]["settings"] = json!([]);
+    index["plugins"][0]["device_settings"] = json!([
+        { "key": "name", "label": "Name", "required": true },
+        { "key": "password", "label": "Password", "secret": true, "required": true },
+    ]);
+    index["plugins"][0]["versions"][0]["api"] = json!("1.3");
+    *served.index.lock().unwrap() = index.to_string();
+    *served.wasm.lock().unwrap() = wasm;
+
+    let (core, dir) = hub();
+    let config_path = dir.0.join("homemaid.toml");
+    let text = format!("[core]\nbind = \"127.0.0.1:0\"\ndata_dir = \"data\"\ntoken = \"0123456789abcdef\"\nregistry = \"http://{at}/index.json\"\n");
+    std::fs::write(&config_path, text).unwrap();
+    let app = api::router(core.clone(), &config::load(&config_path).unwrap().core.unwrap(), &config_path);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap() });
+    let (mut ws, _) = connect_async(format!("ws://{addr}/ws?token=0123456789abcdef")).await.unwrap();
+    let mut next_id = 0;
+    let mut call = async |method: &str, params: Value| {
+        next_id += 1;
+        let request = json!({ "jsonrpc": "2.0", "id": next_id, "method": method, "params": params });
+        ws.send(Message::Text(request.to_string().into())).await.unwrap();
+        loop {
+            let Some(Ok(Message::Text(text))) = ws.next().await else { panic!("closed") };
+            let message: Value = serde_json::from_str(&text).unwrap();
+            if message["id"] == next_id {
+                return message;
+            }
+        }
+    };
+
+    let reply = call("plugin.install", json!({ "id": "mock", "version": "0.1.0", "permissions": ["local-network"] })).await;
+    assert_eq!(reply["result"], true, "installed with no settings: {reply}");
+    let lamp = entity_uuid("mock", "lamp");
+    wait_for("the plugin", Duration::from_secs(10), || core.with(|r| r.entities.contains_key(&lamp))).await;
+
+    // The plugin checks a device before anything is saved.
+    let reply = call("device.add", json!({ "plugin": "mock", "settings": { "name": "Desk", "password": "wrong" } })).await;
+    assert_eq!(reply["error"]["message"], "wrong password", "{reply}");
+    let reply = call("device.add", json!({ "plugin": "mock", "settings": { "password": "right" } })).await;
+    assert!(reply["error"]["message"].as_str().unwrap().contains("Name is required"), "{reply}");
+    assert!(config::load(&config_path).unwrap().plugins[0].devices.is_empty());
+
+    let reply = call("device.add", json!({ "plugin": "mock", "settings": { "name": "Desk", "password": "right" } })).await;
+    let desk = reply["result"]["id"].as_str().unwrap_or_else(|| panic!("{reply}")).to_string();
+    let desk_bulb = entity_uuid("mock", &format!("bulb-{desk}"));
+    let entity = core.with(|r| r.entities.get(&desk_bulb).cloned()).expect("there at once");
+    assert_eq!((entity.name.as_str(), entity.added.as_deref()), ("Desk", Some(desk.as_str())));
+    // The second one reuses the first one's secret.
+    let reply = call("device.add", json!({ "plugin": "mock", "settings": { "name": "Shelf", "password": "" } })).await;
+    let shelf = reply["result"]["id"].as_str().unwrap_or_else(|| panic!("{reply}")).to_string();
+    let shelf_bulb = entity_uuid("mock", &format!("bulb-{shelf}"));
+
+    let saved = &config::load(&config_path).unwrap().plugins[0].devices;
+    assert_eq!(saved.iter().map(|d| (d.id.as_str(), d.settings["name"].as_str())).collect::<Vec<_>>(), [(desk.as_str(), "Desk"), (shelf.as_str(), "Shelf")]);
+    assert!(!saved[0].settings.contains_key("password"), "secrets stay out of the config");
+    let listed = call("plugins.list", json!(null)).await;
+    let devices = &listed["result"][0]["devices"];
+    assert_eq!((&devices[0]["id"], &devices[0]["secrets"], &devices[1]["settings"]["name"]), (&json!(desk), &json!(["password"]), &json!("Shelf")), "{listed}");
+    assert_eq!(listed["result"][0]["device_settings"][1]["key"], "password");
+    assert!(!listed.to_string().contains("right"), "secret values never go back out");
+
+    // Both are set up again at the next start, with their secrets.
+    let reply = call("plugin.configure", json!({ "id": "mock", "settings": {} })).await;
+    assert_eq!(reply["result"], true, "{reply}");
+    let restarted = || core.plugins.get().unwrap().states()["mock"].version.is_some();
+    wait_for("the restart", Duration::from_secs(10), restarted).await;
+    let back = || core.with(|r| [desk_bulb, shelf_bulb].iter().all(|id| r.entities.get(id).is_some_and(|e| e.available && e.added.is_some())));
+    wait_for("both bulbs after a restart", Duration::from_secs(10), back).await;
+    assert!(core.plugins.get().unwrap().states()["mock"].devices.is_empty(), "none failed");
+
+    let reply = call("device.remove", json!({ "plugin": "mock", "id": desk })).await;
+    assert_eq!(reply["result"], true, "{reply}");
+    assert!(core.with(|r| !r.entities.contains_key(&desk_bulb)), "its entities go with it");
+    wait_for("the other bulb after the restart", Duration::from_secs(10), || core.with(|r| r.entities.get(&shelf_bulb).is_some_and(|e| e.available))).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(core.with(|r| !r.entities.contains_key(&desk_bulb)), "not set up again");
+    let secrets = config::load_secrets(&dir.0.join("data/secrets.toml")).unwrap();
+    assert!(!secrets.contains_key(&config::device_secrets("mock", &desk)) && secrets.contains_key(&config::device_secrets("mock", &shelf)));
+    let reply = call("device.remove", json!({ "plugin": "mock", "id": desk })).await;
+    assert!(reply["error"].is_object(), "removed already: {reply}");
+}

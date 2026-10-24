@@ -42,6 +42,10 @@ pub struct Entity {
     pub local_id: String,
     /// Physical device grouping entities (the power strip of an outlet), as named by the plugin.
     pub device: Option<String>,
+    /// The device the user added it with, from the app (`[[plugin.device]]` id, plugin-api 1.3):
+    /// removing that device removes it.
+    #[serde(default)]
+    pub added: Option<String>,
     /// Which 3D model the app draws (`kettle`, `tv`...), chosen by the user; the app infers one
     /// from the capabilities when absent.
     #[serde(default)]

@@ -214,6 +214,7 @@ mod tests {
             plugin: plugin.into(),
             local_id: name.into(),
             device: None,
+            added: None,
             model: Some("lamp".into()),
             actions: vec![],
             caps: caps.iter().map(|c| (c.clone(), CapSlot::default())).collect::<BTreeMap<_, _>>(),

@@ -51,6 +51,7 @@ class Entity {
     required this.available,
     required this.plugin,
     this.device,
+    this.added,
     this.model,
     required this.caps,
     this.actions = const [],
@@ -64,6 +65,7 @@ class Entity {
         available: json['available'] as bool? ?? false,
         plugin: json['plugin'] as String? ?? '',
         device: json['device'] as String?,
+        added: json['added'] as String?,
         model: json['model'] as String?,
         caps: {
           for (final MapEntry(:key, :value) in ((json['caps'] as Map?) ?? const {}).entries)
@@ -82,6 +84,9 @@ class Entity {
   final bool available;
   final String plugin;
   final String? device;
+
+  /// The device the user added it with (its plugin's `device.add`); removing it removes this.
+  final String? added;
 
   /// The 3D model chosen by the user; null lets the app infer one from the capabilities.
   final String? model;
@@ -295,6 +300,8 @@ class InstalledPlugin {
     this.settings = const {},
     this.secrets = const [],
     this.declared = const [],
+    this.deviceSettings = const [],
+    this.devices = const [],
   });
 
   factory InstalledPlugin.fromJson(Map<String, dynamic> j) => InstalledPlugin(
@@ -308,6 +315,8 @@ class InstalledPlugin {
         settings: (j['settings'] as Map? ?? const {}).cast<String, String>(),
         secrets: [for (final s in j['secrets'] as List? ?? const []) s as String],
         declared: _settings(j['declared']),
+        deviceSettings: _settings(j['device_settings']),
+        devices: [for (final d in j['devices'] as List? ?? const []) AddedDevice.fromJson((d as Map).cast())],
       );
 
   final String id;
@@ -326,6 +335,30 @@ class InstalledPlugin {
   /// The secrets that are set, by key (never their values).
   final List<String> secrets;
   final List<PluginSetting> declared;
+
+  /// What its form asks for each device the user adds (a strip's address and login); none: it
+  /// has no devices to add.
+  final List<PluginSetting> deviceSettings;
+  final List<AddedDevice> devices;
+}
+
+/// A device the user added to a plugin.
+class AddedDevice {
+  const AddedDevice({required this.id, this.settings = const {}, this.secrets = const [], this.error});
+
+  factory AddedDevice.fromJson(Map<String, dynamic> j) => AddedDevice(
+        id: j['id'] as String,
+        settings: (j['settings'] as Map? ?? const {}).cast<String, String>(),
+        secrets: [for (final s in j['secrets'] as List? ?? const []) s as String],
+        error: j['error'] as String?,
+      );
+
+  final String id;
+  final Map<String, String> settings;
+  final List<String> secrets;
+
+  /// Why the plugin could not set it up at its last start.
+  final String? error;
 }
 
 /// A plugin the registry offers (`registry.list`).
@@ -335,6 +368,7 @@ class RegistryPlugin {
     required this.name,
     this.description = '',
     this.settings = const [],
+    this.deviceSettings = const [],
     this.version,
     this.permissions = const [],
     this.installed,
@@ -346,6 +380,7 @@ class RegistryPlugin {
         name: j['name'] as String,
         description: j['description'] as String? ?? '',
         settings: _settings(j['settings']),
+        deviceSettings: _settings(j['device_settings']),
         version: j['version'] as String?,
         permissions: [for (final p in j['permissions'] as List? ?? const []) p as String],
         installed: j['installed'] as String?,
@@ -356,6 +391,7 @@ class RegistryPlugin {
   final String name;
   final String description;
   final List<PluginSetting> settings;
+  final List<PluginSetting> deviceSettings;
 
   /// The newest version the hub can run; null when it needs a newer HomeMaid.
   final String? version;

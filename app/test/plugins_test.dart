@@ -15,6 +15,15 @@ void main() {
     });
     expect(installed.fromRegistry, isTrue);
     expect(installed.declared.single.secret, isTrue);
+    final devices = InstalledPlugin.fromJson({
+      'id': 'tplink', 'name': 'TP-Link Tapo', 'source': 'registry', 'declared': [],
+      'device_settings': [{'key': 'host', 'label': 'IP', 'required': true}],
+      'devices': [{'id': 'a1b2c3d4', 'settings': {'host': '192.168.1.89'}, 'secrets': ['password'], 'error': 'no answer'}],
+    });
+    expect(devices.deviceSettings.single.key, 'host');
+    final strip = devices.devices.single;
+    expect((strip.settings['host'], strip.error), ('192.168.1.89', 'no answer'));
+    expect(strip.secrets, ['password']);
     final offered = RegistryPlugin.fromJson({
       'id': 'future', 'name': 'Future', 'description': '', 'repo': '', 'settings': [], 'version': null, 'permissions': null,
       'installed': null, 'update': false,

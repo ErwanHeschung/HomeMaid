@@ -166,6 +166,7 @@ class DemoCore extends CoreClient {
       available: e.available,
       plugin: e.plugin,
       device: e.device,
+      added: e.added,
       model: model == null ? e.model : (model.isEmpty ? null : model),
       caps: e.caps,
       actions: e.actions,
@@ -179,8 +180,8 @@ class DemoCore extends CoreClient {
       id: 'tplink',
       name: 'TP-Link Tapo',
       description: _fr ? 'Multiprises et prises Tapo, en local.' : 'Tapo power strips and plugs, locally.',
-      settings: [
-        PluginSetting(key: 'hosts', label: _fr ? 'Adresses IP (séparées par des virgules)' : 'IP addresses (comma-separated)', required: true),
+      deviceSettings: [
+        PluginSetting(key: 'host', label: _fr ? 'Adresse IP de la multiprise' : 'IP address of the strip', required: true),
         PluginSetting(key: 'username', label: _fr ? 'E-mail du compte TP-Link' : 'TP-Link account e-mail', secret: true, required: true),
         PluginSetting(key: 'password', label: _fr ? 'Mot de passe TP-Link' : 'TP-Link password', secret: true, required: true),
       ],
@@ -205,9 +206,8 @@ class DemoCore extends CoreClient {
       fromRegistry: true,
       version: '0.1.0',
       permissions: const ['local-network'],
-      settings: const {'hosts': '192.168.1.50'},
-      secrets: const ['username', 'password'],
-      declared: _offered[0].settings,
+      deviceSettings: _offered[0].deviceSettings,
+      devices: const [AddedDevice(id: 'demo-strip', settings: {'host': '192.168.1.50'}, secrets: ['username', 'password'])],
     ),
     'pc': const InstalledPlugin(id: 'pc', name: 'pc', fromRegistry: false, version: '0.1.0', permissions: ['local-network', 'loopback']),
   };
@@ -228,6 +228,7 @@ class DemoCore extends CoreClient {
           name: p.name,
           description: p.description,
           settings: p.settings,
+          deviceSettings: p.deviceSettings,
           version: p.version,
           permissions: p.permissions,
           installed: _installed[p.id]?.version,
@@ -254,6 +255,8 @@ class DemoCore extends CoreClient {
       settings: {...?old?.settings, for (final s in plugin.settings.where((s) => !s.secret && settings[s.key] != null)) s.key: settings[s.key]!},
       secrets: {...?old?.secrets, for (final s in plugin.settings.where((s) => s.secret && settings[s.key] != null)) s.key}.toList(),
       declared: plugin.settings,
+      deviceSettings: plugin.deviceSettings,
+      devices: old?.devices ?? const [],
     );
     await refreshPlugins();
   }
@@ -262,7 +265,15 @@ class DemoCore extends CoreClient {
   Future<void> configurePlugin(String id, Map<String, String> settings) async {
     final p = _installed[id]!;
     await installPlugin(
-      RegistryPlugin(id: id, name: p.name, description: p.description ?? '', settings: p.declared, version: p.version, permissions: p.permissions),
+      RegistryPlugin(
+        id: id,
+        name: p.name,
+        description: p.description ?? '',
+        settings: p.declared,
+        deviceSettings: p.deviceSettings,
+        version: p.version,
+        permissions: p.permissions,
+      ),
       settings,
     );
   }
@@ -274,6 +285,54 @@ class DemoCore extends CoreClient {
     await refreshPlugins();
   }
 
+  /// A strip of three outlets, in no room yet; the address 0.0.0.0 stands for one that does not answer.
+  @override
+  Future<void> addDevice(String plugin, Map<String, String> settings) async {
+    await Future<void>.delayed(const Duration(milliseconds: 900));
+    final p = _installed[plugin]!;
+    for (final s in p.deviceSettings.where((s) => s.required)) {
+      final reused = s.secret && p.devices.isNotEmpty;
+      if ((settings[s.key] ?? '').trim().isEmpty && !reused) throw '${s.label} ${_fr ? 'est obligatoire' : 'is required'}';
+    }
+    if (settings['host'] == '0.0.0.0') throw _fr ? '0.0.0.0 ne répond pas' : '0.0.0.0 does not answer';
+    final id = 'demo-added-${p.devices.length + 1}';
+    for (var i = 1; i <= 3; i++) {
+      final e = Entity.fromJson({
+        'id': '$id-$i', 'name': '${_fr ? 'Prise' : 'Outlet'} $i', 'available': true, 'plugin': plugin, 'device': id, 'added': id,
+        'caps': _switch(false),
+      });
+      entities[e.id] = e;
+    }
+    _installed[plugin] = InstalledPlugin(
+      id: p.id,
+      name: p.name,
+      description: p.description,
+      fromRegistry: true,
+      version: p.version,
+      permissions: p.permissions,
+      deviceSettings: p.deviceSettings,
+      devices: [...p.devices, AddedDevice(id: id, settings: {'host': settings['host']!.trim()}, secrets: const ['username', 'password'])],
+    );
+    await refreshPlugins();
+  }
+
+  @override
+  Future<void> removeDevice(String plugin, String id) async {
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    entities.removeWhere((_, e) => e.plugin == plugin && e.added == id);
+    final p = _installed[plugin]!;
+    _installed[plugin] = InstalledPlugin(
+      id: p.id,
+      name: p.name,
+      description: p.description,
+      fromRegistry: true,
+      version: p.version,
+      permissions: p.permissions,
+      deviceSettings: p.deviceSettings,
+      devices: p.devices.where((d) => d.id != id).toList(),
+    );
+    await refreshPlugins();
+  }
 }
 
 Map<String, dynamic> _slot(Object? observed, {Object? desired, String state = 'confirmed', String? reason, Map<String, dynamic> meta = const {}}) => {
@@ -284,9 +343,9 @@ Map<String, dynamic> _slot(Object? observed, {Object? desired, String state = 'c
     };
 
 Entity _entity(String id, String name, String? room, Map<String, Map<String, dynamic>> caps,
-        {String? device, bool available = true, String? model, String plugin = 'demo', List<String> actions = const []}) =>
+        {String? device, String? added, bool available = true, String? model, String plugin = 'demo', List<String> actions = const []}) =>
     Entity.fromJson({
-      'id': id, 'name': name, 'room': room, 'available': available, 'plugin': plugin, 'device': device, 'model': model,
+      'id': id, 'name': name, 'room': room, 'available': available, 'plugin': plugin, 'device': device, 'added': added, 'model': model,
       'caps': caps, 'actions': [for (final a in actions) {'name': a}],
     });
 
@@ -302,9 +361,9 @@ List<Entity> _home(bool fr) {
   final kitchen = t('Cuisine', 'Kitchen'), entrance = t('Entrée', 'Entrance'), bathroom = t('Salle de bain', 'Bathroom');
   return [
     // A three-outlet strip: on, off, and a request still pending.
-    _entity('demo-strip-1', t('Lampe d\'appoint', 'Side lamp'), living, _switch(true), device: 'demo-strip'),
-    _entity('demo-strip-2', t('Télévision', 'TV'), living, _switch(false), device: 'demo-strip'),
-    _entity('demo-strip-3', t('Console', 'Console'), living, _switch(false, desired: true, state: 'pending'), device: 'demo-strip'),
+    _entity('demo-strip-1', t('Lampe d\'appoint', 'Side lamp'), living, _switch(true), device: 'demo-strip', added: 'demo-strip', plugin: 'tplink'),
+    _entity('demo-strip-2', t('Télévision', 'TV'), living, _switch(false), device: 'demo-strip', added: 'demo-strip', plugin: 'tplink'),
+    _entity('demo-strip-3', t('Console', 'Console'), living, _switch(false, desired: true, state: 'pending'), device: 'demo-strip', added: 'demo-strip', plugin: 'tplink'),
     // Lamps: lit at 70 %, and off.
     _entity('demo-ceiling', t('Plafonnier', 'Ceiling light'), living, {
       ..._switch(true),

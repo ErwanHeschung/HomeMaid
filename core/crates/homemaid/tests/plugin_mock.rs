@@ -112,3 +112,18 @@ async fn a_plugin_api_1_2_device_is_handed_its_schedules() {
     wait_for("the new schedules", Duration::from_secs(5), || schedules().is_some_and(|s| s.starts_with("morning"))).await;
     assert_eq!(core.automations().list(&core, &jiff::Zoned::now())[0]["delegated"], serde_json::json!(["Mock lamp"]));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_built_for_api_1_2_still_runs_with_its_schedules() {
+    // Built from the mock before plugin-api 1.3 (tplink 0.1.0 is one): no devices to add.
+    let wasm = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mock-plugin-api-1.2.wasm");
+    let (core, data) = start_wasm(mock(&["local-network"], &[]), wasm);
+    let lamp = entity_uuid("mock", "lamp");
+    wait_for("discovery", Duration::from_secs(10), || core.with(|r| r.entities.get(&lamp).is_some_and(|e| e.available))).await;
+    assert_eq!(core.with(|r| r.entities[&lamp].actions.len()), 1, "its 1.1 action");
+    let plugins = core.plugins.get().unwrap();
+    let refused = plugins.add_device("mock", "x", Default::default()).await.unwrap_err();
+    assert!(refused.contains("1.3"), "{refused}");
+    let kv = std::fs::read_to_string(data.0.join("plugins/mock.kv.json")).unwrap();
+    assert!(kv.contains("schedules:lamp"), "handed its (empty) schedules: {kv}");
+}

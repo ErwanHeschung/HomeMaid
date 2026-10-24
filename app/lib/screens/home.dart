@@ -14,6 +14,7 @@ import '../widgets/model_names.dart';
 import '../widgets/state.dart';
 import 'automations.dart' show actionLabel;
 import 'common.dart';
+import 'plugins.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.core, required this.onPair});
@@ -67,6 +68,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   tooltip: l.roomType,
                   onPressed: () => editRoom(context, core, roomName),
                 ),
+              IconButton(icon: const Icon(Icons.add), tooltip: l.addDevice, onPressed: () => _add(context, core)),
             ]),
           ),
           Padding(
@@ -106,7 +108,8 @@ class _HomeScreenState extends State<HomeScreen> {
           Expanded(
             child: LayoutBuilder(builder: (context, constraints) {
               // About half the screen, more when the list is short: no dead band of floor below.
-              final rows = entities.length * 65.0 + 8;
+              final groups = groupDevices(entities);
+              final rows = groups.length * 65.0 + 8;
               final viewport = (constraints.maxHeight - rows).clamp(constraints.maxHeight * 0.5, constraints.maxHeight * 0.66);
               return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                 SizedBox(
@@ -126,14 +129,17 @@ class _HomeScreenState extends State<HomeScreen> {
                         )
                       : ListView.separated(
                           padding: const EdgeInsets.only(bottom: 16),
-                          itemCount: entities.length,
+                          itemCount: groups.length,
                           separatorBuilder: (_, _) => const Divider(indent: 50),
-                          itemBuilder: (context, i) => DeviceRow(
-                            entity: entities[i],
-                            selected: entities[i].id == _selected,
-                            onTap: () => _open(context, core, entities[i].id),
-                            onSet: (cap, value) => _set(context, core, entities[i].id, cap, value),
-                          ),
+                          itemBuilder: (context, i) {
+                            final parts = groups[i].entities;
+                            return DeviceRow(
+                              group: groups[i],
+                              selected: parts.any((e) => e.id == _selected),
+                              onTap: () => _open(context, core, parts.first.id),
+                              onSet: (cap, value) => _set(context, core, parts.first.id, cap, value),
+                            );
+                          },
                         ),
                 ),
               ]);
@@ -144,13 +150,66 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Adding a device: a PC by its pairing code, a device of an installed plugin by its form, or
+  /// another one by installing its plugin first.
+  Future<void> _add(BuildContext context, CoreClient core) async {
+    final l = AppLocalizations.of(context);
+    await core.refreshPlugins().catchError((Object _) {});
+    if (!context.mounted) return;
+    final choice = await showModalBottomSheet<Object>(
+      context: context,
+      useSafeArea: true,
+      builder: (context) => SafeArea(
+        top: false,
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Text(l.addDevice, style: Theme.of(context).textTheme.headlineSmall),
+          ),
+          for (final p in core.plugins.where((p) => p.deviceSettings.isNotEmpty))
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+              leading: const Icon(Icons.extension_outlined),
+              title: Text(p.name),
+              subtitle: p.description == null ? null : Text(p.description!, maxLines: 2, overflow: TextOverflow.ellipsis),
+              onTap: () => Navigator.pop(context, p),
+            ),
+          ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+            leading: const Icon(Icons.computer_outlined),
+            title: Text(l.addPc),
+            subtitle: Text(l.addPcHint),
+            onTap: () => Navigator.pop(context, 'pc'),
+          ),
+          ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+            leading: const Icon(Icons.add_circle_outline),
+            title: Text(l.addOther),
+            subtitle: Text(l.addOtherHint),
+            onTap: () => Navigator.pop(context, 'plugins'),
+          ),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+    if (!context.mounted) return;
+    switch (choice) {
+      case InstalledPlugin plugin:
+        await showDeviceForm(context, core, plugin);
+      case 'pc':
+        widget.onPair();
+      case 'plugins':
+        await showPlugins(context, core);
+    }
+  }
+
   Future<void> _open(BuildContext context, CoreClient core, String id) async {
     setState(() => _selected = id);
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (_) => DeviceSheet(core: core, id: id, onSet: (cap, value) => _set(context, core, id, cap, value)),
+      builder: (_) => DeviceSheet(core: core, id: id, onSet: (part, cap, value) => _set(context, core, part, cap, value)),
     );
     if (mounted) setState(() => _selected = null);
   }
@@ -207,11 +266,12 @@ class _RoomTabs extends StatelessWidget {
   }
 }
 
-/// A device in the list: its fill swatch, name, flipping value and primary switch.
+/// A device in the list: its fill swatch, name, flipping value and primary switch. A device of
+/// several parts (a strip's outlets) is one row, its parts are in its sheet.
 class DeviceRow extends StatelessWidget {
-  const DeviceRow({super.key, required this.entity, required this.selected, required this.onTap, required this.onSet});
+  const DeviceRow({super.key, required this.group, required this.selected, required this.onTap, required this.onSet});
 
-  final Entity entity;
+  final DeviceGroup group;
   final bool selected;
   final VoidCallback onTap;
   final void Function(String cap, Object? value) onSet;
@@ -219,7 +279,9 @@ class DeviceRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final power = entity.caps['on_off'];
+    final parts = group.entities;
+    final entity = parts.length == 1 ? parts.first : _shown(parts);
+    final power = parts.length == 1 ? entity.caps['on_off'] : null;
     return Material(
       color: selected ? Hm.select.withValues(alpha: 0.08) : Colors.transparent,
       child: InkWell(
@@ -233,10 +295,15 @@ class DeviceRow extends StatelessWidget {
               const SizedBox(width: 16),
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-                  Text(entity.name, style: theme.textTheme.titleMedium, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  Text(
+                    parts.length == 1 ? entity.name : modelLabel(context, group.model),
+                    style: theme.textTheme.titleMedium,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                   const SizedBox(height: 2),
                   FlipText(
-                    summary(context, entity),
+                    parts.length == 1 ? summary(context, entity) : _partsSummary(context, parts),
                     style: theme.textTheme.bodyMedium?.copyWith(color: stateColor(entity), fontFeatures: Hm.tabular),
                   ),
                 ]),
@@ -253,13 +320,34 @@ class DeviceRow extends StatelessWidget {
   }
 }
 
-/// Every control of one device, live.
+/// The part a device of several parts is drawn as: a failed one, else a pending one, else one on.
+Entity _shown(List<Entity> parts) =>
+    parts.where(isFailed).firstOrNull ??
+    parts.where(isPending).firstOrNull ??
+    parts.where((e) => onLevel(e) > 0 && e.available).firstOrNull ??
+    parts.first;
+
+String _partsSummary(BuildContext context, List<Entity> parts) {
+  final l = AppLocalizations.of(context);
+  if (parts.every((e) => !e.available)) return l.offline;
+  final on = parts.where((e) => onLevel(e) > 0 && e.available).length;
+  return on > 0 ? l.onCount(on) : l.stateOff;
+}
+
+/// The parts of [entity]'s physical device, [entity] alone if it has none.
+List<Entity> deviceParts(CoreClient core, Entity entity) => entity.device == null
+    ? [entity]
+    : (core.entities.values.where((e) => e.device == entity.device).toList()..sort((a, b) => a.name.compareTo(b.name)));
+
+/// Every control of one device, live; a device of several parts gets a section per part.
 class DeviceSheet extends StatelessWidget {
   const DeviceSheet({super.key, required this.core, required this.id, required this.onSet});
 
   final CoreClient core;
+
+  /// Any part of the device.
   final String id;
-  final void Function(String cap, Object? value) onSet;
+  final void Function(String id, String cap, Object? value) onSet;
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -269,14 +357,9 @@ class DeviceSheet extends StatelessWidget {
           if (entity == null) return const SizedBox(height: 120);
           final l = AppLocalizations.of(context);
           final theme = Theme.of(context);
-          final reason = failureReason(entity);
-          final status = !entity.available
-              ? l.offline
-              : isFailed(entity)
-                  ? (reason == null ? l.failedNoReason : l.failed(reason))
-                  : isPending(entity)
-                      ? l.pending
-                      : summary(context, entity);
+          final parts = deviceParts(core, entity);
+          final single = parts.length == 1;
+          final shown = single ? entity : _shown(parts);
           return SafeArea(
             top: false,
             child: SingleChildScrollView(
@@ -285,41 +368,128 @@ class DeviceSheet extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 0, 8, 4),
                   child: Row(children: [
-                    StateSwatch(entity, size: 18),
+                    StateSwatch(shown, size: 18),
                     const SizedBox(width: 14),
-                    Expanded(child: Text(entity.name, style: theme.textTheme.headlineSmall)),
+                    Expanded(
+                      child: Text(single ? entity.name : modelLabel(context, DeviceGroup(parts).model), style: theme.textTheme.headlineSmall),
+                    ),
                     IconButton(
                       icon: const Icon(Icons.edit_outlined),
                       tooltip: l.editDevice,
-                      onPressed: () => editEntity(context, core, entity),
+                      onPressed: () => editEntity(context, core, entity, whole: !single),
                     ),
                   ]),
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(52, 0, 20, 12),
                   child: FlipText(
-                    status,
-                    style: theme.textTheme.bodyMedium?.copyWith(color: stateColor(entity), fontFeatures: Hm.tabular),
+                    single ? _status(context, entity) : _partsSummary(context, parts),
+                    style: theme.textTheme.bodyMedium?.copyWith(color: stateColor(shown), fontFeatures: Hm.tabular),
                   ),
                 ),
                 const Divider(),
                 const SizedBox(height: 4),
-                for (final MapEntry(key: kind, value: slot) in entity.orderedCaps)
-                  CapabilityTile(kind: kind, slot: slot, enabled: entity.available, onSet: (v) => onSet(kind, v)),
-                if (entity.actions.any((a) => a.params == null))
-                  _ActionRow(core: core, entity: entity),
+                if (single)
+                  ..._controls(entity)
+                else
+                  for (final (i, part) in parts.indexed) ...[
+                    if (i > 0) const Divider(indent: 20),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 8, 8, 0),
+                      child: Row(children: [
+                        StateSwatch(part),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(part.name, style: theme.textTheme.titleMedium),
+                            FlipText(
+                              _status(context, part),
+                              style: theme.textTheme.bodyMedium?.copyWith(color: stateColor(part), fontFeatures: Hm.tabular),
+                            ),
+                          ]),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.edit_outlined, size: 20),
+                          tooltip: l.editDevice,
+                          onPressed: () => editEntity(context, core, part),
+                        ),
+                      ]),
+                    ),
+                    ..._controls(part),
+                  ],
+                if (entity.added != null) ...[
+                  const SizedBox(height: 12),
+                  const Divider(),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        style: TextButton.styleFrom(foregroundColor: Hm.danger),
+                        icon: const Icon(Icons.delete_outline),
+                        label: Text(l.removeDevice),
+                        onPressed: () => _remove(context, entity),
+                      ),
+                    ),
+                  ),
+                ],
               ]),
             ),
           );
         },
       );
+
+  /// Removes the device the user added, all its parts with it, once confirmed; the sheet closes.
+  Future<void> _remove(BuildContext context, Entity entity) async {
+    final l = AppLocalizations.of(context);
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(l.removeDevice),
+        content: Text(l.removeDeviceBody),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(l.cancel)),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(l.removeItem)),
+        ],
+      ),
+    );
+    if (sure != true || !context.mounted) return;
+    try {
+      await core.removeDevice(entity.plugin, entity.added!);
+      if (context.mounted) Navigator.pop(context);
+    } catch (e) {
+      if (context.mounted) showError(context, e);
+    }
+  }
+
+  String _status(BuildContext context, Entity entity) {
+    final l = AppLocalizations.of(context);
+    final reason = failureReason(entity);
+    return !entity.available
+        ? l.offline
+        : isFailed(entity)
+            ? (reason == null ? l.failedNoReason : l.failed(reason))
+            : isPending(entity)
+                ? l.pending
+                : summary(context, entity);
+  }
+
+  List<Widget> _controls(Entity entity) => [
+        for (final MapEntry(key: kind, value: slot) in entity.orderedCaps)
+          CapabilityTile(kind: kind, slot: slot, enabled: entity.available, onSet: (v) => onSet(entity.id, kind, v)),
+        if (entity.actions.any((a) => a.params == null)) _ActionRow(core: core, entity: entity),
+      ];
 }
 
-Future<void> editEntity(BuildContext context, CoreClient core, Entity entity) async {
+/// Renames [entity] and moves its whole device: a strip's outlets share one room and one model.
+/// [whole] edits the device itself, without a name.
+Future<void> editEntity(BuildContext context, CoreClient core, Entity entity, {bool whole = false}) async {
   final l = AppLocalizations.of(context);
+  final parts = deviceParts(core, entity);
   final name = TextEditingController(text: entity.name);
   var room = entity.room ?? '';
-  var model = entity.model;
+  final chosen = parts.map((e) => e.model).nonNulls.firstOrNull;
+  var model = chosen;
   final save = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
@@ -327,8 +497,10 @@ Future<void> editEntity(BuildContext context, CoreClient core, Entity entity) as
       content: SizedBox(
         width: double.maxFinite,
         child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        TextField(controller: name, decoration: InputDecoration(labelText: l.name)),
-        const SizedBox(height: 16),
+        if (!whole) ...[
+          TextField(controller: name, decoration: InputDecoration(labelText: l.name)),
+          const SizedBox(height: 16),
+        ],
         Autocomplete<String>(
           initialValue: TextEditingValue(text: room),
           optionsBuilder: (value) => core.rooms.where((r) => r.toLowerCase().contains(value.text.toLowerCase())),
@@ -337,7 +509,11 @@ Future<void> editEntity(BuildContext context, CoreClient core, Entity entity) as
             controller: controller,
             focusNode: focus,
             onChanged: (value) => room = value,
-            decoration: InputDecoration(labelText: l.room, hintText: l.roomHint),
+            decoration: InputDecoration(
+              labelText: l.room,
+              hintText: l.roomHint,
+              helperText: parts.length > 1 ? l.roomWholeDevice(parts.length) : null,
+            ),
           ),
         ),
         const SizedBox(height: 20),
@@ -360,10 +536,19 @@ Future<void> editEntity(BuildContext context, CoreClient core, Entity entity) as
   final newName = name.text.trim();
   name.dispose();
   if (save != true || !context.mounted) return;
-  final newModel = model == entity.model ? null : (model ?? '');
-  await core.update(entity.id, name: newName, room: room.trim(), model: newModel).catchError((Object e) {
+  final newRoom = room.trim();
+  final newModel = model == chosen ? null : (model ?? '');
+  try {
+    // One after the other: each one rewrites homemaid.toml.
+    for (final e in parts) {
+      final rename = !whole && e.id == entity.id;
+      final move = (e.room ?? '') != newRoom;
+      if (!rename && !move && newModel == null) continue;
+      await core.update(e.id, name: rename ? newName : null, room: move ? newRoom : null, model: newModel);
+    }
+  } catch (e) {
     if (context.mounted) showError(context, e);
-  });
+  }
 }
 
 /// Which furnished room a room is shown as; "Automatic" goes back to the one its name suggests.

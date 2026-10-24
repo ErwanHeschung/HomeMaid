@@ -1,4 +1,4 @@
-package homemaid:plugin@1.2.0;
+package homemaid:plugin@1.3.0;
 
 /// Capability kinds and values cross the boundary as strings (kind: "on_off", value and meta: JSON),
 /// so new capabilities do not break v1. The Rust SDK exposes them typed.
@@ -115,4 +115,20 @@ world plugin-with-schedules {
     /// the app says they run without the hub. Err: it does not (not supported, unreachable); the
     /// plugin may still apply them later, the core runs them anyway.
     export set-schedules: func(local-id: string, schedules: list<schedule>) -> result<_, string>;
+}
+
+/// plugin-api 1.3: devices the user adds one at a time from the app (a strip by its address and
+/// login), each with its own settings, as the plugin's `device_settings` in the registry declare.
+/// The plugin itself then needs no settings. Everything a 1.2 plugin does, plus that.
+world plugin-with-devices {
+    include plugin-with-schedules;
+    use types.{entity as device-entity};
+
+    /// A device to drive, with what the user typed for it (secrets included). Called after init
+    /// and before discover for each saved device, and when the user adds one: Err refuses it then
+    /// (the message is shown in the form), and leaves it out until the next start otherwise.
+    /// Returns its entities, so the core knows which device each one belongs to and removes them
+    /// with it. A device that does not answer at start may still return its last known entities.
+    /// Removing a device restarts the plugin without it.
+    export add-device: func(id: string, settings: list<tuple<string, string>>) -> result<list<device-entity>, string>;
 }
