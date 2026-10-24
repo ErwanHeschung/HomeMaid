@@ -32,7 +32,7 @@ use uuid::Uuid;
 use crate::{
     Core, Event,
     model::{CapKind, CapValue, Entity},
-    reconciler::Change,
+    reconciler::{Change, Reconciler},
     selector::Selector,
 };
 
@@ -224,18 +224,18 @@ impl Days {
 }
 
 #[derive(Debug, Clone)]
-struct Target {
-    select: Selector,
+pub(crate) struct Target {
+    pub(crate) select: Selector,
     /// As written, for people.
-    text: String,
+    pub(crate) text: String,
 }
 
 impl Target {
-    fn parse(text: &str) -> Result<Self, String> {
+    pub(crate) fn parse(text: &str) -> Result<Self, String> {
         Ok(Self { select: Selector::parse(text)?, text: text.into() })
     }
 
-    fn entities<'a>(&self, entities: impl IntoIterator<Item = &'a Entity>) -> Vec<&'a Entity> {
+    pub(crate) fn entities<'a>(&self, entities: impl IntoIterator<Item = &'a Entity>) -> Vec<&'a Entity> {
         entities.into_iter().filter(|e| self.select.matches(e)).collect()
     }
 }
@@ -826,6 +826,11 @@ impl Automations {
         self.list.is_empty()
     }
 
+    /// The scenes their `scene` steps name: (automation, node, scene).
+    pub fn scene_refs(&self) -> Vec<(String, String, String)> {
+        self.list.iter().flat_map(|a| a.flow.scene_refs().map(|(node, scene)| (a.id.clone(), node.into(), scene.into()))).collect()
+    }
+
     fn index(&self, id: &str) -> Result<usize, String> {
         self.list.iter().position(|a| a.id == id).ok_or_else(|| format!("unknown automation `{id}`"))
     }
@@ -1113,7 +1118,40 @@ impl Automations {
     }
 }
 
-fn nothing_matched(results: Vec<ActionResult>, target: &Target, label: &str) -> Vec<ActionResult> {
+/// Sets `value` as the desired state of each entity: its command status, or why not.
+pub(crate) fn set_each(r: &mut Reconciler, ids: Vec<(Uuid, String)>, cap: &CapKind, value: &CapValue, label: &str) -> Vec<ActionResult> {
+    ids.into_iter()
+        .map(|(id, name)| {
+            let status = r.set_desired(id, cap, value.clone(), Instant::now());
+            ActionResult {
+                entity: Some(id),
+                target: name,
+                action: label.into(),
+                ok: status.is_ok(),
+                outcome: match status {
+                    Ok(s) => serde_json::to_value(&s).ok().and_then(|v| v["state"].as_str().map(String::from)).unwrap_or_default(),
+                    Err(e) => e,
+                },
+            }
+        })
+        .collect()
+}
+
+/// Invokes `action` on each entity, one after the other: sent, or why not.
+pub(crate) async fn invoke_each(core: &Core, ids: Vec<(Uuid, String)>, action: &str, params: &Value, label: &str) -> Vec<ActionResult> {
+    let mut results = vec![];
+    for (id, name) in ids {
+        let outcome = match core.plugins.get() {
+            Some(plugins) => plugins.invoke(core, id, action, params.clone()).await,
+            None => Err("plugins are not running".into()),
+        };
+        let (ok, outcome) = (outcome.is_ok(), outcome.map_or_else(|e| e, |()| "sent".into()));
+        results.push(ActionResult { entity: Some(id), target: name, action: label.into(), ok, outcome });
+    }
+    results
+}
+
+pub(crate) fn nothing_matched(results: Vec<ActionResult>, target: &Target, label: &str) -> Vec<ActionResult> {
     if !results.is_empty() {
         return results;
     }
@@ -1285,8 +1323,15 @@ mod tests {
             .filter_map(|l| l.strip_prefix("# "))
             .filter(|l| l.starts_with("[[") || l.split_once(" = ").is_some_and(|(key, _)| key.chars().all(|c| c.is_ascii_lowercase() || c == '_')))
             .collect();
-        let automations = config(&toml.join("\n")).unwrap();
+        let text = toml.join("\n");
+        let automations = config(&text).unwrap();
         assert!(automations.list.iter().any(|a| a.id == "living-at-night"));
+        #[derive(Deserialize)]
+        struct File {
+            scene: Vec<crate::scenes::SceneConfig>,
+        }
+        let scenes = crate::scenes::Scenes::new(&toml::from_str::<File>(&text).unwrap().scene).unwrap();
+        assert!(scenes.contains("cinema"));
     }
 
     #[test]
@@ -1770,4 +1815,23 @@ days = ["monday"]"#, ok_action), "unknown day"),
         assert_eq!(last_run(&a, "2h").unwrap().stopped.as_deref(), Some("the automation was edited"));
     }
 
+
+    #[tokio::test]
+    async fn a_scene_step_sets_the_scene_and_must_name_one() {
+        let a = flow(&format!("start = [\"night\"]\n{AT_7}{}", node("night", "scene = \"night\""))).unwrap();
+        #[derive(Deserialize)]
+        struct File {
+            scene: Vec<crate::scenes::SceneConfig>,
+        }
+        let file: File = toml::from_str("[[scene]]\nid = \"night\"\n[[scene.set]]\nselect = \"room:Salon\"\ncap = \"on_off\"\nvalue = false\n").unwrap();
+        let scenes = crate::scenes::Scenes::new(&file.scene).unwrap();
+        assert!(crate::scenes::check_refs(&a, &crate::scenes::Scenes::none()).unwrap_err().contains("automation `f`, node `night`: no scene `night`"));
+        assert!(crate::scenes::check_refs(&a, &scenes).is_ok());
+
+        let (core, mut commands) = core(vec![lamp(true)]);
+        core.set_scenes(scenes);
+        let run = a.run(&core, "f", "manual".into(), &Zoned::now()).await.unwrap();
+        assert_eq!((names(&run), run.results[0].outcome.as_str()), (vec!["night"], "pending"));
+        assert_eq!(sent(&mut commands), [CapValue::OnOff(false)]);
+    }
 }

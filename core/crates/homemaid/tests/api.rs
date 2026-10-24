@@ -253,6 +253,18 @@ async fn automations_are_edited_live_and_saved() {
     assert_eq!((run["stopped"].as_str(), run["steps"][0]["node"].as_str()), (Some("by hand"), Some("dim")), "{run}");
     rpc(ws, inbox, 34, "automation.delete", json!({ "id": "night" })).await;
 
+    // A scene: saved, listed with what it sets, applied, then removed.
+    let dim = json!({ "id": "dim", "name": "Tamisé", "set": [{ "select": "plugin:mock", "cap": "brightness", "value": 15 }] });
+    assert_eq!(rpc(ws, inbox, 40, "scene.save", json!({ "scene": dim })).await["result"], true);
+    assert!(notified(ws, inbox, "scenes.changed").await);
+    let list = rpc(ws, inbox, 41, "scenes.list", json!(null)).await;
+    assert_eq!(list["result"][0]["targets"][0]["cap"], "brightness", "{list}");
+    let applied = rpc(ws, inbox, 42, "scene.apply", json!({ "id": "dim" })).await;
+    assert_eq!(applied["result"][0]["ok"], true, "{applied}");
+    assert_eq!(brightness(), Some(CapValue::Brightness(15)));
+    assert_eq!(rpc(ws, inbox, 43, "scene.delete", json!({ "id": "dim" })).await["result"], true);
+    assert!(!std::fs::read_to_string(&config_path).unwrap().contains("[[scene]]\nid = \"dim\""));
+
     let reply = rpc(ws, inbox, 8, "automation.delete", json!({ "id": "follow" })).await;
     assert_eq!(reply["result"], true, "{reply}");
     let list = rpc(ws, inbox, 9, "automations.list", json!(null)).await;

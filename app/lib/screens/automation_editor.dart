@@ -17,6 +17,7 @@ import '../selectors.dart';
 import '../theme.dart';
 import '../widgets/flow_canvas.dart';
 import '../widgets/state.dart';
+import '../widgets/value_field.dart';
 import 'automations.dart';
 import 'common.dart';
 import 'settings.dart';
@@ -53,15 +54,6 @@ bool _writable(Entity e, String cap) => e.caps[cap] != null && e.caps[cap]!.meta
 Map<String, dynamic> _meta(CoreClient core, String cap) =>
     core.entities.values.map((e) => e.caps[cap]?.meta).nonNulls.firstOrNull ?? const {};
 
-bool _isBool(String cap, Map<String, dynamic> meta) =>
-    cap == 'on_off' || cap == 'mute' || (meta['schema'] as Map?)?['type'] == 'boolean';
-
-bool _isNumber(String cap, Map<String, dynamic> meta) =>
-    const {'brightness', 'volume', 'power'}.contains(cap) || meta['max'] is num || (meta['schema'] as Map?)?['type'] == 'number';
-
-Object _defaultValue(String cap, Map<String, dynamic> meta) =>
-    _isBool(cap, meta) ? true : _isNumber(cap, meta) ? ((meta['max'] as num? ?? 100) / 2).round() : '';
-
 Map<String, dynamic> _newTrigger() => {'at': '19:00'};
 
 /// Something the home has: a switch if there is one, else a level, else any setting.
@@ -70,7 +62,7 @@ Map<String, dynamic> _newAction(CoreClient core) {
   final pick = ['on_off', 'brightness', 'volume'].map((cap) => writable.where((w) => w.$2 == cap).firstOrNull).nonNulls.firstOrNull ??
       writable.firstOrNull;
   final cap = pick?.$2 ?? 'on_off';
-  return {'set': {'select': roomSelector(pick?.$1.room, cap), 'cap': cap, 'value': _defaultValue(cap, _meta(core, cap))}};
+  return {'set': {'select': roomSelector(pick?.$1.room, cap), 'cap': cap, 'value': defaultCapValue(cap, _meta(core, cap))}};
 }
 
 Map<String, dynamic> _newCondition(CoreClient core) => {'state': _newTest(core, trigger: false)};
@@ -80,7 +72,8 @@ List<Map<String, dynamic>> _newNodes(CoreClient core, FlowGraph graph, String ki
   final id = graph.newId(kind);
   return switch (kind) {
     'set' => [{'id': id, ..._newAction(core)}],
-    'invoke' => [{'id': id, 'invoke': _newInvoke(core)}],
+    'invoke' => [{'id': id, 'invoke': newInvoke(core)}],
+    'scene' => [{'id': id, 'scene': core.scenes.firstOrNull?.id ?? ''}],
     'delay' => [{'id': id, 'delay': '5m'}],
     'wait' => [{'id': id, 'wait': {'until': [_newCondition(core)], 'timeout': '30m'}}],
     'if' => [{'id': id, 'if': [_newCondition(core)]}],
@@ -310,13 +303,14 @@ class _AutomationEditorState extends State<AutomationEditor> {
               'else' => l.addIfNo,
               _ => l.addStep,
             }),
-            for (final kind in const ['set', 'invoke', 'delay', 'wait', 'if', 'repeat', 'stop'])
+            for (final kind in const ['set', 'invoke', 'scene', 'delay', 'wait', 'if', 'repeat', 'stop'])
               ListTile(
                 leading: Icon(kindIcon(kind)),
                 title: Text(kindLabel(context, kind)),
                 subtitle: Text(switch (kind) {
                   'set' => l.kindSetHint,
                   'invoke' => l.kindInvokeHint,
+                  'scene' => l.kindSceneHint,
                   'delay' => l.kindDelayHint,
                   'wait' => l.kindWaitHint,
                   'if' => l.kindIfHint,
@@ -522,7 +516,20 @@ class _NodeFields extends StatelessWidget {
       case 'set':
         return _SetFields(core: core, set: _sub(n, 'set'), onChanged: onChanged, fromTrigger: fromDevice);
       case 'invoke':
-        return _InvokeFields(core: core, invoke: _sub(n, 'invoke'), onChanged: onChanged);
+        return InvokeFields(core: core, invoke: _sub(n, 'invoke'), onChanged: onChanged);
+      case 'scene':
+        final scenes = core.scenes;
+        if (scenes.isEmpty) return Text(l.noScenes, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Hm.danger));
+        return DropdownButtonFormField<String>(
+          isExpanded: true,
+          initialValue: scenes.any((s) => s.id == n['scene']) ? n['scene'] as String : null,
+          decoration: InputDecoration(labelText: l.kindScene),
+          items: [for (final s in scenes) DropdownMenuItem(value: s.id, child: Text(s.name))],
+          onChanged: (id) {
+            n['scene'] = id;
+            onChanged();
+          },
+        );
       case 'delay':
         return _Duration(value: n['delay'] as String, onChanged: (v) { n['delay'] = v; onChanged(); });
       case 'wait':
@@ -602,7 +609,7 @@ class _NodeFields extends StatelessWidget {
                 caps: core.entities.values.expand((e) => e.caps.keys).toSet().toList(),
                 onChanged: (_) { repeat['for_each'] = each['select']; onChanged(); },
               ),
-            _ => _Value(
+            _ => ValueField(
                 cap: 'count',
                 meta: const {'min': 1, 'max': 20},
                 value: repeat['count'] as int? ?? 3,
@@ -631,7 +638,7 @@ class _NodeFields extends StatelessWidget {
             },
           ),
           if (stop['error'] case final String error)
-            _TextValue(label: l.stopWhy, value: error, onChanged: (v) { stop['error'] = v; onChanged(); }),
+            TextValueField(label: l.stopWhy, value: error, onChanged: (v) { stop['error'] = v; onChanged(); }),
         ]);
     }
   }
@@ -685,7 +692,7 @@ class _Duration extends StatelessWidget {
           ChoiceChip(label: Text(durationText(d)), selected: value == d, onSelected: (_) => onChanged(d)),
       ]),
       const SizedBox(height: 10),
-      _TextValue(
+      TextValueField(
         label: '${l.durationLabel} · ${durationText(value)}',
         value: value,
         // Kept only once it reads; the core would refuse it anyway.
@@ -1013,7 +1020,7 @@ class _Target extends StatelessWidget {
           },
         )
       else
-        _TextValue(
+        TextValueField(
           label: l.advancedSelector,
           value: select,
           onChanged: (v) {
@@ -1072,100 +1079,6 @@ class _Matches extends StatelessWidget {
   }
 }
 
-/// A capability's value: on/off, a slider between its bounds, or typed.
-class _Value extends StatelessWidget {
-  const _Value({super.key, required this.cap, required this.meta, required this.value, required this.onChanged, this.number = false});
-
-  final String cap;
-  final Map<String, dynamic> meta;
-  final Object? value;
-  final ValueChanged<Object> onChanged;
-
-  /// A threshold: always a number.
-  final bool number;
-
-  @override
-  Widget build(BuildContext context) {
-    final l = AppLocalizations.of(context);
-    if (!number && _isBool(cap, meta)) {
-      return SegmentedButton<bool>(
-        showSelectedIcon: false,
-        segments: [
-          ButtonSegment(value: true, label: Text(valueText(context, cap, true))),
-          ButtonSegment(value: false, label: Text(valueText(context, cap, false))),
-        ],
-        selected: {value == true},
-        onSelectionChanged: (s) => onChanged(s.first),
-      );
-    }
-    final (min, max) = (meta['min'] as num? ?? 0, meta['max'] as num? ?? (const {'brightness', 'volume'}.contains(cap) ? 100 : null));
-    if ((number || _isNumber(cap, meta)) && max != null) {
-      final v = ((value as num?) ?? min).clamp(min, max).toDouble();
-      return Row(children: [
-        Expanded(
-          child: Slider(
-            value: v,
-            min: min.toDouble(),
-            max: max.toDouble(),
-            divisions: (max - min).round().clamp(1, 1000),
-            semanticFormatterCallback: (x) => valueText(context, cap, x.round()),
-            onChanged: (x) => onChanged(x.round()),
-          ),
-        ),
-        SizedBox(
-          width: 64,
-          child: Text(valueText(context, cap, v.round()), textAlign: TextAlign.end, style: const TextStyle(fontFeatures: Hm.tabular)),
-        ),
-      ]);
-    }
-    final numeric = number || _isNumber(cap, meta);
-    return _TextValue(
-      label: l.valueLabel,
-      value: value == null ? '' : '$value',
-      number: numeric,
-      onChanged: (text) => onChanged(numeric ? (num.tryParse(text.replaceAll(',', '.')) ?? 0) : text),
-    );
-  }
-}
-
-class _TextValue extends StatefulWidget {
-  const _TextValue({super.key, required this.label, required this.value, required this.onChanged, this.number = false, this.error});
-
-  final String label;
-  final String value;
-  final ValueChanged<String> onChanged;
-  final bool number;
-  final String? error;
-
-  @override
-  State<_TextValue> createState() => _TextValueState();
-}
-
-class _TextValueState extends State<_TextValue> {
-  late final _text = TextEditingController(text: widget.value);
-
-  @override
-  void didUpdateWidget(_TextValue old) {
-    super.didUpdateWidget(old);
-    // Changed from elsewhere (a chip): shown; what is being typed is left alone.
-    if (widget.value != old.value && widget.value != _text.text) _text.text = widget.value;
-  }
-
-  @override
-  void dispose() {
-    _text.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => TextField(
-        controller: _text,
-        decoration: InputDecoration(labelText: widget.label, errorText: widget.error),
-        keyboardType: widget.number ? const TextInputType.numberWithOptions(decimal: true, signed: true) : TextInputType.text,
-        onChanged: widget.onChanged,
-      );
-}
-
 Map<String, dynamic> _newTest(CoreClient core, {required bool trigger}) {
   final action = _newAction(core)['set'] as Map<String, dynamic>;
   return {'select': action['select'], 'cap': action['cap'], trigger ? 'becomes' : 'is': action['value']};
@@ -1198,8 +1111,8 @@ class _TestFields extends StatelessWidget {
       test.removeWhere((k, _) => const {'becomes', 'is', 'above', 'below', 'changes'}.contains(k));
       test[kind] = switch (kind) {
         'changes' => true,
-        'above' || 'below' => _isNumber(cap, meta) ? _defaultValue(cap, meta) : 0,
-        _ => _defaultValue(cap, meta),
+        'above' || 'below' => isNumberCap(cap, meta) ? defaultCapValue(cap, meta) : 0,
+        _ => defaultCapValue(cap, meta),
       };
       onChanged();
     }
@@ -1211,13 +1124,13 @@ class _TestFields extends StatelessWidget {
         onChanged();
       }),
       // Only when there is a choice: a switch can only be "is", a number can also be above or below.
-      if (_isNumber(cap, meta) || trigger) ...[
+      if (isNumberCap(cap, meta) || trigger) ...[
         const SizedBox(height: 12),
         SegmentedButton<String>(
           showSelectedIcon: false,
           segments: [
             ButtonSegment(value: equal, label: Text(trigger ? l.testBecomes : l.testIs)),
-            if (_isNumber(cap, meta)) ...[
+            if (isNumberCap(cap, meta)) ...[
               ButtonSegment(value: 'above', label: Text(trigger ? l.testAbove : l.testOver)),
               ButtonSegment(value: 'below', label: Text(trigger ? l.testBelow : l.testUnder)),
             ],
@@ -1229,7 +1142,7 @@ class _TestFields extends StatelessWidget {
       ],
       if (kind != 'changes') ...[
         const SizedBox(height: 10),
-        _Value(
+        ValueField(
           key: ValueKey('$cap $kind'),
           cap: cap,
           meta: meta,
@@ -1273,7 +1186,7 @@ class _SetFields extends StatelessWidget {
     final caps = core.entities.values.expand((e) => e.caps.keys.where((c) => _writable(e, c))).toSet().toList();
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       _Target(core: core, target: set, caps: caps, onChanged: (capChanged) {
-        if (capChanged && set['from'] == null) set['value'] = _defaultValue(set['cap'] as String, _meta(core, set['cap'] as String));
+        if (capChanged && set['from'] == null) set['value'] = defaultCapValue(set['cap'] as String, _meta(core, set['cap'] as String));
         onChanged();
       }),
       if (fromTrigger || set['from'] != null)
@@ -1287,14 +1200,14 @@ class _SetFields extends StatelessWidget {
               set['from'] = 'trigger';
             } else {
               set.remove('from');
-              set['value'] = _defaultValue(cap, meta);
+              set['value'] = defaultCapValue(cap, meta);
             }
             onChanged();
           },
         ),
       if (set['from'] == null) ...[
         const SizedBox(height: 12),
-        _Value(
+        ValueField(
           key: ValueKey(cap),
           cap: cap,
           meta: meta,
@@ -1318,7 +1231,8 @@ List<(String, String)> _invokeScopes(BuildContext context, CoreClient core) {
   ];
 }
 
-Map<String, dynamic> _newInvoke(CoreClient core) {
+/// An action the home can run: the first of a device that needs no parameter.
+Map<String, dynamic> newInvoke(CoreClient core) {
   final device = core.entities.values.where((e) => e.actions.any((a) => a.params == null)).firstOrNull;
   return {
     'select': device == null ? 'plugin:pc' : 'plugin:${device.plugin}',
@@ -1326,8 +1240,9 @@ Map<String, dynamic> _newInvoke(CoreClient core) {
   };
 }
 
-class _InvokeFields extends StatelessWidget {
-  const _InvokeFields({required this.core, required this.invoke, required this.onChanged});
+/// Where, which action, and its parameters (a menu when the plugin lists the choices).
+class InvokeFields extends StatelessWidget {
+  const InvokeFields({super.key, required this.core, required this.invoke, required this.onChanged});
 
   final CoreClient core;
   final Map<String, dynamic> invoke;
@@ -1358,7 +1273,7 @@ class _InvokeFields extends StatelessWidget {
           },
         )
       else
-        _TextValue(label: l.advancedSelector, value: select, onChanged: (v) {
+        TextValueField(label: l.advancedSelector, value: select, onChanged: (v) {
           invoke['select'] = v;
           onChanged();
         }),
@@ -1402,7 +1317,7 @@ class _InvokeFields extends StatelessWidget {
                     onChanged();
                   },
                 )
-              : _TextValue(
+              : TextValueField(
             key: ValueKey('$action $name'),
             label: _paramLabel(context, name),
             value: '${params[name] ?? ''}',

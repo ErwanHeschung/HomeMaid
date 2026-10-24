@@ -3,13 +3,13 @@
 /// merge, no cycle), and [FlowGraph.layout] places it top to bottom.
 library;
 
-const nodeKinds = ['set', 'invoke', 'delay', 'wait', 'if', 'repeat', 'merge', 'stop'];
+const nodeKinds = ['set', 'invoke', 'scene', 'delay', 'wait', 'if', 'repeat', 'merge', 'stop'];
 
 String kindOf(Map<String, dynamic> node) => nodeKinds.firstWhere(node.containsKey, orElse: () => 'stop');
 
 /// A kind's ports, in drawing order (left to right).
 List<String> portsOf(String kind) => switch (kind) {
-      'set' || 'invoke' => const ['next', 'error'],
+      'set' || 'invoke' || 'scene' => const ['next', 'error'],
       'delay' || 'merge' => const ['next'],
       'wait' => const ['next', 'timeout'],
       'if' => const ['then', 'else'],

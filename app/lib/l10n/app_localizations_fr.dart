@@ -1269,4 +1269,62 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get flowHint =>
       'Touchez une carte pour la modifier, + pour ajouter une étape.';
+
+  @override
+  String get scenes => 'Scènes';
+
+  @override
+  String get newScene => 'Nouvelle scène';
+
+  @override
+  String get editScene => 'Modifier la scène';
+
+  @override
+  String get addScene => 'Scène';
+
+  @override
+  String get sceneRoom => 'Affichée dans';
+
+  @override
+  String get captureState => 'Prendre l\'état actuel';
+
+  @override
+  String get sceneDevicesHint =>
+      'Choisissez les appareils qu\'elle règle, et l\'état de chacun.';
+
+  @override
+  String get sceneEmpty => 'Aucun appareil dans cette scène';
+
+  @override
+  String get sceneAlso => 'Aussi, tel qu\'écrit';
+
+  @override
+  String get deleteSceneBody => 'Elle est retirée de homemaid.toml.';
+
+  @override
+  String get sceneInForce => 'En place';
+
+  @override
+  String get kindScene => 'Scène';
+
+  @override
+  String get kindSceneHint => 'Plusieurs appareils d\'un coup';
+
+  @override
+  String nodeScene(String name) {
+    return 'Mettre la scène $name';
+  }
+
+  @override
+  String get noScenes => 'Aucune scène : créez-en une depuis l\'accueil';
+
+  @override
+  String get sceneActions => 'Puis, des actions';
+
+  @override
+  String get sceneActionsHint =>
+      'Lancées après les états, dans l\'ordre : ouvrir une appli, lancer la lecture…';
+
+  @override
+  String get addSceneAction => 'Ajouter une action';
 }

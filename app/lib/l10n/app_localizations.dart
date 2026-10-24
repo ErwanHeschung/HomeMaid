@@ -2269,6 +2269,114 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Tap a card to change it, + to add a step.'**
   String get flowHint;
+
+  /// No description provided for @scenes.
+  ///
+  /// In en, this message translates to:
+  /// **'Scenes'**
+  String get scenes;
+
+  /// No description provided for @newScene.
+  ///
+  /// In en, this message translates to:
+  /// **'New scene'**
+  String get newScene;
+
+  /// No description provided for @editScene.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit scene'**
+  String get editScene;
+
+  /// No description provided for @addScene.
+  ///
+  /// In en, this message translates to:
+  /// **'Scene'**
+  String get addScene;
+
+  /// No description provided for @sceneRoom.
+  ///
+  /// In en, this message translates to:
+  /// **'Shown in'**
+  String get sceneRoom;
+
+  /// No description provided for @captureState.
+  ///
+  /// In en, this message translates to:
+  /// **'Take the current state'**
+  String get captureState;
+
+  /// No description provided for @sceneDevicesHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Pick the devices it sets, and the state each takes.'**
+  String get sceneDevicesHint;
+
+  /// No description provided for @sceneEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No device in this scene yet'**
+  String get sceneEmpty;
+
+  /// No description provided for @sceneAlso.
+  ///
+  /// In en, this message translates to:
+  /// **'Also, as written'**
+  String get sceneAlso;
+
+  /// No description provided for @deleteSceneBody.
+  ///
+  /// In en, this message translates to:
+  /// **'It is removed from homemaid.toml.'**
+  String get deleteSceneBody;
+
+  /// No description provided for @sceneInForce.
+  ///
+  /// In en, this message translates to:
+  /// **'In force'**
+  String get sceneInForce;
+
+  /// No description provided for @kindScene.
+  ///
+  /// In en, this message translates to:
+  /// **'Scene'**
+  String get kindScene;
+
+  /// No description provided for @kindSceneHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Several devices at once'**
+  String get kindSceneHint;
+
+  /// No description provided for @nodeScene.
+  ///
+  /// In en, this message translates to:
+  /// **'Set the scene {name}'**
+  String nodeScene(String name);
+
+  /// No description provided for @noScenes.
+  ///
+  /// In en, this message translates to:
+  /// **'No scene yet: make one from Home'**
+  String get noScenes;
+
+  /// No description provided for @sceneActions.
+  ///
+  /// In en, this message translates to:
+  /// **'Then, actions'**
+  String get sceneActions;
+
+  /// No description provided for @sceneActionsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Run after the states, in order: open an app, start playback…'**
+  String get sceneActionsHint;
+
+  /// No description provided for @addSceneAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Add an action'**
+  String get addSceneAction;
 }
 
 class _AppLocalizationsDelegate

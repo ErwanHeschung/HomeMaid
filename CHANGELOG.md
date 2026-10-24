@@ -6,6 +6,8 @@ What changes for people using HomeMaid, version by version. The format follows [
 
 ### Added
 
+- **Scenes.** Put several devices in a state with one tap: "Movie night" turns the TV on and dims the lights. They sit under the room tabs on Home; long-press one to edit it, or tap **+ Scene** and *Take the current state* to save the room as it is. A scene lights up when every device is really in it, shows pink while devices are still confirming, and red if one refuses. A scene can also run actions after setting its devices, like opening Netflix on the PC or starting playback. An automation can set a scene too.
+
 - **Add a device from the app.** Home → **+**: a device of an installed plugin by its own form (a Tapo strip by its IP address and TP-Link login), a PC by its pairing code, or another one by installing its plugin first. The plugin checks it right away: a wrong password is said in the form. A second strip on the same account needs no login again.
 - **Remove a device** from its panel, with all its parts.
 - **Automations as workflows.** After its triggers and conditions, an automation is now a flow of steps drawn in the app, top to bottom, as in n8n: set a device, run an action, wait a while, wait until something happens (with a time limit), if / else, repeat (a number of times, while, until, or for each device), branches side by side joined back together, stop. Tap the **+** under a step to add the next one.

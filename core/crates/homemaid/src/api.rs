@@ -8,9 +8,12 @@
 //! 10 s with `running`), `automation.stop { id }` (its runs not over), `automation.save { automation }`
 //! (created or replaced by id, saved to the config file, in force at once), `automation.delete
 //! { id }`, `subscribe` (then `state.changed { id, cap, slot }`, `entity.changed { entity }`,
-//! `room.changed { name, kind }`, `automation.ran { id, run }` and `automations.changed`
-//! notifications), `home.location` and `home.set_location { latitude, longitude }` (where the
-//! home is, for sunrise and sunset; saved to the config file).
+//! `room.changed { name, kind }`, `automation.ran { id, run }`, `automations.changed` and
+//! `scenes.changed` notifications), `home.location` and `home.set_location { latitude, longitude }`
+//! (where the home is, for sunrise and sunset; saved to the config file).
+//! Scenes: `scenes.list` (each with the states it sets now, `targets`), `scene.apply { id }`
+//! (sets its states, then runs its actions: what each device answered), `scene.save { scene }` and `scene.delete { id }` (saved to the
+//! config file, refused when an automation still uses it).
 //! Plugins: `plugins.list` (installed ones), `registry.list` (what the registry offers; the only
 //! methods with `plugin.install` that use the Internet), `plugin.install { id, version, permissions,
 //! settings? }` (the version and permissions the user accepted; an update keeps the settings),
@@ -46,6 +49,7 @@ use uuid::Uuid;
 use crate::{
     Core, Event,
     automations::{AutomationConfig, Automations, Location},
+    scenes::{self, SceneConfig, Scenes},
     config::{self, DeviceConfig, EntityOverride, PluginConfig, RoomConfig},
     model::{CapKind, CapValue},
     pairing, registry, store,
@@ -132,8 +136,8 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 /// Methods that wait for a plugin (an action: ms usually, 70 s at worst) or the registry. They run aside so the
 /// notifications keep flowing; the others answer in order with them, so `entities.list` is never
 /// overtaken by an older change.
-const SLOW: [&str; 8] =
-    ["entity.invoke", "automation.run", "registry.list", "plugin.install", "plugin.configure", "plugin.remove", "device.add", "device.remove"];
+const SLOW: [&str; 9] =
+    ["entity.invoke", "automation.run", "scene.apply", "registry.list", "plugin.install", "plugin.configure", "plugin.remove", "device.add", "device.remove"];
 
 async fn session(mut socket: WebSocket, app: AppState) {
     let mut changes = app.core.changes.subscribe();
@@ -167,6 +171,7 @@ async fn session(mut socket: WebSocket, app: AppState) {
                     json!({ "jsonrpc": "2.0", "method": "automation.ran", "params": { "id": id, "run": run } })
                 }
                 Ok(Event::Automations) if subscribed => json!({ "jsonrpc": "2.0", "method": "automations.changed", "params": {} }),
+                Ok(Event::Scenes) if subscribed => json!({ "jsonrpc": "2.0", "method": "scenes.changed", "params": {} }),
                 Ok(Event::Plugins) if subscribed => json!({ "jsonrpc": "2.0", "method": "plugins.changed", "params": {} }),
                 Ok(_) => continue,
                 // Changes were lost: closing makes the client reconnect and read everything again.
@@ -221,6 +226,11 @@ struct SetLocation {
 #[derive(Deserialize)]
 struct SaveAutomation {
     automation: AutomationConfig,
+}
+
+#[derive(Deserialize)]
+struct SaveScene {
+    scene: SceneConfig,
 }
 
 #[derive(Deserialize)]
@@ -322,6 +332,25 @@ async fn handle(app: &AppState, req: Request) -> Value {
                 blocking(app, move |app| save_automation(app, &id, Some(p.automation))).await.map_err(|e| (-32000, e))
             }
         },
+        "scenes.list" => Ok(app.core.scenes().list(&app.core)),
+        "scene.apply" => match serde_json::from_value::<AutomationId>(req.params) {
+            Err(e) => Err((-32602, e.to_string())),
+            Ok(p) => {
+                let scenes = app.core.scenes();
+                scenes.apply(&app.core, &p.id).await.map(|r| json!(r)).map_err(|e| (-32000, e))
+            }
+        },
+        "scene.save" => match serde_json::from_value::<SaveScene>(req.params) {
+            Err(e) => Err((-32602, e.to_string())),
+            Ok(p) => {
+                let id = p.scene.id.clone();
+                blocking(app, move |app| save_scene(app, &id, Some(p.scene))).await.map_err(|e| (-32000, e))
+            }
+        },
+        "scene.delete" => match serde_json::from_value::<AutomationId>(req.params) {
+            Err(e) => Err((-32602, e.to_string())),
+            Ok(p) => blocking(app, move |app| save_scene(app, &p.id, None)).await.map_err(|e| (-32000, e)),
+        },
         "home.location" => Ok(json!(app.core.automations().location.map(|l| json!({ "latitude": l.latitude, "longitude": l.longitude })))),
         "home.set_location" => match serde_json::from_value::<SetLocation>(req.params) {
             Err(e) => Err((-32602, e.to_string())),
@@ -384,9 +413,26 @@ fn set_location(app: &AppState, p: SetLocation) -> Result<Value, String> {
 /// file compiles, and puts them in force at once.
 fn save_automation(app: &AppState, id: &str, automation: Option<AutomationConfig>) -> Result<Value, String> {
     let location = app.core.automations().location;
-    let next = config::save_automation(&app.config_path, id, automation.as_ref(), |all| Automations::new(all, location))?;
+    let (_, next) = config::save_automation(&app.config_path, id, automation.as_ref(), |saved| compile(saved, location))?;
     app.core.set_automations(next);
     Ok(json!(true))
+}
+
+/// The same for a scene (`None` removes it): every scene and automation of the file must compile,
+/// and no automation may name a scene that is gone.
+fn save_scene(app: &AppState, id: &str, scene: Option<SceneConfig>) -> Result<Value, String> {
+    let location = app.core.automations().location;
+    let (next, _) = config::save_scene(&app.config_path, id, scene.as_ref(), |saved| compile(saved, location))?;
+    app.core.set_scenes(next);
+    Ok(json!(true))
+}
+
+/// The scenes and automations of the file as a save leaves it, checked as at startup.
+fn compile(saved: &config::Saved, location: Option<Location>) -> Result<(Scenes, Automations), String> {
+    let scenes = Scenes::new(&saved.scenes)?;
+    let automations = Automations::new(&saved.automations, location)?;
+    scenes::check_refs(&automations, &scenes)?;
+    Ok((scenes, automations))
 }
 
 /// Merges the given fields into the entity's metadata, saves it to the config file, then applies it.

@@ -1265,4 +1265,62 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get flowHint => 'Tap a card to change it, + to add a step.';
+
+  @override
+  String get scenes => 'Scenes';
+
+  @override
+  String get newScene => 'New scene';
+
+  @override
+  String get editScene => 'Edit scene';
+
+  @override
+  String get addScene => 'Scene';
+
+  @override
+  String get sceneRoom => 'Shown in';
+
+  @override
+  String get captureState => 'Take the current state';
+
+  @override
+  String get sceneDevicesHint =>
+      'Pick the devices it sets, and the state each takes.';
+
+  @override
+  String get sceneEmpty => 'No device in this scene yet';
+
+  @override
+  String get sceneAlso => 'Also, as written';
+
+  @override
+  String get deleteSceneBody => 'It is removed from homemaid.toml.';
+
+  @override
+  String get sceneInForce => 'In force';
+
+  @override
+  String get kindScene => 'Scene';
+
+  @override
+  String get kindSceneHint => 'Several devices at once';
+
+  @override
+  String nodeScene(String name) {
+    return 'Set the scene $name';
+  }
+
+  @override
+  String get noScenes => 'No scene yet: make one from Home';
+
+  @override
+  String get sceneActions => 'Then, actions';
+
+  @override
+  String get sceneActionsHint =>
+      'Run after the states, in order: open an app, start playback…';
+
+  @override
+  String get addSceneAction => 'Add an action';
 }

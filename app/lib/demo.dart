@@ -45,6 +45,7 @@ class DemoCore extends CoreClient {
       entities[e.id] = e;
     }
     automations = _automations(_fr);
+    scenes = [for (final c in _scenes(_fr)) _scene(c)];
     location = (latitude: 48.86, longitude: 2.35);
   }
 
@@ -103,6 +104,55 @@ class DemoCore extends CoreClient {
     automations = [for (final a in automations) a.id == id ? a.withRuns([run, ...a.runs].take(20).toList()) : a];
     notifyListeners();
     return run;
+  }
+
+  @override
+  Future<void> refreshScenes() async {}
+
+  /// Its targets: what its sets match among the demo's devices, as the core resolves them.
+  Scene _scene(Map<String, dynamic> config) => Scene(
+        id: config['id'] as String,
+        name: config['name'] as String? ?? config['id'] as String,
+        room: config['room'] as String?,
+        config: config,
+        targets: [
+          for (final set in (config['set'] as List).cast<Map<String, dynamic>>())
+            for (final e in matching(entities.values, set['select'] as String) ?? const <Entity>[])
+              if (e.caps.containsKey(set['cap'])) (entity: e.id, cap: set['cap'] as String, value: set['value']),
+        ],
+      );
+
+  @override
+  Future<void> applyScene(String id) async {
+    final scene = scenes.firstWhere((s) => s.id == id);
+    for (final t in scene.targets) {
+      // Side by side, as the core sends them: each device confirms in its own time.
+      setDesired(t.entity, t.cap, t.value).ignore();
+    }
+    // Then its actions, in order.
+    for (final a in ((scene.config['invoke'] as List?) ?? const []).cast<Map<String, dynamic>>()) {
+      for (final e in matching(entities.values, a['select'] as String) ?? const <Entity>[]) {
+        await invoke(e.id, a['action'] as String, (a['params'] as Map?)?.cast<String, Object?>());
+      }
+    }
+  }
+
+  /// Kept in memory only, like automations.
+  @override
+  Future<void> saveScene(Map<String, dynamic> config) async {
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    if ((config['set'] as List?)?.isNotEmpty != true && (config['invoke'] as List?)?.isNotEmpty != true) {
+      throw 'scene `${config['id']}`: needs at least one [[scene.set]] or [[scene.invoke]]';
+    }
+    final saved = _scene(config);
+    scenes = scenes.any((s) => s.id == saved.id) ? [for (final s in scenes) s.id == saved.id ? saved : s] : [...scenes, saved];
+    notifyListeners();
+  }
+
+  @override
+  Future<void> deleteScene(String id) async {
+    scenes = scenes.where((s) => s.id != id).toList();
+    notifyListeners();
   }
 
   @override
@@ -502,6 +552,25 @@ List<Entity> _home(bool fr) {
     }, model: 'bulb'),
     // No room yet, and the stubborn one.
     _entity(_stubborn, t('Prise du garage', 'Garage outlet'), null, _switch(false)),
+  ];
+}
+
+/// Scenes covering their states: one in force, one waiting for a device, one not.
+List<Map<String, dynamic>> _scenes(bool fr) {
+  String t(String french, String english) => fr ? french : english;
+  final living = t('Salon', 'Living room');
+  Map<String, dynamic> set(String id, String cap, Object value) => {'select': 'id:$id', 'cap': cap, 'value': value};
+  return [
+    {'id': 'evening', 'name': t('Soirée', 'Evening'), 'room': living, 'set': [set('demo-ceiling', 'on_off', true), set('demo-floor', 'on_off', true)]},
+    {'id': 'games', 'name': t('Jeux', 'Games'), 'room': living, 'set': [set('demo-strip-3', 'on_off', true)]},
+    {
+      'id': 'movie',
+      'name': t('Cinéma', 'Movie night'),
+      'room': living,
+      'set': [set('demo-ceiling', 'on_off', false), set('demo-floor', 'on_off', false)],
+      'invoke': [{'select': 'plugin:pc', 'action': 'play_pause'}],
+    },
+    {'id': 'night', 'name': t('Nuit', 'Night'), 'set': [set('demo-ceiling', 'on_off', false), set('demo-floor', 'on_off', false), set('demo-reading', 'on_off', false)]},
   ];
 }
 

@@ -864,5 +864,30 @@
   "kindIfHint": "Do one thing or another, depending on the home",
   "kindRepeatHint": "Do steps again: a number of times, or for each device",
   "kindStopHint": "End the automation here",
-  "flowHint": "Tap a card to change it, + to add a step."
+  "flowHint": "Tap a card to change it, + to add a step.",
+  "scenes": "Scenes",
+  "newScene": "New scene",
+  "editScene": "Edit scene",
+  "addScene": "Scene",
+  "sceneRoom": "Shown in",
+  "captureState": "Take the current state",
+  "sceneDevicesHint": "Pick the devices it sets, and the state each takes.",
+  "sceneEmpty": "No device in this scene yet",
+  "sceneAlso": "Also, as written",
+  "deleteSceneBody": "It is removed from homemaid.toml.",
+  "sceneInForce": "In force",
+  "kindScene": "Scene",
+  "kindSceneHint": "Several devices at once",
+  "nodeScene": "Set the scene {name}",
+  "@nodeScene": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "noScenes": "No scene yet: make one from Home",
+  "sceneActions": "Then, actions",
+  "sceneActionsHint": "Run after the states, in order: open an app, start playback…",
+  "addSceneAction": "Add an action"
 }

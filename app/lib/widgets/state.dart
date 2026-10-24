@@ -39,6 +39,29 @@ bool alarming(Entity e) => e.caps['custom:smoke']?.shown == true;
 
 bool isFailed(Entity e) => e.caps.values.any((s) => s.failed);
 
+enum SceneState { off, pending, on, failed }
+
+/// Whether a scene is in force, from observed states only (as "on" is): on once every device it
+/// sets is observed at its value; pending while one it asked has not confirmed; failed when one
+/// refused it. A device offline or gone keeps it from being in force.
+SceneState sceneState(Scene scene, Map<String, Entity> entities) {
+  if (scene.targets.isEmpty) return SceneState.off;
+  var on = true, pending = false;
+  for (final t in scene.targets) {
+    final entity = entities[t.entity];
+    final slot = entity?.caps[t.cap];
+    if (entity == null || slot == null || !entity.available) {
+      on = false;
+      continue;
+    }
+    final asked = inner(slot.desired) == t.value;
+    if (asked && slot.failed) return SceneState.failed;
+    if (asked && slot.pending) pending = true;
+    if (inner(slot.observed) != t.value) on = false;
+  }
+  return pending ? SceneState.pending : (on ? SceneState.on : SceneState.off);
+}
+
 String? failureReason(Entity e) => e.caps.values.where((s) => s.failed).map((s) => s.reason).nonNulls.firstOrNull;
 
 String capLabel(BuildContext context, String kind) {

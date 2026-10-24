@@ -166,3 +166,23 @@ tags = ["lumiere"]
 # delay = "2s"                                   # 45s, 10m, 1h30m
 # Also: merge = "all" or "any", and stop = {} or stop = { error = "why" }.
 # In a set, from = "trigger" replaces value: the value that started the run (a `when` trigger).
+#
+# Scenes: a set of states put in force together, then actions, from the app (Home, under the rooms) or from an
+# automation's step (scene = "cinema"). Each device confirms or fails on its own; one offline
+# gets its state when it comes back. The app shows a scene in force when every device is in it.
+# [[scene]]
+# id = "cinema"
+# name = "Cinéma"
+# room = "Salon"                                 # shown in this room; none: the whole home
+# [[scene.set]]
+# select = 'room:"Salon" & cap:brightness'       # any selector; the app writes id:<uuid>
+# cap = "brightness"
+# value = 15
+# [[scene.set]]
+# select = 'room:"Salon" & model:tv'
+# cap = "on_off"
+# value = true
+# [[scene.invoke]]                               # one-shot actions, after the states
+# select = "plugin:pc"
+# action = "launch"
+# params = { shortcut = "Netflix" }

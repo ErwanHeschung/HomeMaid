@@ -9,7 +9,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{automations::AutomationConfig, model::Entity};
+use crate::{automations::AutomationConfig, model::Entity, scenes::SceneConfig};
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -25,6 +25,8 @@ pub struct Config {
     pub rooms: Vec<RoomConfig>,
     #[serde(default, rename = "automation")]
     pub automations: Vec<crate::automations::AutomationConfig>,
+    #[serde(default, rename = "scene")]
+    pub scenes: Vec<crate::scenes::SceneConfig>,
 }
 
 /// A room, by the name entities refer to. `kind` picks the app's furnished model of it
@@ -489,49 +491,72 @@ pub fn set_location(path: &Path, latitude: f64, longitude: f64) -> Result<(), St
     })
 }
 
+/// The automations and scenes of the file as a save would leave it, for its check.
+pub struct Saved {
+    pub automations: Vec<AutomationConfig>,
+    pub scenes: Vec<SceneConfig>,
+}
+
 /// Writes one automation into its `[[automation]]` table (found by `id`, appended when new), or
-/// removes it (`None`). `check` is given every automation of the file as it would become (hand
-/// edits since the start included); the file is written only if it accepts them all.
+/// removes it (`None`). `check` is given every automation and scene of the file as it would
+/// become (hand edits since the start included); the file is written only if it accepts them.
 pub fn save_automation<R>(
     path: &Path,
     id: &str,
     automation: Option<&AutomationConfig>,
-    check: impl FnOnce(&[AutomationConfig]) -> Result<R, String>,
+    check: impl FnOnce(&Saved) -> Result<R, String>,
+) -> Result<R, String> {
+    save_item(path, "automation", id, automation, check)
+}
+
+/// The same for a scene, in its `[[scene]]` table.
+pub fn save_scene<R>(path: &Path, id: &str, scene: Option<&SceneConfig>, check: impl FnOnce(&Saved) -> Result<R, String>) -> Result<R, String> {
+    save_item(path, "scene", id, scene, check)
+}
+
+fn save_item<T: Serialize, R>(
+    path: &Path,
+    array: &str,
+    id: &str,
+    item: Option<&T>,
+    check: impl FnOnce(&Saved) -> Result<R, String>,
 ) -> Result<R, String> {
     use toml_edit::{ArrayOfTables, Item};
 
     edit_toml(path, |doc| {
         let tables = doc
-            .entry("automation")
+            .entry(array)
             .or_insert(Item::ArrayOfTables(ArrayOfTables::new()))
             .as_array_of_tables_mut()
-            .ok_or("`automation` must be an array of tables ([[automation]])")?;
+            .ok_or(format!("`{array}` must be an array of tables ([[{array}]])"))?;
         let found = tables.iter().position(|t| t.get("id").and_then(Item::as_str) == Some(id));
-        match (automation, found) {
-            (Some(automation), Some(index)) => {
+        match (item, found) {
+            (Some(item), Some(index)) => {
                 let table = tables.get_mut(index).expect("index is in bounds");
-                // Where it was, with the comment above its [[automation]].
+                // Where it was, with the comment above its [[array]].
                 let (decor, position) = (table.decor().clone(), table.position());
-                *table = automation_table(automation)?;
+                *table = item_table(array, item)?;
                 *table.decor_mut() = decor;
                 table.set_position(position);
             }
-            (Some(automation), None) => {
+            (Some(item), None) => {
                 // At the end of the file, not after whatever table happens to precede the array.
-                let mut table = automation_table(automation)?;
+                let mut table = item_table(array, item)?;
                 table.set_position(Some(last_position(doc.as_table()) + 1));
-                doc["automation"].as_array_of_tables_mut().expect("checked above").push(table);
+                doc[array].as_array_of_tables_mut().expect("checked above").push(table);
             }
             (None, Some(index)) => drop(tables.remove(index)),
-            (None, None) => return Err(format!("no automation `{id}`")),
+            (None, None) => return Err(format!("no {array} `{id}`")),
         }
         #[derive(Deserialize)]
         struct File {
             #[serde(default)]
             automation: Vec<AutomationConfig>,
+            #[serde(default)]
+            scene: Vec<SceneConfig>,
         }
         let file: File = toml::from_str(&doc.to_string()).map_err(|e| e.to_string())?;
-        check(&file.automation)
+        check(&Saved { automations: file.automation, scenes: file.scene })
     })
 }
 
@@ -550,21 +575,17 @@ fn last_position(table: &toml_edit::Table) -> isize {
         .unwrap_or(0)
 }
 
-/// An automation as a `[[automation]]` table, its triggers, conditions, nodes and actions with
-/// their settings on one line each, as written by hand.
-fn automation_table(automation: &AutomationConfig) -> Result<toml_edit::Table, String> {
+/// An automation (or a scene) as a `[[automation]]` table, its triggers, conditions, nodes and
+/// actions (a scene's sets) with their settings on one line each, as written by hand.
+fn item_table<T: Serialize>(array: &str, item: &T) -> Result<toml_edit::Table, String> {
     use toml_edit::Item;
 
-    #[derive(Serialize)]
-    struct File<'a> {
-        automation: [&'a AutomationConfig; 1],
-    }
-    let text = toml::to_string(&File { automation: [automation] }).map_err(|e| e.to_string())?;
+    let text = toml::to_string(&std::collections::BTreeMap::from([(array, [item])])).map_err(|e| e.to_string())?;
     let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| e.to_string())?;
-    let mut table = doc["automation"].as_array_of_tables_mut().and_then(|t| t.get_mut(0)).ok_or("no automation written")?.clone();
+    let mut table = doc[array].as_array_of_tables_mut().and_then(|t| t.get_mut(0)).ok_or("nothing written")?.clone();
     // No position of its own: printed right after what comes before it, children after parent.
     table.set_position(None);
-    for list in ["trigger", "condition", "node", "action"] {
+    for list in ["trigger", "condition", "node", "action", "set", "invoke"] {
         for item in table.get_mut(list).and_then(Item::as_array_of_tables_mut).into_iter().flat_map(|t| t.iter_mut()) {
             item.set_position(None);
             item.decor_mut().set_prefix("");
@@ -758,7 +779,7 @@ mod tests {
 
         let path = std::env::temp_dir().join(format!("homemaid-automation-test-{}.toml", std::process::id()));
         fs::write(&path, "# mine\n[core] # here\nbind = \"0.0.0.0:8123\"\ndata_dir = \"data\"\ntoken = \"0123456789abcdef\"\n\n# by hand\n[[automation]]\nid = \"kept\"\n[[automation.trigger]]\nat = \"07:00\"\n[[automation.action]]\nset = { select = \"room:Salon\", cap = \"on_off\", value = true }\n\n# rooms\n[[room]]\nname = \"Salon\"\n").unwrap();
-        let check = |all: &[AutomationConfig]| Automations::new(all, None).map(|_| all.len());
+        let check = |saved: &Saved| Automations::new(&saved.automations, None).map(|_| saved.automations.len());
         let mut dusk: AutomationConfig = serde_json::from_value(serde_json::json!({
             "id": "dusk", "name": "Soir",
             "trigger": [{ "at": "19:30", "days": ["mon", "fri"] }],
@@ -812,6 +833,33 @@ mod tests {
         let text = fs::read_to_string(&path).unwrap();
         fs::remove_file(&path).unwrap();
         assert!(!text.contains("dusk") && text.contains("id = \"kept\""), "{text}");
+    }
+
+    #[test]
+    fn scenes_are_saved_and_one_in_use_is_kept() {
+        use crate::{automations::Automations, scenes::Scenes};
+
+        let path = std::env::temp_dir().join(format!("homemaid-scene-test-{}.toml", std::process::id()));
+        fs::write(&path, "# mine\n[[automation]]\nid = \"night\"\nstart = [\"s\"]\n[[automation.trigger]]\nat = \"23:00\"\n[[automation.node]]\nid = \"s\"\nscene = \"night\"\n").unwrap();
+        let check = |saved: &Saved| {
+            let (scenes, automations) = (Scenes::new(&saved.scenes)?, Automations::new(&saved.automations, None)?);
+            crate::scenes::check_refs(&automations, &scenes).map(|()| saved.scenes.len())
+        };
+        let night: SceneConfig = serde_json::from_value(serde_json::json!({
+            "id": "night", "name": "Nuit",
+            "set": [{ "select": "cap:on_off", "cap": "on_off", "value": false }],
+            "invoke": [{ "select": "plugin:pc", "action": "launch", "params": { "app": "vlc" } }],
+        })).unwrap();
+        assert_eq!(save_scene(&path, "night", Some(&night), check), Ok(1));
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[[scene]]\nid = \"night\"\nname = \"Nuit\"\n[[scene.set]]\nselect = \"cap:on_off\""), "{text}");
+        assert!(text.contains("[[scene.invoke]]\nselect = \"plugin:pc\"\naction = \"launch\"\nparams = { app = \"vlc\" }"), "{text}");
+        assert_eq!(load(&path).unwrap().scenes, std::slice::from_ref(&night));
+
+        let err = save_scene(&path, "night", None, check).unwrap_err();
+        assert!(err.contains("automation `night`, node `s`: no scene `night`"), "{err}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), text, "refused: kept");
+        fs::remove_file(&path).unwrap();
     }
 
     #[test]

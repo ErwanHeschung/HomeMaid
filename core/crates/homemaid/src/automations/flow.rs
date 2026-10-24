@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use super::{
     ActionResult, Condition, ConditionConfig, InvokeConfig, Need, Planned, PlannedTarget, SetConfig, Target, Trigger, TriggerConfig, check,
-    condition_needs, crosses, is_false, next_at, nothing_matched, trigger_needs,
+    condition_needs, crosses, invoke_each, is_false, next_at, nothing_matched, set_each, trigger_needs,
 };
 use crate::{
     Core, Event,
@@ -52,6 +52,9 @@ pub struct NodeConfig {
     pub set: Option<SetConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invoke: Option<InvokeConfig>,
+    /// A scene's id: sets all its states.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scene: Option<String>,
     /// `45s`, `10m`, `1h30m`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delay: Option<String>,
@@ -191,6 +194,7 @@ enum Source {
 enum Kind {
     Set { pick: Pick, cap: CapKind, value: Source },
     Invoke { pick: Pick, action: String, params: Value },
+    Scene(String),
     Delay(Duration),
     Wait { until: Vec<Condition>, trigger: Option<Trigger>, timeout: Option<Duration> },
     If { conditions: Vec<Condition>, any: bool },
@@ -322,7 +326,7 @@ impl Flow {
             let at = |e: String| format!("node `{}`: {e}", n.id);
             let kind = node_kind(n, c).map_err(at)?;
             let allowed: &[Port] = match kind {
-                Kind::Set { .. } | Kind::Invoke { .. } => &[Port::Next, Port::Error],
+                Kind::Set { .. } | Kind::Invoke { .. } | Kind::Scene(_) => &[Port::Next, Port::Error],
                 Kind::Delay(_) | Kind::Merge(_) => &[Port::Next],
                 Kind::Wait { .. } => &[Port::Next, Port::Timeout],
                 Kind::If { .. } => &[Port::Then, Port::Else],
@@ -464,6 +468,14 @@ impl Flow {
         Some(sets)
     }
 
+    /// The scenes it sets: (node, scene).
+    pub(super) fn scene_refs(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.nodes.iter().filter_map(|n| match &n.kind {
+            Kind::Scene(id) => Some((n.id.as_str(), id.as_str())),
+            _ => None,
+        })
+    }
+
     /// Its `set` and `invoke` nodes, described for the app.
     pub(super) fn describe_actions(&self) -> Vec<Value> {
         self.nodes.iter().filter_map(describe_action).collect()
@@ -519,6 +531,7 @@ impl Flow {
                     planned.push(planned_for(node, r));
                     (&[Port::Next], true, String::new())
                 }
+                Kind::Scene(id) => (&[Port::Next], true, format!("sets the scene `{id}`")),
                 Kind::Delay(d) => (&[Port::Next], true, format!("waits {}", show(*d))),
                 Kind::Wait { until, trigger, timeout } => {
                     let limit = timeout.map_or(String::new(), |t| format!(", {} at most", show(t)));
@@ -554,6 +567,7 @@ impl NodeConfig {
             id: String::new(),
             set: None,
             invoke: None,
+            scene: None,
             delay: None,
             wait: None,
             test: None,
@@ -581,6 +595,7 @@ fn node_kind(n: &NodeConfig, c: &Compilers) -> Result<Kind, String> {
     let kinds = [
         n.set.is_some(),
         n.invoke.is_some(),
+        n.scene.is_some(),
         n.delay.is_some(),
         n.wait.is_some(),
         n.test.is_some(),
@@ -589,7 +604,7 @@ fn node_kind(n: &NodeConfig, c: &Compilers) -> Result<Kind, String> {
         n.stop.is_some(),
     ];
     if kinds.iter().filter(|k| **k).count() != 1 {
-        return Err("give exactly one of `set`, `invoke`, `delay`, `wait`, `if`, `repeat`, `merge`, `stop`".into());
+        return Err("give exactly one of `set`, `invoke`, `scene`, `delay`, `wait`, `if`, `repeat`, `merge`, `stop`".into());
     }
     if n.any && n.test.is_none() {
         return Err("`any` goes with `if`".into());
@@ -609,6 +624,9 @@ fn node_kind(n: &NodeConfig, c: &Compilers) -> Result<Kind, String> {
             return Err("`params` must be a table".into());
         }
         return Ok(Kind::Invoke { pick: Pick::parse(&inv.select)?, action: inv.action.clone(), params: inv.params.clone() });
+    }
+    if let Some(scene) = &n.scene {
+        return Ok(Kind::Scene(scene.clone()));
     }
     if let Some(d) = &n.delay {
         return Ok(Kind::Delay(duration(d)?));
@@ -837,6 +855,14 @@ impl Exec<'_> {
                     let ok = results.iter().all(|r| r.ok);
                     (if ok { Port::Next } else { Port::Error }, ok, self.results(results))
                 }
+                Kind::Scene(id) => {
+                    let scenes = self.core.scenes();
+                    let results = scenes.apply(self.core, id).await.unwrap_or_else(|e| {
+                        vec![ActionResult { entity: None, target: id.clone(), action: "scene".into(), ok: false, outcome: e }]
+                    });
+                    let ok = results.iter().all(|r| r.ok);
+                    (if ok { Port::Next } else { Port::Error }, ok, self.results(results))
+                }
                 Kind::Delay(d) => {
                     tokio::time::sleep(*d).await;
                     (Port::Next, true, show(*d))
@@ -913,22 +939,7 @@ impl Exec<'_> {
                 (Err(e), _) => return vec![failed(pick, &label, e)],
                 (_, Err(e)) => return vec![failed(pick, &label, e.clone())],
             };
-            let value = value.as_ref().expect("checked above");
-            ids.into_iter()
-                .map(|(id, name)| {
-                    let status = r.set_desired(id, cap, value.clone(), std::time::Instant::now());
-                    ActionResult {
-                        entity: Some(id),
-                        target: name,
-                        action: label.clone(),
-                        ok: status.is_ok(),
-                        outcome: match status {
-                            Ok(s) => serde_json::to_value(&s).ok().and_then(|v| v["state"].as_str().map(String::from)).unwrap_or_default(),
-                            Err(e) => e,
-                        },
-                    }
-                })
-                .collect::<Vec<_>>()
+            set_each(r, ids, cap, value.as_ref().expect("checked above"), &label)
         });
         empty_is_failed(results, pick, &label)
     }
@@ -939,16 +950,7 @@ impl Exec<'_> {
             Ok(ids) => ids,
             Err(e) => return vec![failed(pick, &label, e)],
         };
-        let mut results = vec![];
-        for (id, name) in ids {
-            let outcome = match self.core.plugins.get() {
-                Some(plugins) => plugins.invoke(self.core, id, action, params.clone()).await,
-                None => Err("plugins are not running".into()),
-            };
-            let (ok, outcome) = (outcome.is_ok(), outcome.map_or_else(|e| e, |()| "sent".into()));
-            results.push(ActionResult { entity: Some(id), target: name, action: label.clone(), ok, outcome });
-        }
-        empty_is_failed(results, pick, &label)
+        empty_is_failed(invoke_each(self.core, ids, action, params, &label).await, pick, &label)
     }
 
     /// Whether it went on (`false`: timed out), and how.

@@ -202,6 +202,29 @@ class CoreClient extends ChangeNotifier {
     await refreshAutomations();
   }
 
+  /// The core's scenes, with the states each sets now.
+  List<Scene> scenes = const [];
+
+  Future<void> refreshScenes() async {
+    final list = await call('scenes.list') as List;
+    scenes = [for (final s in list) Scene.fromJson((s as Map).cast())];
+    notifyListeners();
+  }
+
+  /// Puts its states in force: the devices answer through `state.changed`.
+  Future<void> applyScene(String id) => call('scene.apply', {'id': id});
+
+  /// Created or replaced (by `id`) in homemaid.toml; refused as the core refuses it at startup.
+  Future<void> saveScene(Map<String, dynamic> config) async {
+    await call('scene.save', {'scene': config});
+    await refreshScenes();
+  }
+
+  Future<void> deleteScene(String id) async {
+    await call('scene.delete', {'id': id});
+    await refreshScenes();
+  }
+
   /// Stops its runs not over yet.
   Future<void> stopAutomation(String id) async {
     await call('automation.stop', {'id': id});
@@ -292,6 +315,7 @@ class CoreClient extends ChangeNotifier {
         ..addEntries(rooms.map((r) => MapEntry((r as Map)['name'] as String, r['kind'] as String)));
       // An older core has no automations, nor a location: none.
       await refreshAutomations().catchError((Object _) {});
+      await refreshScenes().catchError((Object _) {});
       await refreshLocation().catchError((Object _) {});
       notifyListeners();
     } catch (_) {
@@ -332,9 +356,14 @@ class CoreClient extends ChangeNotifier {
       case 'entity.changed':
         final entity = Entity.fromJson((params['entity'] as Map).cast<String, dynamic>());
         entities[entity.id] = entity;
+        // Moved or renamed: the devices a scene's selectors match may have changed.
+        refreshScenes().catchError((Object _) {});
       case 'automation.ran':
         // The run comes with its automation's new history and next time: read them again.
         refreshAutomations().catchError((Object _) {});
+        return;
+      case 'scenes.changed':
+        refreshScenes().catchError((Object _) {});
         return;
       case 'automations.changed':
         // Edited, maybe from another phone, or the location changed.

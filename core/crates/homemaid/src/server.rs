@@ -16,7 +16,7 @@ use std::{
 use serde::Serialize;
 use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::{Core, agent, api, automations::{Automations, Location}, config, pairing, plugins::Plugins, reconciler::Reconciler, store};
+use crate::{Core, agent, api, automations::{Automations, Location}, config, pairing, plugins::Plugins, reconciler::Reconciler, scenes::Scenes, store};
 
 /// Logs to `file` (appended), or to the console.
 pub fn init_logging(file: Option<&Path>) -> Result<(), String> {
@@ -119,8 +119,11 @@ async fn serve(
             (None, None) => None,
             _ => return Err(format!("{}: [core] needs both latitude and longitude", config_path.display())),
         };
-        let automations = Automations::new(&config.automations, location).map_err(|e| format!("{}: {e}", config_path.display()))?;
-        start_core(core_config, &config_path, config.entities, config.rooms, config.plugins, automations, until_stopped(), &published).await
+        let at = |e: String| format!("{}: {e}", config_path.display());
+        let automations = Automations::new(&config.automations, location).map_err(at)?;
+        let scenes = Scenes::new(&config.scenes).map_err(at)?;
+        crate::scenes::check_refs(&automations, &scenes).map_err(at)?;
+        start_core(core_config, &config_path, config.entities, config.rooms, config.plugins, (scenes, automations), until_stopped(), &published).await
     };
     let agent = async {
         let Some(mut switch) = agent_switch else { return Ok(()) };
@@ -177,7 +180,7 @@ async fn start_core(
     overrides: Vec<config::EntityOverride>,
     rooms: Vec<config::RoomConfig>,
     plugins: Vec<config::PluginConfig>,
-    automations: Automations,
+    (scenes, automations): (Scenes, Automations),
     shutdown: impl Future<Output = ()> + Send + 'static,
     published: &OnceLock<Arc<Core>>,
 ) -> Result<(), String> {
@@ -196,6 +199,7 @@ async fn start_core(
     *core.rooms.lock().unwrap() = rooms.into_iter().filter_map(|r| Some((r.name, r.kind.filter(|k| !k.is_empty())?))).collect();
 
     // Before the plugins: they hand the automations' schedules to their devices at start.
+    core.set_scenes(scenes);
     core.set_automations(automations);
     let plugins = Arc::new(Plugins::start(core.clone(), plugins, data_dir, secrets)?);
     let _ = core.plugins.set(plugins.clone());

@@ -15,6 +15,7 @@ import '../widgets/state.dart';
 import 'automations.dart' show actionLabel;
 import 'common.dart';
 import 'plugins.dart';
+import 'scene_editor.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.core, required this.onPair});
@@ -103,6 +104,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _selected = null;
               }),
             ),
+          if (current != null) _SceneStrip(core: core, room: roomName),
           if (!core.connected)
             OfflineBanner(l.homeUnreachable, detail: core.error == null ? null : describeError(context, LinkException(core.error!))),
           Expanded(
@@ -219,6 +221,132 @@ class _HomeScreenState extends State<HomeScreen> {
       if (context.mounted) showError(context, e);
     });
   }
+}
+
+/// The scenes of this room, then the whole home's, one tap to put in force (a long press edits),
+/// each marked in the state grammar; "+" makes one for this room.
+class _SceneStrip extends StatelessWidget {
+  const _SceneStrip({required this.core, required this.room});
+
+  final CoreClient core;
+  final String? room;
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    final scenes = [
+      ...core.scenes.where((s) => s.room != null && s.room == room),
+      ...core.scenes.where((s) => s.room == null),
+    ];
+    return SizedBox(
+      height: 52,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(20, 6, 20, 6),
+        children: [
+          for (final s in scenes) ...[
+            _SceneChip(
+              label: s.name,
+              state: sceneState(s, core.entities),
+              onTap: () => core.applyScene(s.id).catchError((Object e) {
+                if (context.mounted) showError(context, e);
+              }),
+              onLongPress: () => editScene(context, core, scene: s),
+            ),
+            const SizedBox(width: 8),
+          ],
+          _SceneChip(label: l.addScene, add: true, onTap: () => editScene(context, core, room: room)),
+        ],
+      ),
+    );
+  }
+}
+
+/// A scene as a part: its mark (filled lavender in force, pink hatch pending, red outline failed,
+/// hairline off) and its name.
+class _SceneChip extends StatelessWidget {
+  const _SceneChip({required this.label, required this.onTap, this.state = SceneState.off, this.onLongPress, this.add = false});
+
+  final String label;
+  final SceneState state;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+
+  /// The "+" that makes a new one.
+  final bool add;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (state) {
+      SceneState.on => Hm.on,
+      SceneState.pending => Hm.pending,
+      SceneState.failed => Hm.danger,
+      SceneState.off => add ? Hm.select : Hm.text,
+    };
+    return Semantics(
+      button: true,
+      selected: state == SceneState.on,
+      child: Material(
+        color: state == SceneState.on ? Hm.on.withValues(alpha: 0.16) : Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(Hm.radius),
+          side: BorderSide(color: state == SceneState.off ? Hm.lineStrong : color),
+        ),
+        child: InkWell(
+          onTap: onTap,
+          onLongPress: onLongPress,
+          customBorder: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Hm.radius)),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              if (add)
+                const Icon(Icons.add, size: 16, color: Hm.select)
+              else
+                CustomPaint(size: const Size.square(10), painter: _SceneMark(state)),
+              const SizedBox(width: 8),
+              Text(label, style: Theme.of(context).textTheme.labelLarge?.copyWith(color: color)),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SceneMark extends CustomPainter {
+  const _SceneMark(this.state);
+
+  final SceneState state;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = (Offset.zero & size).deflate(0.75);
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    switch (state) {
+      case SceneState.on:
+        canvas.drawRect(rect, Paint()..color = Hm.on);
+      case SceneState.pending:
+        canvas.save();
+        canvas.clipRect(rect);
+        final hatch = Paint()
+          ..color = Hm.pending
+          ..strokeWidth = 1.4;
+        for (var x = -size.height; x < size.width; x += 4) {
+          canvas.drawLine(Offset(x, size.height), Offset(x + size.height, 0), hatch);
+        }
+        canvas.restore();
+        canvas.drawRect(rect, stroke..color = Hm.pending);
+      case SceneState.failed:
+        canvas.drawRect(rect, stroke..color = Hm.danger);
+      case SceneState.off:
+        canvas.drawRect(rect, stroke..color = Hm.textDim);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_SceneMark old) => old.state != state;
 }
 
 class _RoomTabs extends StatelessWidget {

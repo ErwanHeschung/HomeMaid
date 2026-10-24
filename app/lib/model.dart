@@ -222,6 +222,40 @@ List<Map<String, dynamic>> _maps(Object? list) => [for (final m in (list as List
 /// A run not over yet: the nodes it is at (a wait, a delay), and those it went through.
 typedef RunningRun = ({DateTime at, String trigger, List<String> nodes, List<RunStep> steps});
 
+/// A scene of the core: states put in force together. `targets` are the states it sets now, so
+/// whether it is in force comes from the devices' slots (`sceneState`).
+class Scene {
+  Scene({required this.id, required this.name, this.room, Map<String, dynamic>? config, this.targets = const [], this.problems = const []})
+      : config = config ?? {'id': id, 'name': name, 'room': ?room, 'set': const []};
+
+  factory Scene.fromJson(Map<String, dynamic> j) {
+    final config = ((j['config'] as Map?) ?? const {}).cast<String, dynamic>();
+    return Scene(
+      id: j['id'] as String,
+      name: j['name'] as String? ?? j['id'] as String,
+      room: config['room'] as String?,
+      config: config,
+      targets: [
+        for (final t in (j['targets'] as List?) ?? const [])
+          (entity: (t as Map)['entity'] as String, cap: t['cap'] as String, value: t['value'] as Object?),
+      ],
+      problems: (j['problems'] as List?)?.cast<String>() ?? const [],
+    );
+  }
+
+  final String id, name;
+
+  /// Shown in this room; null: the whole home.
+  final String? room;
+
+  /// As written in homemaid.toml (`set` entries), to edit and save back.
+  final Map<String, dynamic> config;
+  final List<SceneTarget> targets;
+  final List<String> problems;
+}
+
+typedef SceneTarget = ({String entity, String cap, Object? value});
+
 /// A node a run went through.
 typedef RunStep = ({String node, bool ok, String outcome});
 

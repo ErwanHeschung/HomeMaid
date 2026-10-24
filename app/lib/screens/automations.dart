@@ -656,6 +656,9 @@ String nodeText(BuildContext context, CoreClient core, Map<String, dynamic> node
   switch (kindOf(node)) {
     case 'set' || 'invoke':
       return actionText(context, core, node);
+    case 'scene':
+      final id = node['scene'] as String;
+      return l.nodeScene(core.scenes.where((s) => s.id == id).firstOrNull?.name ?? id);
     case 'delay':
       return l.nodeDelay(durationText(node['delay'] as String));
     case 'wait':
@@ -685,6 +688,7 @@ String kindLabel(BuildContext context, String kind) {
   return switch (kind) {
     'set' => l.kindSet,
     'invoke' => l.kindInvoke,
+    'scene' => l.kindScene,
     'delay' => l.kindDelay,
     'wait' => l.kindWait,
     'if' => l.kindIf,
@@ -697,6 +701,7 @@ String kindLabel(BuildContext context, String kind) {
 IconData kindIcon(String kind) => switch (kind) {
       'set' => Icons.tune,
       'invoke' => Icons.play_arrow_outlined,
+      'scene' => Icons.auto_awesome_outlined,
       'delay' => Icons.hourglass_bottom,
       'wait' => Icons.pause_circle_outline,
       'if' => Icons.call_split,

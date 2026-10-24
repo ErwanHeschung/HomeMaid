@@ -7,6 +7,7 @@ pub mod pairing;
 pub mod plugins;
 pub mod reconciler;
 pub mod registry;
+pub mod scenes;
 pub mod selector;
 pub mod server;
 pub mod store;
@@ -33,6 +34,8 @@ pub enum Event {
     Automation { id: String, run: automations::Run },
     /// Automations were added, edited or removed.
     Automations,
+    /// Scenes were added, edited or removed.
+    Scenes,
     /// A plugin was installed, configured or removed, started or failed.
     Plugins,
 }
@@ -54,6 +57,8 @@ pub struct Core {
     automations: RwLock<Arc<automations::Automations>>,
     /// The task running them, replaced with them.
     engine: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// The scenes in force, swapped when edited: see [`Core::scenes`].
+    scenes: RwLock<Arc<scenes::Scenes>>,
 }
 
 impl Core {
@@ -68,7 +73,19 @@ impl Core {
             plugins: OnceLock::new(),
             automations: RwLock::new(Arc::new(automations::Automations::none())),
             engine: Mutex::default(),
+            scenes: RwLock::new(Arc::new(scenes::Scenes::none())),
         }
+    }
+
+    /// The scenes in force. Hold the `Arc` for one use: an edit replaces them.
+    pub fn scenes(&self) -> Arc<scenes::Scenes> {
+        self.scenes.read().unwrap().clone()
+    }
+
+    /// Puts `next` in force and tells subscribers.
+    pub fn set_scenes(&self, next: scenes::Scenes) {
+        *self.scenes.write().unwrap() = Arc::new(next);
+        let _ = self.changes.send(Event::Scenes);
     }
 
     /// The automations in force. Hold the `Arc` for one use: an edit replaces them.
